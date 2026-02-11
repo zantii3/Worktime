@@ -30,33 +30,69 @@ interface TimeRecord {
 function Dashboard() {
   const location = useLocation();
   const navigate = useNavigate();
-  const user = location.state?.user;
+  const user = location.state?.user || JSON.parse(localStorage.getItem("currentUser") || "null");
 
   const currentTime = useClock();
 
   const [menuOpen, setMenuOpen] = useState(false);
-  const [todayRecord, setTodayRecord] = useState<TimeRecord | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [pendingLeavesCount, setPendingLeavesCount] = useState(0);
 
   const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD format
 
-  // Load today's record from localStorage
-  useEffect(() => {
+  // Detect device
+  const detectDevice = () => {
+    if (typeof navigator === "undefined" || typeof window === "undefined") return "Desktop";
+
+    const ua = navigator.userAgent.toLowerCase();
+    const screenWidth = window.innerWidth;
+
+    const isMobileUA = /android|iphone|ipod|blackberry|iemobile|opera mini/.test(ua);
+    const isTabletUA = /ipad|tablet|playbook|silk/.test(ua);
+
+    // Check viewport width (mobile view in DevTools)
+    const isMobileViewport = screenWidth <= 768;
+    const isTabletViewport = screenWidth > 768 && screenWidth <= 1024;
+
+    // Check for touch capability
+    const hasTouch = () => {
+      return (
+        "ontouchstart" in window ||
+        navigator.maxTouchPoints > 0 ||
+        (navigator as unknown as { msMaxTouchPoints: number }).msMaxTouchPoints > 0
+      );
+    };
+
+    // Determine device based on combined factors
+    if (isMobileUA || (isMobileViewport && hasTouch())) {
+      return "Mobile";
+    }
+
+    if (isTabletUA || isTabletViewport) {
+      return "Tablet";
+    }
+
+    return "Desktop";
+  };
+
+  // Initialize todayRecord with lazy initialization
+  const [todayRecord, setTodayRecord] = useState<TimeRecord | null>(() => {
+    if (typeof window === "undefined") return null;
+    
     const stored = localStorage.getItem(`attendance_${user?.id || "user"}_${today}`);
     if (stored) {
-      setTodayRecord(JSON.parse(stored));
-    } else {
-      setTodayRecord({
-        date: today,
-        timeIn: null,
-        timeOut: null,
-        device: detectDevice(),
-        hours: 0,
-      });
+      return JSON.parse(stored);
     }
-  }, [today, user]);
+    return {
+      date: today,
+      timeIn: null,
+      timeOut: null,
+      device: detectDevice(),
+      hours: 0,
+    };
+  });
 
-  // Save to localStorage whenever todayRecord changes
+  
   useEffect(() => {
     if (todayRecord) {
       localStorage.setItem(
@@ -66,13 +102,44 @@ function Dashboard() {
     }
   }, [todayRecord, today, user]);
 
-  // Detect device
-  const detectDevice = () => {
-    const ua = navigator.userAgent;
-    if (/mobile/i.test(ua)) return "Mobile";
-    if (/tablet/i.test(ua)) return "Tablet";
-    return "Desktop";
-  };
+  // Handle window resize to update device type
+  useEffect(() => {
+    const handleResize = () => {
+      setTodayRecord(prev => {
+        if (!prev) return null;
+        const newDevice = detectDevice();
+        if (newDevice !== prev.device) {
+          return { ...prev, device: newDevice };
+        }
+        return prev;
+      });
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  // Load pending leaves count
+  useEffect(() => {
+    const loadPendingLeaves = () => {
+      const leaveRequests = localStorage.getItem(`leave_requests_${user?.id || "user"}`);
+      if (leaveRequests) {
+        try {
+          const leaves = JSON.parse(leaveRequests);
+          const pending = leaves.filter((l: { status: string }) => l.status === "Pending").length;
+          setPendingLeavesCount(pending);
+        } catch {
+          // Skip invalid data
+        }
+      }
+    };
+
+    if (user?.id) {
+      loadPendingLeaves();
+      const interval = setInterval(loadPendingLeaves, 2000);
+      return () => clearInterval(interval);
+    }
+  }, [user?.id]);
 
   const handleTimeIn = () => {
     if (todayRecord?.timeIn) return; // Already clocked in today
@@ -111,12 +178,6 @@ function Dashboard() {
     return "Clocked In";
   };
 
-  const getStatusColor = () => {
-    if (!todayRecord?.timeIn) return "text-slate-400";
-    if (todayRecord.timeOut) return "text-red-500";
-    return "text-green-500";
-  };
-
   const calculateElapsedTime = () => {
     if (!todayRecord?.timeIn) return "0h 0m";
     
@@ -130,7 +191,10 @@ function Dashboard() {
     return `${hours}h ${minutes}m`;
   };
 
-  const handleLogout = () => navigate("/");
+  const handleLogout = () => {
+    localStorage.removeItem("currentUser");
+    navigate("/");
+  };
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex">
@@ -185,7 +249,7 @@ function Dashboard() {
 
             <div>
               <h1 className="text-xl md:text-3xl font-bold text-[#1F3C68]">
-                Welcome back, {user?.name || "User"}!
+                Welcome, {user?.name || "User"}!
               </h1>
               <p className="text-sm text-[#1E293B] mt-1 font-medium">
                 {currentTime.toLocaleDateString("en-US", {
@@ -209,6 +273,8 @@ function Dashboard() {
             </p>
           </div>
         </motion.div>
+
+        
 
         {/* Widgets Grid */}
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -362,120 +428,111 @@ function Dashboard() {
             className="bg-white p-6 rounded-3xl shadow-lg border border-slate-100 hover:shadow-xl hover:border-[#F28C28]/30 transition-all"
           >
             <div className="flex items-center gap-3 mb-4">
-              <div className="p-3 bg-gradient-to-br from-orange-100 to-amber-100 rounded-xl">
-                <ClipboardList className="w-6 h-6 text-[#F28C28]" />
+          <div className="flex items-center gap-3 mb-6">
+              <div className="p-3 bg-amber-100 rounded-xl">
+                <Clock className="w-5 h-5 text-amber-600" />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-[#1F3C68]">
-                  Pending Leave
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Awaiting approval
-                </p>
+                <h3 className="text-sm md:text-base font-bold text-amber-900">Pending Leave Requests</h3>
+                <p className="text-xs md:text-sm text-amber-700">You have {pendingLeavesCount} leave request(s) awaiting approval</p>
               </div>
             </div>
-            <div className="flex items-end gap-2 mb-4">
-              <p className="text-5xl font-bold text-[#F28C28]">1</p>
-              <p className="text-sm text-slate-500 mb-2">total request</p>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => navigate("/leave", { state: { user } })}
+              className="shrink-0 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-medium rounded-lg transition-colors text-sm"
+            >
+              View
+            </motion.button>
             </div>
-            <div className="space-y-2 pt-4 border-t border-slate-100">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-600">Vacation L</span>
-                <span className="font-semibold text-[#F28C28]">1</span>
-              </div>
-            </div>
+            {/* Pending Leaves Alert */}
+        {pendingLeavesCount > 0 && (
+          <motion.div
+            initial={{ y: -20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+          
+          
+          >
+            
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => navigate("/leave", { state: { user } })}
+          
+            >
+              
+            </motion.button>
+          </motion.div>
+        )}  
           </motion.div>
 
          {/* Task Summary */}
-<motion.div
-  initial={{ scale: 0.95, opacity: 0 }}
-  animate={{ scale: 1, opacity: 1 }}
-  transition={{ delay: 0.3 }}
-  className="md:col-span-2 lg:col-span-3 bg-white p-6 rounded-3xl shadow-md border border-slate-100"
->
-  {/* Header */}
-  <div className="flex items-center gap-3 mb-6">
-    <div className="p-3 bg-[#E0F2FE] rounded-xl"> {/* subtle blue background for icon */}
-      <ListTodo className="w-6 h-6 text-[#1F3C68]" />
-    </div>
-    <div>
-      <h2 className="text-xl font-bold text-[#1F3C68]">Task Summary</h2>
-      <p className="text-sm text-slate-500">Your daily task overview</p>
-    </div>
-  </div>
+        <motion.div
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ delay: 0.3 }}
+          className="md:col-span-2 lg:col-span-3 bg-white p-6 rounded-3xl shadow-md border border-slate-100"
+        >
+          {/* Header */}
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-3 bg-[#E0F2FE] rounded-xl"> {/* subtle blue background for icon */}
+              <ListTodo className="w-6 h-6 text-[#1F3C68]" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-[#1F3C68]">Task Summary</h2>
+              <p className="text-sm text-slate-500">Your daily task overview</p>
+            </div>
+          </div>
 
-  {/* Task Cards Grid */}
-  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-    {/* Pending */}
-    <motion.div
-      whileHover={{ y: -2 }}
-      className="bg-white p-5 rounded-2xl border border-yellow-200 shadow-sm hover:shadow-md transition-all"
-    >
-      <div className="flex items-center justify-between mb-3">
-        <Circle className="w-5 h-5 text-yellow-600" />
-        <span className="text-2xl font-bold text-yellow-600">3</span>
-      </div>
-      <p className="text-slate-700 font-semibold text-lg">Pending</p>
-      <p className="text-xs text-slate-500 mt-1 mb-3">Waiting to start</p>
-      <div className="border-t border-yellow-100 pt-2 space-y-1">
-        <div className="flex justify-between text-xs text-slate-600">
-          <span>💼 Work</span>
-          <span className="font-medium text-yellow-600">2</span>
-        </div>
-        <div className="flex justify-between text-xs text-slate-600">
-          <span>👤 Personal</span>
-          <span className="font-medium text-yellow-600">1</span>
-        </div>
-      </div>
-    </motion.div>
+          {/* Task Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Pending */}
+            <motion.div
+              whileHover={{ y: -2 }}
+              className="bg-white p-5 rounded-2xl border border-yellow-200 shadow-sm hover:shadow-md transition-all"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <Circle className="w-5 h-5 text-yellow-600" />
+                <span className="text-2xl font-bold text-yellow-600">3</span>
+              </div>
+              <p className="text-slate-700 font-semibold text-lg">Pending</p>
+              <p className="text-xs text-slate-500 mt-1 mb-3">Waiting to start</p>
+              <div className="border-t border-yellow-100 pt-2 space-y-1">
+              </div>
+            </motion.div>
 
-    {/* In Progress */}
-    <motion.div
-      whileHover={{ y: -2 }}
-      className="bg-white p-5 rounded-2xl border border-blue-200 shadow-sm hover:shadow-md transition-all"
-    >
-      <div className="flex items-center justify-between mb-3">
-        <PlayCircle className="w-5 h-5 text-[#1F3C68]" />
-        <span className="text-2xl font-bold text-[#1F3C68]">2</span>
-      </div>
-      <p className="text-slate-700 font-semibold text-lg">In Progress</p>
-      <p className="text-xs text-slate-500 mt-1 mb-3">Currently working</p>
-      <div className="border-t border-blue-100 pt-2 space-y-1">
-        <div className="flex justify-between text-xs text-slate-600">
-          <span>💼 Work</span>
-          <span className="font-medium text-[#1F3C68]">1</span>
-        </div>
-        <div className="flex justify-between text-xs text-slate-600">
-          <span>📂 Project</span>
-          <span className="font-medium text-[#1F3C68]">1</span>
-        </div>
-      </div>
-    </motion.div>
+            {/* In Progress */}
+            <motion.div
+              whileHover={{ y: -2 }}
+              className="bg-white p-5 rounded-2xl border border-blue-200 shadow-sm hover:shadow-md transition-all"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <PlayCircle className="w-5 h-5 text-[#1F3C68]" />
+                <span className="text-2xl font-bold text-[#1F3C68]">2</span>
+              </div>
+              <p className="text-slate-700 font-semibold text-lg">In Progress</p>
+              <p className="text-xs text-slate-500 mt-1 mb-3">Currently working</p>
+              <div className="border-t border-blue-100 pt-2 space-y-1">
+              </div>
+            </motion.div>
 
-    {/* Completed */}
-    <motion.div
-      whileHover={{ y: -2 }}
-      className="bg-white p-5 rounded-2xl border border-green-200 shadow-sm hover:shadow-md transition-all"
-    >
-      <div className="flex items-center justify-between mb-3">
-        <CheckCircle2 className="w-5 h-5 text-green-600" />
-        <span className="text-2xl font-bold text-green-600">5</span>
-      </div>
-      <p className="text-slate-700 font-semibold text-lg">Completed</p>
-      <p className="text-xs text-slate-500 mt-1 mb-3">Successfully done</p>
-      <div className="border-t border-green-100 pt-2 space-y-1">
-        <div className="flex justify-between text-xs text-slate-600">
-          <span>💼 Work</span>
-          <span className="font-medium text-green-600">3</span>
+            {/* Completed */}
+            <motion.div
+              whileHover={{ y: -2 }}
+              className="bg-white p-5 rounded-2xl border border-green-200 shadow-sm hover:shadow-md transition-all"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <CheckCircle2 className="w-5 h-5 text-green-600" />
+                <span className="text-2xl font-bold text-green-600">5</span>
+              </div>
+              <p className="text-slate-700 font-semibold text-lg">Completed</p>
+              <p className="text-xs text-slate-500 mt-1 mb-3">Successfully done</p>
+              <div className="border-t border-green-100 pt-2 space-y-1">
+              </div>
+            </motion.div>
         </div>
-        <div className="flex justify-between text-xs text-slate-600">
-          <span>👤 Personal</span>
-          <span className="font-medium text-green-600">2</span>
-        </div>
-      </div>
-    </motion.div>
-  </div>
-</motion.div>
+      </motion.div>
 
         </div>
       </main>
@@ -523,7 +580,7 @@ function SidebarContent({
         )}
       </div>  
 
-      <nav className="flex flex-col gap-2 flex-1">
+      <nav className="flex flex-col gap-2">
         {navItems.map((item, index) => (
           <motion.button
             key={item.path}
@@ -552,7 +609,7 @@ function SidebarContent({
         whileHover={{ x: 4 }}
         whileTap={{ scale: 0.95 }}
         onClick={logout}
-        className="flex items-center gap-3 px-4 py-3 rounded-xl text-red-500 font-medium hover:bg-red-50 transition-all mt-auto"
+        className="flex items-center gap-3 px-4 py-3 rounded-xl text-red-500 font-medium hover:bg-red-50 transition-all"
       >
         <LogOut size={20} />
         <span>Logout</span>
