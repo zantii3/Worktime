@@ -20,6 +20,7 @@ function Login() {
 
     if (user) {
       setError("");
+      localStorage.setItem("currentUser", JSON.stringify(user));
       navigate("/dashboard", { state: { user } });
     } else {
       setError("Invalid email or password");

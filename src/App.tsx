@@ -1,6 +1,6 @@
 import { Routes, Route } from "react-router-dom";
 
-// USER PAGE (only Dashboard exists)
+// USER PAGES
 import Index from "./pages/user/index";
 import Dashboard from "./pages/user/Dashboard";
 import Attendance from "./pages/user/Attendance";
@@ -14,7 +14,6 @@ import AdminTasks from "./pages/admin/Tasks";
 import AdminUsers from "./pages/admin/Users";
 
 import AdminSidebar from "./pages/admin/components/AdminSidebar";
-
 import { AdminProvider } from "./pages/admin/AdminContext";
 
 function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -31,7 +30,7 @@ function AdminLayout({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <Routes>
-      {/* USER ROUTE (only working one) */}
+      {/* USER ROUTES */}
       <Route path="/" element={<Index />} />
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/attendance" element={<Attendance />} />
