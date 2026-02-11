@@ -7,7 +7,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        primary: "#F28C28",      // Primary Button / Accent
+        primary: "#f4ac65",     // Primary Button / Accent
         secondary: "#1F3C68",    // Secondary Button / Headings
         background: "#F8FAFC",   // App background
         card: "#FFFFFF",         // Card background

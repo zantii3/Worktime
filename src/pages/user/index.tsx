@@ -1,25 +1,25 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom"; // <-- for navigation
+import { useNavigate } from "react-router-dom";
+import { Eye, EyeOff, Mail, Lock } from "lucide-react";
 import picture from "/logo.png";
 import accounts from "../data/accounts.json";
 
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Check credentials against JSON
     const user = accounts.find(
-      (u) => (u.email === email) && u.password === password
+      (u) => u.email === email && u.password === password
     );
 
     if (user) {
       setError("");
-      // Navigate to Dashboard and pass user info
       navigate("/dashboard", { state: { user } });
     } else {
       setError("Invalid email or password");
@@ -27,62 +27,81 @@ function Login() {
   };
 
   return (
-    <main className="min-h-screen bg-background flex items-center justify-center px-4 sm:px-6 lg:px-8">
-      <div className="bg-card w-full max-w-md rounded-2xl shadow-lg p-6 sm:p-8">
+    <main className="min-h-screen bg-background flex items-center justify-center px-4">
+      <div className="bg-card w-full max-w-md rounded-2xl shadow-xl p-8 transition hover:shadow-2xl duration-300">
+
         {/* Logo */}
-        <div className="flex justify-center mb-4 sm:mb-6">
+        <div className="flex justify-center">
           <img
             src={picture}
             alt="WorkTime+ Logo"
-            className="h-16 sm:h-20 md:h-28 lg:h-32 xl:h-36 object-contain"
-          />
+             className="h-16 md:h-16 lg:h-24 w-auto object-contain mb-10 transition duration-300 hover:scale-105"
+          /> 
         </div>
 
         {/* Title */}
-        <h1 className="text-xl sm:text-2xl font-bold text-text-heading text-center mb-4 sm:mb-6">
-          Sign in to WorkTime+
+        <h1 className="text-2xl font-bold text-text-heading text-center mb-6">
+          Sign in to Worktime+
         </h1>
 
-        {/* Form */}
-        <form className="space-y-4" onSubmit={handleSubmit}>
-          <div>
-            <label className="block text-sm sm:text-base font-medium mb-1">
-              Email or Username
-            </label>
+        <form className="space-y-5" onSubmit={handleSubmit}>
+
+          {/* Email */}
+          <div className="relative">
+            <Mail className="absolute left-3 top-3.5 w-5 h-5 text-primary" />
             <input
               type="text"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="Enter your email or username"
-              className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border rounded-lg text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="Email or Username"
+              className="w-full pl-10 pr-4 py-2.5 border rounded-lg 
+              focus:outline-none focus:ring-2 focus:ring-primary 
+              transition duration-200"
             />
           </div>
 
-          <div>
-            <label className="block text-sm sm:text-base font-medium mb-1">
-              Password
-            </label>
+          {/* Password */}
+          <div className="relative">
+            <Lock className="absolute left-3 top-3.5 w-5 h-5 text-primary" />
             <input
-              type="password"
+              type={showPassword ? "text" : "password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter your password"
-              className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border rounded-lg text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="Password"
+              className="w-full pl-10 pr-10 py-2.5 border rounded-lg 
+              focus:outline-none focus:ring-2 focus:ring-primary 
+              transition duration-200"
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3 top-3.5 text-primary"
+            >
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
           </div>
 
-          {/* Error message */}
-          {error && <p className="text-red-500 text-sm text-center">{error}</p>}
+          {/* Error */}
+          {error && (
+            <p className="text-red-500 text-sm text-center">{error}</p>
+          )}
 
+          {/* Forgot */}
           <div className="text-center">
-            <a href="#" className="text-sm sm:text-base text-primary hover:underline">
+            <a
+              href="#"
+              className="text-sm text-primary hover:underline"
+            >
               Forgot password?
             </a>
           </div>
 
+          {/* Button */}
           <button
             type="submit"
-            className="w-full bg-primary text-white py-2 sm:py-2.5 rounded-lg font-semibold text-sm sm:text-base hover:opacity-90 transition"
+            className="w-full bg-primary text-white py-2.5 rounded-lg 
+            font-semibold hover:scale-[1.02] active:scale-[0.98] 
+            transition duration-200 shadow-md"
           >
             Sign In
           </button>
