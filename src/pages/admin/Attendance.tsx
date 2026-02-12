@@ -1,22 +1,27 @@
-import { useAdmin } from "./AdminContext";
 import AdminTable from "./components/AdminTable";
+import { useAdmin } from "./context/AdminProvider";
 
-const AdminAttendance = () => {
+export default function Attendance() {
   const { attendance } = useAdmin();
 
   return (
-    <AdminTable headers={["Employee", "Date", "Time In", "Time Out", "Status"]}>
-      {attendance.map(a=>(
-        <tr key={a.id} className="border-b">
-          <td className="px-4 py-2">{a.employee}</td>
-          <td className="px-4 py-2">{a.date}</td>
-          <td className="px-4 py-2">{a.timeIn}</td>
-          <td className="px-4 py-2">{a.timeOut}</td>
-          <td className="px-4 py-2">{a.status}</td>
-        </tr>
-      ))}
-    </AdminTable>
-  );
-};
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl font-semibold text-slate-800">Attendance</h1>
+        <p className="text-sm text-slate-500">View attendance records.</p>
+      </div>
 
-export default AdminAttendance;
+      <AdminTable headers={["Employee", "Date", "Time In", "Time Out", "Status"]}>
+        {attendance.map((a) => (
+          <tr key={a.id}>
+            <td className="px-4 py-3">{a.employee}</td>
+            <td className="px-4 py-3">{a.date}</td>
+            <td className="px-4 py-3">{a.timeIn || "-"}</td>
+            <td className="px-4 py-3">{a.timeOut || "-"}</td>
+            <td className="px-4 py-3">{a.status}</td>
+          </tr>
+        ))}
+      </AdminTable>
+    </div>
+  );
+}

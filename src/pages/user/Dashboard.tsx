@@ -1,33 +1,13 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Menu,
-  X,
-  LayoutDashboard,
-  CalendarDays,
-  ClipboardList,
-  ListTodo,
-  LogOut,
-  Clock,
-  LogIn,
-  LogOut as LogOutIcon,
-  CheckCircle2,
-  Circle,
-  PlayCircle,
-} from "lucide-react";
-import { useClock } from "../../hooks/useClock";
-import picture from "/logo.png";
+import { Menu, Clock, LogIn, LogOut as LogOutIcon, CheckCircle2, Circle, PlayCircle, ListTodo } from "lucide-react";
+import { useClock } from "./hooks/useClock";
+import { useAttendance } from "./hooks/useAttendance";
+import type { TimeRecord } from "./hooks/useAttendance";
+import Usersidebar from "./components/Usersidebar.tsx";
+// local time formatter (use local helper to avoid import issues)
 
-interface TimeRecord {
-  date: string;
-  timeIn: string | null;
-  lunchOut: string | null
-  lunchIn: string | null;
-  timeOut: string | null;
-  device: string;
-  hours: number;
-}
 
 function Dashboard() {
   const location = useLocation();
@@ -37,91 +17,42 @@ function Dashboard() {
   const currentTime = useClock();
 
   const [menuOpen, setMenuOpen] = useState(false);
-  const [isAnimating, setIsAnimating] = useState(false);
   const [pendingLeavesCount, setPendingLeavesCount] = useState(0);
 
-  const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD format
+  const {
+    todayRecord,
+    setTodayRecord,
+    isAnimating,
+    handleTimeIn,
+    handleLunchOut,
+    handleLunchIn,
+    handleTimeOut,
+    getStatus,
+    calculateElapsedTime,
+  } = useAttendance(user?.id || "user");
 
-  // Detect device
-  const detectDevice = () => {
-    if (typeof navigator === "undefined" || typeof window === "undefined") return "Desktop";
-
-    const ua = navigator.userAgent.toLowerCase();
-    const screenWidth = window.innerWidth;
-
-    const isMobileUA = /android|iphone|ipod|blackberry|iemobile|opera mini/.test(ua);
-    const isTabletUA = /ipad|tablet|playbook|silk/.test(ua);
-
-    // Check viewport width (mobile view in DevTools)
-    const isMobileViewport = screenWidth <= 768;
-    const isTabletViewport = screenWidth > 768 && screenWidth <= 1024;
-
-    // Check for touch capability
-    const hasTouch = () => {
-      return (
-        "ontouchstart" in window ||
-        navigator.maxTouchPoints > 0 ||
-        (navigator as unknown as { msMaxTouchPoints: number }).msMaxTouchPoints > 0
-      );
-    };
-
-    // Determine device based on combined factors
-    if (isMobileUA || (isMobileViewport && hasTouch())) {
-      return "Mobile";
-    }
-
-    if (isTabletUA || isTabletViewport) {
-      return "Tablet";
-    }
-
-    return "Desktop";
-  };
-
-  // Initialize todayRecord with lazy initialization
-  const [todayRecord, setTodayRecord] = useState<TimeRecord | null>(() => {
-    if (typeof window === "undefined") return null;
-    
-    const stored = localStorage.getItem(`attendance_${user?.id || "user"}_${today}`);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-    return {
-      date: today,
-      timeIn: null,
-      lunchOut: null,
-      lunchIn: null,
-      timeOut: null,
-      device: detectDevice(),
-      hours: 0,
-    };
-  });
-
-  
-  useEffect(() => {
-    if (todayRecord) {
-      localStorage.setItem(
-        `attendance_${user?.id || "user"}_${today}`,
-        JSON.stringify(todayRecord)
-      );
-    }
-  }, [todayRecord, today, user]);
-
-  // Handle window resize to update device type
+  // (device detection is handled inside the attendance hook)
+  // Handle window resize to update device type (update record via hook)
   useEffect(() => {
     const handleResize = () => {
-      setTodayRecord(prev => {
+      setTodayRecord((prev: TimeRecord | null) => {
         if (!prev) return null;
-        const newDevice = detectDevice();
-        if (newDevice !== prev.device) {
-          return { ...prev, device: newDevice };
-        }
+        const ua = navigator.userAgent.toLowerCase();
+        const screenWidth = window.innerWidth;
+        const isMobileUA = /android|iphone|ipod|blackberry|iemobile|opera mini/.test(ua);
+        const isTabletUA = /ipad|tablet|playbook|silk/.test(ua);
+        const isMobileViewport = screenWidth <= 768;
+        const isTabletViewport = screenWidth > 768 && screenWidth <= 1024;
+        const hasTouch = () => "ontouchstart" in window || navigator.maxTouchPoints > 0;
+        const newDevice = isMobileUA || (isMobileViewport && hasTouch()) ? "Mobile" : isTabletUA || isTabletViewport ? "Tablet" : "Desktop";
+        if (newDevice !== prev.device) return { ...prev, device: newDevice };
         return prev;
       });
     };
 
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  }, [setTodayRecord]);
 
   // Load pending leaves count
   useEffect(() => {
@@ -145,87 +76,28 @@ function Dashboard() {
     }
   }, [user?.id]);
 
-  const handleTimeIn = () => {
-    if (todayRecord?.timeIn) return; // Already clocked in today
-    
-    setIsAnimating(true);
-    setTimeout(() => setIsAnimating(false), 1000);
+  // Prepare detail items for rendering
+  const detailItems = [
+    { label: "Time In", value: todayRecord?.timeIn, isTime: true,  textColor: "#1F3C68", bgClass: "from-blue-50 to-blue-100/50", borderClass: "border-blue-200" },
+    { label: "Lunch Out", value: todayRecord?.lunchOut, isTime: true,textColor: "#F28C28", bgClass: "from-blue-50 to-blue-100/50",borderClass: "border-blue-200"},
+    { label: "Lunch In", value: todayRecord?.lunchIn, isTime: true, textColor: "#F28C28", bgClass: "from-blue-50 to-blue-100/50", borderClass: "border-blue-200" },
+    { label: "Time Out", value: todayRecord?.timeOut, isTime: true, textColor: "#e91f1f", bgClass: "from-red-50 to-red-100/50", borderClass: "border-red-200" },
+    { label: "Elapsed Time", value: calculateElapsedTime(), isElapsed: true, textColor: "#F28C28" , bgClass: "from-yellow-50 to-yellow-100/50", borderClass: "border-yellow-200" }, 
+    { label: "Device", value: todayRecord?.device || "---", isTime: false, textColor: "#1F3C68", bgClass: "from-blue-50 to-blue-100/50", borderClass: "border-blue-200"},
+  ];
 
-    const now = new Date();
-    setTodayRecord({
-      ...todayRecord!,
-      timeIn: now.toISOString(),
-      device: detectDevice(),
+  const formatTimeLocal = (date?: string | number | Date) => {
+    if (!date) return "--:--";
+    return new Date(date).toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
     });
   };
 
-  const handleLunchOut = () => {
-  if (!todayRecord?.timeIn || todayRecord.lunchOut) return;
-
-  const now = new Date();
-
-  setTodayRecord({
-    ...todayRecord,
-    lunchOut: now.toISOString(),
-  });
-};
-
-  const handleLunchIn = () => {
-    if (!todayRecord?.lunchOut || todayRecord.lunchIn) return;
-
-    const now = new Date();
-
-    setTodayRecord({
-      ...todayRecord,
-      lunchIn: now.toISOString(),
-    });
-  };
-
-  const handleTimeOut = () => {
-  if (!todayRecord?.timeIn || todayRecord?.timeOut) return;
-
-  const now = new Date();
-  const timeInDate = new Date(todayRecord.timeIn);
-
-  let totalMilliseconds = now.getTime() - timeInDate.getTime();
-
-  // Subtract lunch duration if completed
-  if (todayRecord.lunchOut && todayRecord.lunchIn) {
-    const lunchOutDate = new Date(todayRecord.lunchOut);
-    const lunchInDate = new Date(todayRecord.lunchIn);
-    const lunchDuration = lunchInDate.getTime() - lunchOutDate.getTime();
-    totalMilliseconds -= lunchDuration;
-  }
-
-  const hours = totalMilliseconds / 1000 / 60 / 60;
-
-  setTodayRecord({
-    ...todayRecord,
-    timeOut: now.toISOString(),
-    hours: parseFloat(hours.toFixed(2)),
-  });
-};
+  
 
 
-  const getStatus = () => {
-    if (!todayRecord?.timeIn) return "Not Clocked In";
-    if (todayRecord.timeOut) return "Clocked Out";
-    return "Clocked In";
-  };
-
-  const calculateElapsedTime = () => {
-    if (!todayRecord?.timeIn) return "0h 0m";
-    
-    const timeInDate = new Date(todayRecord.timeIn);
-    const now = todayRecord.timeOut ? new Date(todayRecord.timeOut) : new Date();
-    
-    const diff = now.getTime() - timeInDate.getTime();
-    const hours = Math.floor(diff / 1000 / 60 / 60);
-    const minutes = Math.floor((diff / 1000 / 60) % 60);
-    
-    return `${hours}h ${minutes}m`;
-  };
-
+  
   const handleLogout = () => {
     localStorage.removeItem("currentUser");
     navigate("/");
@@ -235,7 +107,7 @@ function Dashboard() {
     <div className="min-h-screen bg-[#F8FAFC] flex">
       {/* Sidebar (Desktop) */}
       <aside className="hidden md:flex w-64 bg-white shadow-lg flex-col border-r border-slate-200">
-        <SidebarContent navigate={navigate} logout={handleLogout} />
+        <Usersidebar navigate={navigate} logout={handleLogout} />
       </aside>
 
       {/* Mobile Sidebar */}
@@ -256,7 +128,7 @@ function Dashboard() {
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
               className="fixed left-0 top-0 w-64 bg-white h-full shadow-2xl z-50"
             >
-              <SidebarContent
+              <Usersidebar
                 navigate={navigate}
                 logout={handleLogout}
                 close={() => setMenuOpen(false)}
@@ -449,81 +321,27 @@ function Dashboard() {
               </div>
 
               {/* Time Details */}
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-                <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 p-4 rounded-xl border border-blue-200">
-                  <p className="text-xs text-slate-600 mb-1 font-medium">
-                    Time In
-                  </p>
-                  <p className="text-lg font-bold text-[#1F3C68] tabular-nums">
-                    {todayRecord?.timeIn
-                      ? new Date(todayRecord.timeIn).toLocaleTimeString("en-US", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : "--:--"}
-                  </p>
-                </div>
-
-                 <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 p-4 rounded-xl border border-blue-200">
-                  <p className="text-xs text-slate-600 mb-1 font-medium">
-                    Lunch Out
-                  </p>
-                  <p className="text-lg font-bold text-orange-600 tabular-nums">
-                    {todayRecord?.lunchOut
-                      ? new Date(todayRecord.lunchOut).toLocaleTimeString("en-US", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : "--:--"}
-                  </p>
-                </div>
-
-                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-200">
-                <p className="text-xs text-slate-600 mb-1 font-medium">
-                    Lunch In
-                  </p>
-                  <p className="text-lg font-bold text-orange-600 tabular-nums">
-                    {todayRecord?.lunchIn
-                      ? new Date(todayRecord.lunchIn  ).toLocaleTimeString("en-US", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : "--:--"}
-                  </p>
-                </div>
-
-                <div className="bg-gradient-to-br from-rose-50 to-rose-100/50 p-4 rounded-xl border border-rose-200">
-                  <p className="text-xs text-slate-600 mb-1 font-medium">
-                    Time Out
-                  </p>
-                  <p className="text-lg font-bold text-rose-600 tabular-nums">
-                    {todayRecord?.timeOut
-                      ? new Date(todayRecord.timeOut).toLocaleTimeString("en-US", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : "--:--"}
-                  </p>
-                </div>
-
-                <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-4 rounded-xl border border-[#F28C28]/30">
-                  <p className="text-xs text-slate-600 mb-1 font-medium">
-                    Elapsed Time
-                  </p>
-                  <p className="text-lg font-bold text-[#F28C28] tabular-nums">
-                    {calculateElapsedTime()}
-                  </p>
-                </div>
-
-                <div className="bg-gradient-to-br from-slate-50 to-slate-100 p-4 rounded-xl border border-slate-200">
-                  <p className="text-xs text-slate-600 mb-1 font-medium">
-                    Device
-                  </p>
-                  <p className="text-lg font-bold text-slate-700">
-                    {todayRecord?.device || "---"}
-                  </p>
-                </div>
+             <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+            {detailItems.map((item, idx) => (
+              <div
+                key={idx}
+                className={`p-4 rounded-xl border ${item.borderClass} bg-gradient-to-br ${item.bgClass}`}
+              >
+                <p className="text-xs text-slate-600 mb-1 font-medium">{item.label}</p>
+                <p
+                  className={`text-lg font-bold tabular-nums`}
+                  style={{ color: item.textColor }}
+                >
+                  {item.isElapsed
+                    ? item.value
+                    : item.isTime
+                    ? formatTimeLocal(item.value ?? undefined)
+                    : item.value}
+                </p>
               </div>
+            ))}
+          </div>
+
             </div>
           </motion.div>
 
@@ -558,8 +376,7 @@ function Dashboard() {
           <motion.div
             initial={{ y: -20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-          
-          
+  
           >
             
             <motion.button
@@ -648,81 +465,5 @@ function Dashboard() {
 }
 
 /* Sidebar Component */
-function SidebarContent({
-  navigate,
-  logout,
-  close,
-}: {
-  navigate: (path: string) => void;
-  logout: () => void;
-  close?: () => void;
-}) {
-  const navItems = [
-    { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
-    { icon: CalendarDays, label: "Attendance", path: "/attendance" },
-    { icon: ClipboardList, label: "Leave", path: "/leave" },
-    { icon: ListTodo, label: "Task", path: "/task" },
-  ];
-
-  return (
-    <div className="flex flex-col h-full p-6">
-      <div className="flex items-center justify-center mb-10 ">
-        <motion.img
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          transition={{ type: "spring", stiffness: 200 }}
-          src={picture}
-          alt="Logo"
-          className="w-20 md:w-20 lg:w-28 h-auto object-contain"
-        />
-        {close && (
-          <motion.button
-            whileHover={{ rotate: 90 }}
-            whileTap={{ scale: 0.9 }}
-            onClick={close}
-           className="absolute top-0 right-0 mt-2 mr-2 p-2 hover:bg-slate-100 rounded-lg transition-colors"
-          >
-            <X className="text-slate-600" />
-          </motion.button>
-        )}
-      </div>  
-
-      <nav className="flex flex-col gap-2">
-        {navItems.map((item, index) => (
-          <motion.button
-            key={item.path}
-            initial={{ x: -20, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            transition={{ delay: index * 0.1 }}
-            whileHover={{ x: 4, backgroundColor: "rgba(242, 140, 40, 0.1)" }}
-            onClick={() => {
-              navigate(item.path);
-              close?.();
-            }}
-            className="flex items-center gap-3 px-4 py-3 rounded-xl text-[#1E293B] font-medium transition-all group"
-          >
-            <item.icon
-              size={20}
-              className="text-slate-500 group-hover:text-[#F28C28] transition-colors"
-            />
-            <span className="group-hover:text-[#F28C28] transition-colors">
-              {item.label}
-            </span>
-          </motion.button>
-        ))}
-      </nav>
-
-      <motion.button
-        whileHover={{ x: 4 }}
-        whileTap={{ scale: 0.95 }}
-        onClick={logout}
-        className="flex items-center gap-3 px-4 py-3 rounded-xl text-red-500 font-medium hover:bg-red-50 transition-all"
-      >
-        <LogOut size={20} />
-        <span>Logout</span>
-      </motion.button>
-    </div>
-  );
-}
 
 export default Dashboard;
