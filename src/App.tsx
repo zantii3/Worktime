@@ -7,7 +7,7 @@ import Attendance from "./pages/user/Attendance";
 import Leave from "./pages/user/Leave";
 
 // ADMIN PAGES
-import AdminDashboard from "./pages/admin/Dashboard";
+import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdminAttendance from "./pages/admin/Attendance";
 import AdminLeave from "./pages/admin/Leave";
 import AdminTasks from "./pages/admin/Tasks";

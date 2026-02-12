@@ -22,6 +22,8 @@ import picture from "/logo.png";
 interface TimeRecord {
   date: string;
   timeIn: string | null;
+  lunchOut: string | null
+  lunchIn: string | null;
   timeOut: string | null;
   device: string;
   hours: number;
@@ -86,6 +88,8 @@ function Dashboard() {
     return {
       date: today,
       timeIn: null,
+      lunchOut: null,
+      lunchIn: null,
       timeOut: null,
       device: detectDevice(),
       hours: 0,
@@ -155,22 +159,53 @@ function Dashboard() {
     });
   };
 
-  const handleTimeOut = () => {
-    if (!todayRecord?.timeIn || todayRecord?.timeOut) return; // Must be clocked in first
-    
-    setIsAnimating(true);
-    setTimeout(() => setIsAnimating(false), 1000);
+  const handleLunchOut = () => {
+  if (!todayRecord?.timeIn || todayRecord.lunchOut) return;
+
+  const now = new Date();
+
+  setTodayRecord({
+    ...todayRecord,
+    lunchOut: now.toISOString(),
+  });
+};
+
+  const handleLunchIn = () => {
+    if (!todayRecord?.lunchOut || todayRecord.lunchIn) return;
 
     const now = new Date();
-    const timeInDate = new Date(todayRecord.timeIn);
-    const hours = (now.getTime() - timeInDate.getTime()) / 1000 / 60 / 60;
 
     setTodayRecord({
       ...todayRecord,
-      timeOut: now.toISOString(),
-      hours: parseFloat(hours.toFixed(2)),
+      lunchIn: now.toISOString(),
     });
   };
+
+  const handleTimeOut = () => {
+  if (!todayRecord?.timeIn || todayRecord?.timeOut) return;
+
+  const now = new Date();
+  const timeInDate = new Date(todayRecord.timeIn);
+
+  let totalMilliseconds = now.getTime() - timeInDate.getTime();
+
+  // Subtract lunch duration if completed
+  if (todayRecord.lunchOut && todayRecord.lunchIn) {
+    const lunchOutDate = new Date(todayRecord.lunchOut);
+    const lunchInDate = new Date(todayRecord.lunchIn);
+    const lunchDuration = lunchInDate.getTime() - lunchOutDate.getTime();
+    totalMilliseconds -= lunchDuration;
+  }
+
+  const hours = totalMilliseconds / 1000 / 60 / 60;
+
+  setTodayRecord({
+    ...todayRecord,
+    timeOut: now.toISOString(),
+    hours: parseFloat(hours.toFixed(2)),
+  });
+};
+
 
   const getStatus = () => {
     if (!todayRecord?.timeIn) return "Not Clocked In";
@@ -317,7 +352,7 @@ function Dashboard() {
 
             <div className="p-6 md:p-8">
               {/* Action Buttons */}
-              <div className="grid grid-cols-2 gap-4 mb-6">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
@@ -340,6 +375,50 @@ function Dashboard() {
                   <div className="relative flex items-center justify-center gap-2">
                     <LogIn className="w-5 h-5" />
                     <span className="text-lg">Time In</span>
+                  </div>
+                </motion.button>
+                <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={handleLunchOut}
+                disabled={
+                  !todayRecord?.timeIn ||
+                  !!todayRecord?.lunchOut ||
+                  !!todayRecord?.timeOut
+                }
+                className={`p-6 rounded-2xl font-bold text-white shadow-lg transition-all ${
+                  !todayRecord?.timeIn ||
+                  todayRecord?.lunchOut ||
+                  todayRecord?.timeOut
+                    ? "bg-slate-300 cursor-not-allowed"
+                    : "bg-gradient-to-br from-yellow-500 to-orange-500"
+                }`}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <Clock className="w-5 h-5" />
+                  <span className="text-lg">Lunch Out</span>
+                </div>
+              </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleLunchIn}
+                  disabled={
+                    !todayRecord?.lunchOut ||
+                    !!todayRecord?.lunchIn ||
+                    !!todayRecord?.timeOut
+                  }
+                  className={`p-6 rounded-2xl font-bold text-white shadow-lg transition-all ${
+                    !todayRecord?.lunchOut ||
+                    todayRecord?.lunchIn ||
+                    todayRecord?.timeOut
+                      ? "bg-slate-300 cursor-not-allowed"
+                      : "bg-gradient-to-br from-blue-500 to-indigo-600"
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <Clock className="w-5 h-5" />
+                    <span className="text-lg">Lunch In</span>
                   </div>
                 </motion.button>
 
@@ -370,7 +449,7 @@ function Dashboard() {
               </div>
 
               {/* Time Details */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
                 <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 p-4 rounded-xl border border-blue-200">
                   <p className="text-xs text-slate-600 mb-1 font-medium">
                     Time In
@@ -378,6 +457,34 @@ function Dashboard() {
                   <p className="text-lg font-bold text-[#1F3C68] tabular-nums">
                     {todayRecord?.timeIn
                       ? new Date(todayRecord.timeIn).toLocaleTimeString("en-US", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "--:--"}
+                  </p>
+                </div>
+
+                 <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 p-4 rounded-xl border border-blue-200">
+                  <p className="text-xs text-slate-600 mb-1 font-medium">
+                    Lunch Out
+                  </p>
+                  <p className="text-lg font-bold text-orange-600 tabular-nums">
+                    {todayRecord?.lunchOut
+                      ? new Date(todayRecord.lunchOut).toLocaleTimeString("en-US", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "--:--"}
+                  </p>
+                </div>
+
+                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-200">
+                <p className="text-xs text-slate-600 mb-1 font-medium">
+                    Lunch In
+                  </p>
+                  <p className="text-lg font-bold text-orange-600 tabular-nums">
+                    {todayRecord?.lunchIn
+                      ? new Date(todayRecord.lunchIn  ).toLocaleTimeString("en-US", {
                           hour: "2-digit",
                           minute: "2-digit",
                         })

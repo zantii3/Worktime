@@ -8,6 +8,8 @@ import picture from "/logo.png";
 interface AttendanceRecord {
   date: string;
   timeIn: string;
+  lunchOut?: string | null;
+  lunchIn?: string | null;
   timeOut: string;
   hours: number;
   device: string;
@@ -93,24 +95,42 @@ function AttendanceApp() {
             {day}
           </span>
           {record && record.timeIn && (
-            <div className="mt-1 space-y-1">
-              <div className="text-[10px] md:text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-md flex items-center gap-1">
-                <div className="w-1 h-1 rounded-full bg-green-500" />
-                {new Date(record.timeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </div>
-              {record.timeOut && (
-                <div className="text-[10px] md:text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded-md flex items-center gap-1">
-                  <div className="w-1 h-1 rounded-full bg-red-500" />
-                  {new Date(record.timeOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </div>
-              )}
-              {record.hours > 0 && (
-                <div className="text-[10px] font-bold text-[#F28C28] mt-1">
-                  {record.hours} hrs
-                </div>
-              )}
+          <div className="mt-1 space-y-1">
+            <div className="text-[10px] md:text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+              <div className="w-1 h-1 rounded-full bg-green-500" />
+              IN {new Date(record.timeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </div>
-          )}
+
+            {record.lunchOut && (
+              <div className="text-[10px] md:text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                <div className="w-1 h-1 rounded-full bg-yellow-500" />
+                LO {new Date(record.lunchOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            )}
+
+            {record.lunchIn && (
+              <div className="text-[10px] md:text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                <div className="w-1 h-1 rounded-full bg-blue-500" />
+                LI {new Date(record.lunchIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            )}
+
+            {record.timeOut && (
+              <div className="text-[10px] md:text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                <div className="w-1 h-1 rounded-full bg-red-500" />
+                OUT {new Date(record.timeOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            )}
+
+            {/* Hours */}
+            {record.hours > 0 && (
+              <div className="text-[10px] font-bold text-[#F28C28] mt-1">
+                {record.hours} hrs
+              </div>
+            )}
+          </div>
+        )}
+
         </div>
       );
     }
@@ -340,19 +360,34 @@ function AttendanceApp() {
                             {record.hours} hrs
                           </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                         <div className="bg-white p-2.5 rounded-xl border border-slate-100">
+                          <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Time In</p>
+                          <p className="text-sm font-bold text-green-600">
+                            {record.timeIn ? new Date(record.timeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
+                          </p>
+                        </div>
+
                           <div className="bg-white p-2.5 rounded-xl border border-slate-100">
-                            <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Time In</p>
-                            <p className="text-sm font-bold text-green-600">
-                              {record.timeIn ? new Date(record.timeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
-                            </p>
-                          </div>
-                          <div className="bg-white p-2.5 rounded-xl border border-slate-100">
-                            <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Time Out</p>
-                            <p className="text-sm font-bold text-red-600">
-                              {record.timeOut ? new Date(record.timeOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
-                            </p>
-                          </div>
+                          <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Lunch Out</p>
+                          <p className="text-sm font-bold text-yellow-600">
+                            {record.lunchOut ? new Date(record.lunchOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
+                          </p>
+                        </div>
+                        
+                        <div className="bg-white p-2.5 rounded-xl border border-slate-100">
+                        <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Lunch In</p>
+                        <p className="text-sm font-bold text-blue-600">
+                          {record.lunchIn ? new Date(record.lunchIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
+                        </p>
+                      </div>
+
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-100">
+                      <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Time Out</p>
+                      <p className="text-sm font-bold text-red-600">
+                        {record.timeOut ? new Date(record.timeOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
+                      </p>
+                    </div>
                         </div>
                       </motion.div>
                     ))
