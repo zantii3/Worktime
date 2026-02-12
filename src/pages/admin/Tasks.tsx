@@ -1,89 +1,175 @@
 import { useState } from "react";
 import AdminTable from "./components/AdminTable";
-import {type Task } from "./AdminTypes";
-import { useAdmin } from "./AdminContext";
+import { useAdmin } from "./context/AdminProvider";
+import type { Task, TaskPriority, TaskStatus } from "./context/AdminTypes";
+import { notifyError, notifySuccess } from "./utils/toast";
 
-const employees = ["Juan Dela Cruz", "Maria Santos", "Pedro Reyes"];
+type TaskForm = Omit<Task, "id">;
 
-const AdminTasks = () => {
+const createId = (): number => Date.now() + Math.floor(Math.random() * 1000);
+
+export default function Tasks() {
   const { tasks, setTasks } = useAdmin();
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState<Task | null>(null);
-  const [form, setForm] = useState({ employee: "", title: "", priority: "Low" as Task["priority"], status: "Pending" as Task["status"] });
+  const [form, setForm] = useState<TaskForm>({
+    title: "",
+    description: "",
+    assignedTo: "",
+    priority: "Low",
+    status: "Pending",
+  });
 
-  const handleAdd = () => {
-    setForm({ employee: employees[0], title: "", priority: "Low", status: "Pending" });
-    setEditingTask(null);
-    setIsModalOpen(true);
+  const [editingId, setEditingId] = useState<number | null>(null);
+
+  const onChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+  ) => {
+    const { name, value } = e.target;
+    setForm((p) => ({ ...p, [name]: value }));
   };
 
-  const handleEdit = (task: Task) => {
-    setForm({ employee: task.employee, title: task.title, priority: task.priority, status: task.status });
-    setEditingTask(task);
-    setIsModalOpen(true);
+  const reset = () => {
+    setForm({
+      title: "",
+      description: "",
+      assignedTo: "",
+      priority: "Low",
+      status: "Pending",
+    });
+    setEditingId(null);
   };
 
-  const handleSave = () => {
-    if (!form.title) return alert("Task title is required");
-    if (editingTask) {
-      setTasks(tasks.map(t => t.id === editingTask.id ? { ...t, ...form } : t));
-    } else {
-      setTasks([...tasks, { id: Date.now(), ...form }]);
+  const save = () => {
+    if (!form.title.trim()) return notifyError("Task title is required.");
+    if (!form.assignedTo.trim()) return notifyError("Assigned user is required.");
+
+    if (editingId) {
+      setTasks((prev) => prev.map((t) => (t.id === editingId ? { ...t, ...form } : t)));
+      notifySuccess("Task updated.");
+      reset();
+      return;
     }
-    setIsModalOpen(false);
+
+    const newTask: Task = { id: createId(), ...form }; // safe (inside handler)
+    setTasks((prev) => [newTask, ...prev]);
+    notifySuccess("Task added.");
+    reset();
   };
 
-  const updateStatus = (id: number, status: Task["status"]) => {
-    setTasks(tasks.map(t => t.id === id ? { ...t, status } : t));
+  const edit = (t: Task) => {
+    setEditingId(t.id);
+    setForm({
+      title: t.title,
+      description: t.description,
+      assignedTo: t.assignedTo,
+      priority: t.priority,
+      status: t.status,
+    });
+  };
+
+  const markCompleted = (id: number) => {
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, status: "Completed" } : t)));
+    notifySuccess("Task marked as completed.");
   };
 
   return (
-    <div>
-      <button className="mb-4 bg-green-500 text-white px-4 py-2 rounded" onClick={handleAdd}>Add Task</button>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl font-semibold text-slate-800">Task Management</h1>
+        <p className="text-sm text-slate-500">Create, assign, and track tasks.</p>
+      </div>
 
-      <AdminTable headers={["Employee", "Task", "Priority", "Status", "Actions"]}>
-        {tasks.map(t => (
-          <tr key={t.id} className="border-b">
-            <td className="px-4 py-2">{t.employee}</td>
-            <td className="px-4 py-2">{t.title}</td>
-            <td className="px-4 py-2">{t.priority}</td>
-            <td className="px-4 py-2">{t.status}</td>
-            <td className="px-4 py-2 space-x-2">
-              <button className="bg-blue-500 text-white px-2 py-1 rounded" onClick={() => updateStatus(t.id, "Completed")} disabled={t.status==="Completed"}>Mark Completed</button>
-              <button className="bg-yellow-500 text-white px-2 py-1 rounded" onClick={() => handleEdit(t)}>Edit</button>
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input
+            name="title"
+            value={form.title}
+            onChange={onChange}
+            placeholder="Task title"
+            className="w-full border border-slate-200 rounded-lg px-3 py-2"
+          />
+          <input
+            name="assignedTo"
+            value={form.assignedTo}
+            onChange={onChange}
+            placeholder="Assigned to (name)"
+            className="w-full border border-slate-200 rounded-lg px-3 py-2"
+          />
+        </div>
+
+        <textarea
+          name="description"
+          value={form.description}
+          onChange={onChange}
+          placeholder="Description"
+          className="w-full border border-slate-200 rounded-lg px-3 py-2 min-h-[90px]"
+        />
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <select
+            name="priority"
+            value={form.priority}
+            onChange={onChange}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2"
+          >
+            {(["Low", "Medium", "High"] as TaskPriority[]).map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+
+          <select
+            name="status"
+            value={form.status}
+            onChange={onChange}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2"
+          >
+            {(["Pending", "In Progress", "Completed"] as TaskStatus[]).map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={save}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm"
+          >
+            {editingId ? "Update Task" : "Add Task"}
+          </button>
+          {editingId && (
+            <button
+              onClick={reset}
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm"
+            >
+              Cancel Edit
+            </button>
+          )}
+        </div>
+      </div>
+
+      <AdminTable headers={["Title", "Assigned To", "Priority", "Status", "Actions"]}>
+        {tasks.map((t) => (
+          <tr key={t.id}>
+            <td className="px-4 py-3">
+              <div className="font-medium text-slate-800">{t.title}</div>
+              <div className="text-xs text-slate-500">{t.description}</div>
+            </td>
+            <td className="px-4 py-3">{t.assignedTo}</td>
+            <td className="px-4 py-3">{t.priority}</td>
+            <td className="px-4 py-3">{t.status}</td>
+            <td className="px-4 py-3 space-x-3">
+              <button onClick={() => edit(t)} className="text-sm text-blue-700 hover:underline">
+                Edit
+              </button>
+              {t.status !== "Completed" && (
+                <button onClick={() => markCompleted(t.id)} className="text-sm text-green-700 hover:underline">
+                  Complete
+                </button>
+              )}
             </td>
           </tr>
         ))}
       </AdminTable>
-
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded shadow w-96">
-            <h2 className="text-xl font-bold mb-4">{editingTask ? "Edit Task" : "Add Task"}</h2>
-            <label>Employee</label>
-            <select className="w-full border px-2 py-1 mb-4 rounded" value={form.employee} onChange={e => setForm({...form, employee:e.target.value})}>
-              {employees.map(emp=><option key={emp} value={emp}>{emp}</option>)}
-            </select>
-            <label>Task Title</label>
-            <input type="text" className="w-full border px-2 py-1 mb-4 rounded" value={form.title} onChange={e => setForm({...form,title:e.target.value})}/>
-            <label>Priority</label>
-            <select className="w-full border px-2 py-1 mb-4 rounded" value={form.priority} onChange={e=>setForm({...form,priority:e.target.value as Task["priority"]})}>
-              <option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option>
-            </select>
-            <label>Status</label>
-            <select className="w-full border px-2 py-1 mb-4 rounded" value={form.status} onChange={e=>setForm({...form,status:e.target.value as Task["status"]})}>
-              <option value="Pending">Pending</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option>
-            </select>
-            <div className="flex justify-end space-x-2">
-              <button className="bg-gray-400 text-white px-4 py-2 rounded" onClick={()=>setIsModalOpen(false)}>Cancel</button>
-              <button className="bg-green-500 text-white px-4 py-2 rounded" onClick={handleSave}>Save</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
-};
-
-export default AdminTasks;
+}

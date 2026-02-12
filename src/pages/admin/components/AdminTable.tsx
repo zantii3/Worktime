@@ -1,27 +1,30 @@
-import React from "react";
+import { type ReactNode } from "react";
 
-interface AdminTableProps {
+interface Props {
   headers: string[];
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
-const AdminTable: React.FC<AdminTableProps> = ({ headers, children }) => {
+export default function AdminTable({ headers, children }: Props) {
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full bg-white shadow rounded-lg overflow-hidden">
-        <thead className="bg-gray-200">
-          <tr>
-            {headers.map((h, i) => (
-              <th key={i} className="text-left px-4 py-2 font-semibold">
-                {h}
+      <table className="w-full text-sm text-left border-collapse">
+        <thead>
+          <tr className="bg-slate-50 border-b border-slate-200">
+            {headers.map((header) => (
+              <th
+                key={header}
+                className="px-4 py-3 font-medium text-slate-600"
+              >
+                {header}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200">{children}</tbody>
+        <tbody className="divide-y divide-slate-100">
+          {children}
+        </tbody>
       </table>
     </div>
   );
-};
-
-export default AdminTable;
+}

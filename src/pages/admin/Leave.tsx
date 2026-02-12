@@ -1,85 +1,172 @@
 import { useState } from "react";
 import AdminTable from "./components/AdminTable";
-import { type LeaveRequest } from "./AdminTypes";
-import { useAdmin } from "./AdminContext";
+import { useAdmin } from "./context/AdminProvider";
+import type { LeaveRequest, LeaveStatus, LeaveType } from "./context/AdminTypes";
+import { notifyError, notifySuccess } from "./utils/toast";
 
-const employees = ["Juan Dela Cruz", "Maria Santos", "Pedro Reyes"];
+type LeaveForm = Omit<LeaveRequest, "id">;
 
-const AdminLeave = () => {
+const createId = (): number => Date.now() + Math.floor(Math.random() * 1000);
+
+export default function Leave() {
   const { leaves, setLeaves } = useAdmin();
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingLeave, setEditingLeave] = useState<LeaveRequest | null>(null);
-  const [form, setForm] = useState({ employee: "", type: "Vacation" as LeaveRequest["type"], date: "", status: "Pending" as LeaveRequest["status"] });
+  const [form, setForm] = useState<LeaveForm>({
+    employee: "",
+    type: "Vacation",
+    date: "",
+    reason: "",
+    status: "Pending",
+  });
 
-  const handleAdd = () => {
-    setForm({ employee: employees[0], type: "Vacation", date: "", status: "Pending" });
-    setEditingLeave(null);
-    setIsModalOpen(true);
+  const [editingId, setEditingId] = useState<number | null>(null);
+
+  const onChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
+    const { name, value } = e.target;
+    setForm((p) => ({ ...p, [name]: value }));
   };
 
-  const handleEdit = (leave: LeaveRequest) => {
-    setForm({ employee: leave.employee, type: leave.type, date: leave.date, status: leave.status });
-    setEditingLeave(leave);
-    setIsModalOpen(true);
+  const reset = () => {
+    setForm({ employee: "", type: "Vacation", date: "", reason: "", status: "Pending" });
+    setEditingId(null);
   };
 
-  const handleSave = () => {
-    if (!form.date) return alert("Leave date required");
-    if (editingLeave) setLeaves(leaves.map(l=>l.id===editingLeave.id?{...l,...form}:l));
-    else setLeaves([...leaves,{id:Date.now(),...form}]);
-    setIsModalOpen(false);
+  const save = () => {
+    if (!form.employee.trim()) return notifyError("Employee is required.");
+    if (!form.date.trim()) return notifyError("Date is required.");
+    if (!form.reason.trim()) return notifyError("Reason is required.");
+
+    if (editingId) {
+      setLeaves((prev) => prev.map((l) => (l.id === editingId ? { ...l, ...form } : l)));
+      notifySuccess("Leave updated.");
+      reset();
+      return;
+    }
+
+    const newLeave: LeaveRequest = { id: createId(), ...form };
+    setLeaves((prev) => [newLeave, ...prev]);
+    notifySuccess("Leave added.");
+    reset();
   };
 
-  const approveLeave = (id:number)=>setLeaves(leaves.map(l=>l.id===id?{...l,status:"Approved"}:l));
-  const rejectLeave = (id:number)=>setLeaves(leaves.map(l=>l.id===id?{...l,status:"Rejected"}:l));
+  const edit = (l: LeaveRequest) => {
+    setEditingId(l.id);
+    setForm({
+      employee: l.employee,
+      type: l.type,
+      date: l.date,
+      reason: l.reason,
+      status: l.status,
+    });
+  };
+
+  const setStatus = (id: number, status: "Approved" | "Rejected") => {
+    setLeaves((prev) => prev.map((l) => (l.id === id ? { ...l, status } : l)));
+    notifySuccess(`Leave ${status.toLowerCase()}.`);
+  };
 
   return (
-    <div>
-      <button className="mb-4 bg-green-500 text-white px-4 py-2 rounded" onClick={handleAdd}>Add Leave</button>
-      <AdminTable headers={["Employee","Type","Date","Status","Actions"]}>
-        {leaves.map(l=>(
-          <tr key={l.id} className="border-b">
-            <td className="px-4 py-2">{l.employee}</td>
-            <td className="px-4 py-2">{l.type}</td>
-            <td className="px-4 py-2">{l.date}</td>
-            <td className="px-4 py-2">{l.status}</td>
-            <td className="px-4 py-2 space-x-2">
-              <button className="bg-green-500 text-white px-2 py-1 rounded" onClick={()=>approveLeave(l.id)} disabled={l.status!=="Pending"}>Approve</button>
-              <button className="bg-red-500 text-white px-2 py-1 rounded" onClick={()=>rejectLeave(l.id)} disabled={l.status!=="Pending"}>Reject</button>
-              <button className="bg-yellow-500 text-white px-2 py-1 rounded" onClick={()=>handleEdit(l)}>Edit</button>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl font-semibold text-slate-800">Leave Management</h1>
+        <p className="text-sm text-slate-500">Approve, reject, and track requests.</p>
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input
+            name="employee"
+            value={form.employee}
+            onChange={onChange}
+            placeholder="Employee name"
+            className="w-full border border-slate-200 rounded-lg px-3 py-2"
+          />
+
+          <select
+            name="type"
+            value={form.type}
+            onChange={onChange}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2"
+          >
+            {(["Vacation", "Sick"] as LeaveType[]).map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+
+        <input
+          name="date"
+          type="date"
+          value={form.date}
+          onChange={onChange}
+          className="w-full border border-slate-200 rounded-lg px-3 py-2"
+        />
+
+        <textarea
+          name="reason"
+          value={form.reason}
+          onChange={onChange}
+          placeholder="Reason"
+          className="w-full border border-slate-200 rounded-lg px-3 py-2 min-h-[90px]"
+        />
+
+        <select
+          name="status"
+          value={form.status}
+          onChange={onChange}
+          className="w-full border border-slate-200 rounded-lg px-3 py-2"
+        >
+          {(["Pending", "Approved", "Rejected"] as LeaveStatus[]).map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+
+        <div className="flex gap-2">
+          <button
+            onClick={save}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm"
+          >
+            {editingId ? "Update Leave" : "Add Leave"}
+          </button>
+          {editingId && (
+            <button
+              onClick={reset}
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm"
+            >
+              Cancel Edit
+            </button>
+          )}
+        </div>
+      </div>
+
+      <AdminTable headers={["Employee", "Type", "Date", "Reason", "Status", "Actions"]}>
+        {leaves.map((l) => (
+          <tr key={l.id}>
+            <td className="px-4 py-3">{l.employee}</td>
+            <td className="px-4 py-3">{l.type}</td>
+            <td className="px-4 py-3">{l.date}</td>
+            <td className="px-4 py-3">{l.reason}</td>
+            <td className="px-4 py-3">{l.status}</td>
+            <td className="px-4 py-3 space-x-3">
+              <button onClick={() => edit(l)} className="text-sm text-blue-700 hover:underline">
+                Edit
+              </button>
+              {l.status === "Pending" && (
+                <>
+                  <button onClick={() => setStatus(l.id, "Approved")} className="text-sm text-green-700 hover:underline">
+                    Approve
+                  </button>
+                  <button onClick={() => setStatus(l.id, "Rejected")} className="text-sm text-red-700 hover:underline">
+                    Reject
+                  </button>
+                </>
+              )}
             </td>
           </tr>
         ))}
       </AdminTable>
-
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded shadow w-96">
-            <h2 className="text-xl font-bold mb-4">{editingLeave?"Edit Leave":"Add Leave"}</h2>
-            <label>Employee</label>
-            <select className="w-full border px-2 py-1 mb-4 rounded" value={form.employee} onChange={e=>setForm({...form,employee:e.target.value})}>
-              {employees.map(emp=><option key={emp} value={emp}>{emp}</option>)}
-            </select>
-            <label>Leave Type</label>
-            <select className="w-full border px-2 py-1 mb-4 rounded" value={form.type} onChange={e=>setForm({...form,type:e.target.value as LeaveRequest["type"]})}>
-              <option value="Vacation">Vacation</option><option value="Sick">Sick</option>
-            </select>
-            <label>Date</label>
-            <input type="date" className="w-full border px-2 py-1 mb-4 rounded" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/>
-            <label>Status</label>
-            <select className="w-full border px-2 py-1 mb-4 rounded" value={form.status} onChange={e=>setForm({...form,status:e.target.value as LeaveRequest["status"]})}>
-              <option value="Pending">Pending</option><option value="Approved">Approved</option><option value="Rejected">Rejected</option>
-            </select>
-            <div className="flex justify-end space-x-2">
-              <button className="bg-gray-400 text-white px-4 py-2 rounded" onClick={()=>setIsModalOpen(false)}>Cancel</button>
-              <button className="bg-green-500 text-white px-4 py-2 rounded" onClick={handleSave}>Save</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
-};
-
-export default AdminLeave;
+}
