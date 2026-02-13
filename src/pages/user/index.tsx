@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Eye, EyeOff, Mail, Lock } from "lucide-react";
 import picture from "/logo.png";
 import accounts from "../data/accounts.json";
+import { showError, showSuccess } from "./utils/toast";
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -21,9 +22,10 @@ function Login() {
     if (user) {
       setError("");
       localStorage.setItem("currentUser", JSON.stringify(user));
+      showSuccess("Login successful!");
       navigate("/dashboard", { state: { user } });
     } else {
-      setError("Invalid email or password");
+      showError("Invalid email or password");
     }
   };
 

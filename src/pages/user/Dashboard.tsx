@@ -6,8 +6,6 @@ import { useClock } from "./hooks/useClock";
 import { useAttendance } from "./hooks/useAttendance";
 import type { TimeRecord } from "./hooks/useAttendance";
 import Usersidebar from "./components/Usersidebar.tsx";
-// local time formatter (use local helper to avoid import issues)
-
 
 function Dashboard() {
   const location = useLocation();
@@ -94,10 +92,6 @@ function Dashboard() {
     });
   };
 
-  
-
-
-  
   const handleLogout = () => {
     localStorage.removeItem("currentUser");
     navigate("/");
@@ -180,9 +174,6 @@ function Dashboard() {
             </p>
           </div>
         </motion.div>
-
-        
-
         {/* Widgets Grid */}
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {/* Time Tracking - Featured */}
@@ -375,17 +366,11 @@ function Dashboard() {
         {pendingLeavesCount > 0 && (
           <motion.div
             initial={{ y: -20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-  
-          >
-            
+            animate={{ y: 0, opacity: 1 }}>
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              onClick={() => navigate("/leave", { state: { user } })}
-          
-            >
-              
+              onClick={() => navigate("/leave", { state: { user } })}>
             </motion.button>
           </motion.div>
         )}  
@@ -463,7 +448,4 @@ function Dashboard() {
     </div>
   );
 }
-
-/* Sidebar Component */
-
 export default Dashboard;

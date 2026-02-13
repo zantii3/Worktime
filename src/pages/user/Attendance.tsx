@@ -1,19 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Menu, Clock, ChevronLeft, ChevronRight, Calendar, History, Timer } from "lucide-react";
 import { useClock } from "./hooks/useClock";
 import Usersidebar from "./components/Usersidebar.tsx";
-
-interface AttendanceRecord {
-  date: string;
-  timeIn: string;
-  lunchOut?: string | null;
-  lunchIn?: string | null;
-  timeOut: string;
-  hours: number;
-  device: string;
-}
+import { useAttendance } from "./hooks/useAttendance";
+import { daysInMonth, firstDayOfMonth } from "./utils/attendanceUtils.ts";
 
 function AttendanceApp() {
   const location = useLocation();
@@ -22,41 +14,7 @@ function AttendanceApp() {
   const currentTime = useClock();
   const [menuOpen, setMenuOpen] = useState(false);
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [attendanceData, setAttendanceData] = useState<AttendanceRecord[]>([]);
-
-  useEffect(() => {
-    const loadAttendanceData = () => {
-      const allRecords = [];
-      const userId = user?.id || "user";
-      
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        // Only load records for the current user: attendance_[userId]_[date]
-        if (key?.startsWith(`attendance_${userId}_`)) {
-          try {
-            const record = JSON.parse(localStorage.getItem(key) || "{}");
-            allRecords.push(record);
-          } catch {
-            // Skip invalid records
-          }
-        }
-      }
-      // Remove duplicates by date (keep latest)
-      const uniqueRecords = Array.from(
-        new Map(allRecords.map(r => [r.date, r])).values()
-      );
-      setAttendanceData(uniqueRecords);
-    };
-
-    if (user?.id) {
-      loadAttendanceData();
-      const interval = setInterval(loadAttendanceData, 2000);
-      return () => clearInterval(interval);
-    }
-  }, [user?.id]);
-
-  const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
-  const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
+  const { attendanceData } = useAttendance(user?.id);
 
   const prevMonth = () => {
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
@@ -68,6 +26,14 @@ function AttendanceApp() {
 
   const handleLogout = () => navigate("/");
 
+  const monthlyHours = attendanceData
+    .filter(r => {
+      const d = new Date(r.date);
+      return d.getMonth() === currentMonth.getMonth() && d.getFullYear() === currentMonth.getFullYear();
+    })
+    .reduce((acc, curr) => acc + (curr.hours ?? 0), 0);
+
+  const monthlyPercent = Math.min((monthlyHours / 160) * 100, 100);
   const renderCalendar = () => {
     const year = currentMonth.getFullYear();
     const month = currentMonth.getMonth();
@@ -123,9 +89,9 @@ function AttendanceApp() {
             )}
 
             {/* Hours */}
-            {record.hours > 0 && (
+            {(record.hours ?? 0) > 0 && (
               <div className="text-[10px] font-bold text-[#F28C28] mt-1">
-                {record.hours} hrs
+                {(record.hours ?? 0)} hrs
               </div>
             )}
           </div>
@@ -278,36 +244,20 @@ function AttendanceApp() {
                   </div>
                 </div>
                 <h3 className="text-4xl font-bold mb-4">
-                  {attendanceData
-                    .filter(r => {
-                      const d = new Date(r.date);
-                      return d.getMonth() === currentMonth.getMonth() && d.getFullYear() === currentMonth.getFullYear();
-                    })
-                    .reduce((acc, curr) => acc + curr.hours, 0)
-                    .toFixed(1)} hrs
+                  {monthlyHours.toFixed(1)} hrs
                 </h3>
                 <div className="h-2 bg-white/20 rounded-full overflow-hidden">
                   <motion.div 
                     initial={{ width: 0 }}
                     animate={{ 
-                      width: `${Math.min((attendanceData
-                        .filter(r => {
-                          const d = new Date(r.date);
-                          return d.getMonth() === currentMonth.getMonth() && d.getFullYear() === currentMonth.getFullYear();
-                        })
-                        .reduce((acc, curr) => acc + curr.hours, 0) / 160) * 100, 100)}%` 
+                      width: `${monthlyPercent}%`
                     }}
                     transition={{ duration: 1, ease: "easeOut", delay: 0.3 }}
                     className="h-full bg-white rounded-full"
                   />
                 </div>
                 <p className="text-xs text-white/80 mt-2 font-medium">
-                  {((attendanceData
-                    .filter(r => {
-                      const d = new Date(r.date);
-                      return d.getMonth() === currentMonth.getMonth() && d.getFullYear() === currentMonth.getFullYear();
-                    })
-                    .reduce((acc, curr) => acc + curr.hours, 0) / 160) * 100).toFixed(0)}% of monthly target (160 hrs)
+                  {monthlyPercent.toFixed(0)}% of monthly target (160 hrs)
                 </p>
               </div>
             </motion.div>
@@ -353,12 +303,12 @@ function AttendanceApp() {
                             </p>
                             <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
                               <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-                              {record.device}
+                                {record.device}
                             </p>
                           </div>
-                          <div className="bg-gradient-to-r from-[#F28C28] to-[#E67E22] px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
-                            {record.hours} hrs
-                          </div>
+                            <div className="bg-gradient-to-r from-[#F28C28] to-[#E67E22] px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
+                              {(record.hours ?? 0)} hrs
+                            </div>
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                          <div className="bg-white p-2.5 rounded-xl border border-slate-100">

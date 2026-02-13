@@ -12,6 +12,8 @@ export type TimeRecord = {
 
 export function useAttendance(userId?: string) {
   const today = new Date().toLocaleDateString("en-CA");
+  const [attendanceData, setAttendanceData] = useState<TimeRecord[]>([]);
+  const isClient = typeof window !== "undefined" && typeof navigator !== "undefined";
 
   const detectDevice = () => {
     if (typeof navigator === "undefined" || typeof window === "undefined") return "Desktop";
@@ -30,8 +32,8 @@ export function useAttendance(userId?: string) {
   const storageKey = `attendance_${userId || "user"}_${today}`;
 
   const [todayRecord, setTodayRecord] = useState<TimeRecord | null>(() => {
-    if (typeof window === "undefined") return null;
-    const stored = localStorage.getItem(storageKey);
+    if (!isClient) return null;
+    const stored = window.localStorage.getItem(storageKey);
     if (stored) return JSON.parse(stored) as TimeRecord;
     return {
       date: today,
@@ -47,10 +49,11 @@ export function useAttendance(userId?: string) {
   const [isAnimating, setIsAnimating] = useState(false);
 
   useEffect(() => {
+    if (!isClient) return;
     if (todayRecord) {
-      localStorage.setItem(storageKey, JSON.stringify(todayRecord));
+      window.localStorage.setItem(storageKey, JSON.stringify(todayRecord));
     }
-  }, [todayRecord, storageKey]);
+  }, [todayRecord, storageKey, isClient]);
 
   const handleTimeIn = () => {
     if (todayRecord?.timeIn) return;
@@ -106,8 +109,41 @@ export function useAttendance(userId?: string) {
     return `${hours}h ${minutes}m`;
   };
 
+  useEffect(() => {
+    if (!userId) return;
+    if (!isClient) return;
+
+    const loadAllRecords = () => {
+      const records: TimeRecord[] = [];
+
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const key = window.localStorage.key(i);
+
+        if (key?.startsWith(`attendance_${userId}_`)) {
+          try {
+            const raw = window.localStorage.getItem(key) || "{}";
+            const record = JSON.parse(raw) as TimeRecord;
+            if (record && record.date) records.push(record);
+          } catch {
+            // ignore bad record
+          }
+        }
+      }
+
+      const uniqueRecords = Array.from(
+        new Map(records.map((r) => [r.date, r])).values()
+      );
+
+      setAttendanceData(uniqueRecords);
+    };
+
+    loadAllRecords();
+  }, [userId, todayRecord, isClient]);
+
+
   return {
     todayRecord,
+    attendanceData,
     setTodayRecord,
     isAnimating,
     handleTimeIn,

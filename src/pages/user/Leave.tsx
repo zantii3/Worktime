@@ -4,70 +4,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Menu, ClipboardList, ListTodo, Clock, CheckCircle2, XCircle, Clock3, ChevronDown, Paperclip, Send } from "lucide-react";
 import { useClock } from "./hooks/useClock";
 import Usersidebar from "./components/Usersidebar.tsx";
-
-type LeaveStatus = "Pending" | "Approved" | "Rejected";
-type LeaveType =
-  | "Vacation Leave"
-  | "Sick Leave"
-  | "Emergency Leave"
-  | "Maternity/Paternity Leave";
-
-interface LeaveRequest {
-  id: number;
-  type: LeaveType;
-  startDate: string;
-  endDate: string;
-  reason: string;
-  status: LeaveStatus;
-  appliedOn: string;
-  days: number;
-  fileName?: string;
-}
-
-interface LeavePolicy {
-  type: LeaveType;
-  total: number;
-  color: string;
-  textColor: string;
-  used: number;
-}
-
-const STORAGE_KEY = "leave_requests";
-const POLICY_STORAGE_KEY = "leave_policy";
-
-const defaultLeaves: LeaveRequest[] = [];
-
-// Leave policy config - wala pang used initially
-const defaultLeavePolicy: LeavePolicy[] = [
-  {
-    type: "Vacation Leave",
-    total: 15,
-    color: "bg-[#F28C28]",
-    textColor: "text-[#F28C28]",
-    used: 0,
-  },
-  {
-    type: "Sick Leave",
-    total: 15,
-    color: "bg-green-500",
-    textColor: "text-green-500",
-    used: 0,
-  },
-  {
-    type: "Emergency Leave",
-    total: 5,
-    color: "bg-red-500",
-    textColor: "text-red-500",
-    used: 0,
-  },
-  {
-    type: "Maternity/Paternity Leave",
-    total: 30,
-    color: "bg-blue-500",
-    textColor: "text-blue-500",
-    used: 0,
-  },
-];
+import type { LeaveRequest, LeaveType, LeaveStatus, LeavePolicy } from "./types/leavetypes";
+import { STORAGE_KEY, POLICY_STORAGE_KEY, defaultLeavePolicy } from "./types/leaveconstants";
+import { showError, showSuccess } from "./utils/toast";
 
 function Leave() {
   const location = useLocation();
@@ -88,10 +27,10 @@ function Leave() {
 
   // Lazy init from localStorage
   const [leaves, setLeaves] = useState<LeaveRequest[]>(() => {
-    if (typeof window === "undefined") return defaultLeaves;
+    if (typeof window === "undefined") return [];
     const stored = localStorage.getItem(`${STORAGE_KEY}_${user?.id || "user"}`);
     if (stored) return JSON.parse(stored);
-    return defaultLeaves;
+    return [];
   });
 
   // Load leave policy from localStorage
@@ -136,25 +75,24 @@ function Leave() {
 
   const handleSubmit = () => {
     if (!form.startDate || !form.endDate || !form.reason.trim()) {
-      setFormError("Please fill in all fields.");
+      showError("Please fill in all fields.");
       return;
     }
 
     if (new Date(form.endDate) < new Date(form.startDate)) {
-      setFormError("End date cannot be before start date.");
+      showError("End date cannot be before start date.");
       return;
     }
 
     const days = calculateDays(form.startDate, form.endDate);
-    
-    // Check if user has enough leave balance (counting only approved leaves)
+
     const approvedDays = getUsedDays(form.type);
     const policy = leavePolicy.find((p) => p.type === form.type);
-    
+
     if (policy) {
       const remaining = policy.total - approvedDays;
       if (days > remaining) {
-        setFormError(`Insufficient leave balance. You only have ${remaining} days remaining for ${form.type}.`);
+        showError(`Insufficient leave balance. You only have ${remaining} days remaining for ${form.type}.`);
         return;
       }
     }
@@ -170,16 +108,18 @@ function Leave() {
       reason: form.reason,
       status: "Pending",
       appliedOn: new Date().toISOString().split("T")[0],
-      days: days,
+      days,
       fileName: fileName || undefined,
     };
 
-    // Don't deduct balance yet - only deduct when approved
+    // Save locally; approval flow will deduct balances later
     saveLeaves([newLeave, ...leaves]);
 
     setForm({ type: "Vacation Leave", startDate: "", endDate: "", reason: "" });
     setFileName("");
     setFormError("");
+
+    showSuccess("Leave request submitted successfully!");
   };
 
   const pendingLeaves = leaves.filter((l) => l.status === "Pending");
