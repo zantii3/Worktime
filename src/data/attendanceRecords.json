@@ -1,0 +1,32 @@
+[
+  {
+    "id": "rec-001",
+    "employeeId": "emp-001",
+    "source": "Desktop",
+    "dateISO": "2026-02-16",
+    "timeIn": "2026-02-16T07:15:00+08:00",
+    "lunchOut": "2026-02-16T12:00:00+08:00",
+    "lunchIn": "2026-02-16T13:00:00+08:00",
+    "timeOut": "2026-02-16T17:15:00+08:00"
+  },
+  {
+    "id": "rec-002",
+    "employeeId": "emp-002",
+    "source": "Mobile",
+    "dateISO": "2026-02-16",
+    "timeIn": "2026-02-16T09:02:00+08:00",
+    "lunchOut": null,
+    "lunchIn": null,
+    "timeOut": null
+  },
+  {
+    "id": "rec-003",
+    "employeeId": "emp-001",
+    "source": "Desktop",
+    "dateISO": "2026-02-15",
+    "timeIn": "2026-02-15T08:05:00+08:00",
+    "lunchOut": "2026-02-15T12:01:00+08:00",
+    "lunchIn": "2026-02-15T12:57:00+08:00",
+    "timeOut": "2026-02-15T17:02:00+08:00"
+  }
+]
