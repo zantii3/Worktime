@@ -42,7 +42,7 @@ function AttendanceApp() {
     const days = [];
 
     for (let i = 0; i < startDay; i++) {
-      days.push(<div key={`empty-${i}`} className="h-24 md:h-32 border border-slate-100 bg-slate-50/50" />);
+      days.push(<div key={`empty-${i}`} className="h-20 sm:h-24 md:h-32 border border-slate-100 bg-slate-50/50" />);
     }
 
     for (let day = 1; day <= totalDays; day++) {
@@ -53,44 +53,44 @@ function AttendanceApp() {
       days.push(
         <div
           key={day}
-          className={`h-24 md:h-32 border border-slate-100 p-2 transition-colors hover:bg-slate-50 relative ${
+          className={`h-20 sm:h-24 md:h-32 border border-slate-100 p-1.5 sm:p-2 md:p-3 transition-colors hover:bg-slate-50 relative overflow-y-auto ${
             isToday ? "bg-orange-50/30 border-[#F28C28]/30" : "bg-white"
           }`}
         >
-          <span className={`text-sm font-semibold ${isToday ? "text-[#F28C28]" : "text-slate-600"}`}>
+          <span className={`text-xs sm:text-sm font-semibold ${isToday ? "text-[#F28C28]" : "text-slate-600"}`}>
             {day}
           </span>
           {record && record.timeIn && (
-          <div className="mt-1 space-y-1">
-            <div className="text-[10px] md:text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-md flex items-center gap-1">
-              <div className="w-1 h-1 rounded-full bg-green-500" />
+          <div className="mt-0.5 sm:mt-1 space-y-0.5 sm:space-y-1">
+            <div className="text-[9px] sm:text-[10px] md:text-xs bg-green-100 text-green-700 px-1 sm:px-1.5 py-0.5 rounded-md flex items-center gap-0.5 sm:gap-1">
+              <div className="w-0.5 sm:w-1 h-0.5 sm:h-1 rounded-full bg-green-500" />
               IN {new Date(record.timeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </div>
 
             {record.lunchOut && (
-              <div className="text-[10px] md:text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-md flex items-center gap-1">
-                <div className="w-1 h-1 rounded-full bg-yellow-500" />
+              <div className="text-[9px] sm:text-[10px] md:text-xs bg-yellow-100 text-yellow-700 px-1 sm:px-1.5 py-0.5 rounded-md flex items-center gap-0.5 sm:gap-1">
+                <div className="w-0.5 sm:w-1 h-0.5 sm:h-1 rounded-full bg-yellow-500" />
                 LO {new Date(record.lunchOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </div>
             )}
 
             {record.lunchIn && (
-              <div className="text-[10px] md:text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-md flex items-center gap-1">
-                <div className="w-1 h-1 rounded-full bg-blue-500" />
+              <div className="text-[9px] sm:text-[10px] md:text-xs bg-blue-100 text-blue-700 px-1 sm:px-1.5 py-0.5 rounded-md flex items-center gap-0.5 sm:gap-1">
+                <div className="w-0.5 sm:w-1 h-0.5 sm:h-1 rounded-full bg-blue-500" />
                 LI {new Date(record.lunchIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </div>
             )}
 
             {record.timeOut && (
-              <div className="text-[10px] md:text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded-md flex items-center gap-1">
-                <div className="w-1 h-1 rounded-full bg-red-500" />
+              <div className="text-[9px] sm:text-[10px] md:text-xs bg-red-100 text-red-700 px-1 sm:px-1.5 py-0.5 rounded-md flex items-center gap-0.5 sm:gap-1">
+                <div className="w-0.5 sm:w-1 h-0.5 sm:h-1 rounded-full bg-red-500" />
                 OUT {new Date(record.timeOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </div>
             )}
 
             {/* Hours */}
             {(record.hours ?? 0) > 0 && (
-              <div className="text-[10px] font-bold text-[#F28C28] mt-1">
+              <div className="text-[9px] sm:text-[10px] font-bold text-[#F28C28] mt-0.5 sm:mt-1">
                 {(record.hours ?? 0)} hrs
               </div>
             )}
@@ -162,7 +162,17 @@ function AttendanceApp() {
             </div>
           </div>
 
-          <div className="hidden md:flex items-center gap-3 bg-gradient-to-r from-[#F28C28] to-[#E67E22] text-white px-6 py-3 rounded-xl shadow-lg">
+          <div className="hidden md:flex lg:hidden items-center gap-2 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-3 py-2 rounded-lg shadow-lg md:w-[92px]">
+            <Clock className="w-4 h-4" />
+            <p className="font-bold text-xs tabular-nums">
+              {currentTime.toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </p>
+          </div>
+
+          <div className="hidden lg:flex items-center gap-3 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-6 py-3 rounded-xl shadow-lg">
             <Clock className="w-5 h-5" />
             <p className="font-bold text-lg tabular-nums">
               {currentTime.toLocaleTimeString("en-US", {
@@ -182,7 +192,7 @@ function AttendanceApp() {
             transition={{ delay: 0.1 }}
             className="lg:col-span-2 bg-white rounded-3xl shadow-md border border-slate-100 overflow-hidden"
           >
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#F28C28] to-[#E67E22] text-white">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-white/20 backdrop-blur-sm rounded-xl">
                   <Calendar className="w-6 h-6" />
@@ -233,7 +243,7 @@ function AttendanceApp() {
               transition={{ delay: 0.2 }}
               className="bg-white rounded-3xl shadow-md border-2 border-[#F28C28]/20 overflow-hidden"
             >
-              <div className="bg-gradient-to-r from-[#F28C28] to-[#E67E22] p-6 text-white">
+              <div className="bg-gradient-to-r from-[#F28C28] to-[#E97638] p-6 text-white">
                 <div className="flex items-center gap-3 mb-4">
                   <div className="p-3 bg-white/20 backdrop-blur-sm rounded-xl">
                     <Timer className="w-6 h-6" />
@@ -272,7 +282,7 @@ function AttendanceApp() {
               <div className="p-5 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-orange-50">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-[#F28C28]/10 rounded-xl">
-                    <History className="w-5 h-5 text-[#F28C28]" />
+                    <History className="w-5 h-5 text-[#E97638]" />
                   </div>
                   <div>
                     <h2 className="text-lg font-bold text-[#1F3C68]">Daily Logs</h2>
@@ -306,35 +316,35 @@ function AttendanceApp() {
                                 {record.device}
                             </p>
                           </div>
-                            <div className="bg-gradient-to-r from-[#F28C28] to-[#E67E22] px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
+                            <div className="bg-gradient-to-r from-[#F28C28] to-[#E97638] px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
                               {(record.hours ?? 0)} hrs
                             </div>
                         </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                         <div className="bg-white p-2.5 rounded-xl border border-slate-100">
-                          <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Time In</p>
-                          <p className="text-sm font-bold text-green-600">
+                        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-1.5 sm:gap-2">
+                         <div className="bg-white p-1.5 sm:p-2 md:p-2.5 rounded-xl border border-slate-100">
+                          <p className="text-[9px] sm:text-[10px] text-slate-500 uppercase font-bold mb-0.5 sm:mb-1">Time In</p>
+                          <p className="text-xs sm:text-sm font-bold text-green-600">
                             {record.timeIn ? new Date(record.timeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
                           </p>
                         </div>
 
-                          <div className="bg-white p-2.5 rounded-xl border border-slate-100">
-                          <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Lunch Out</p>
-                          <p className="text-sm font-bold text-yellow-600">
+                          <div className="bg-white p-1.5 sm:p-2 md:p-2.5 rounded-xl border border-slate-100">
+                          <p className="text-[9px] sm:text-[10px] text-slate-500 uppercase font-bold mb-0.5 sm:mb-1">Lunch Out</p>
+                          <p className="text-xs sm:text-sm font-bold text-yellow-600">
                             {record.lunchOut ? new Date(record.lunchOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
                           </p>
                         </div>
                         
-                        <div className="bg-white p-2.5 rounded-xl border border-slate-100">
-                        <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Lunch In</p>
-                        <p className="text-sm font-bold text-blue-600">
+                        <div className="bg-white p-1.5 sm:p-2 md:p-2.5 rounded-xl border border-slate-100">
+                        <p className="text-[9px] sm:text-[10px] text-slate-500 uppercase font-bold mb-0.5 sm:mb-1">Lunch In</p>
+                        <p className="text-xs sm:text-sm font-bold text-blue-600">
                           {record.lunchIn ? new Date(record.lunchIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
                         </p>
                       </div>
 
-                      <div className="bg-white p-2.5 rounded-xl border border-slate-100">
-                      <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Time Out</p>
-                      <p className="text-sm font-bold text-red-600">
+                      <div className="bg-white p-1.5 sm:p-2 md:p-2.5 rounded-xl border border-slate-100">
+                      <p className="text-[9px] sm:text-[10px] text-slate-500 uppercase font-bold mb-0.5 sm:mb-1">Time Out</p>
+                      <p className="text-xs sm:text-sm font-bold text-red-600">
                         {record.timeOut ? new Date(record.timeOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
                       </p>
                     </div>

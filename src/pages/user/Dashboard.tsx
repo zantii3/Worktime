@@ -39,8 +39,8 @@ function Dashboard() {
         const screenWidth = window.innerWidth;
         const isMobileUA = /android|iphone|ipod|blackberry|iemobile|opera mini/.test(ua);
         const isTabletUA = /ipad|tablet|playbook|silk/.test(ua);
-        const isMobileViewport = screenWidth <= 768;
-        const isTabletViewport = screenWidth > 768 && screenWidth <= 1024;
+        const isMobileViewport = screenWidth <= 765;
+        const isTabletViewport = screenWidth > 765 && screenWidth <= 1024;
         const hasTouch = () => "ontouchstart" in window || navigator.maxTouchPoints > 0;
         const newDevice = isMobileUA || (isMobileViewport && hasTouch()) ? "Mobile" : isTabletUA || isTabletViewport ? "Tablet" : "Desktop";
         if (newDevice !== prev.device) return { ...prev, device: newDevice };
@@ -138,9 +138,9 @@ function Dashboard() {
         <motion.div
           initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="flex justify-between items-center mb-8 bg-white p-4 md:p-6 rounded-2xl shadow-md border border-slate-100"
+          className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 bg-white p-3 sm:p-4 md:p-6 rounded-2xl shadow-md border border-slate-100"
         >
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4 flex-1">
             <button
               className="md:hidden p-2 hover:bg-slate-100 rounded-lg transition-colors"
               onClick={() => setMenuOpen(true)}
@@ -148,22 +148,33 @@ function Dashboard() {
               <Menu className="text-[#1F3C68]" />
             </button>
 
-            <div>
-              <h1 className="text-xl md:text-3xl font-bold text-[#1F3C68]">
+            <div className="min-w-0">
+              <h1 className="text-lg sm:text-2xl md:text-3xl font-bold text-[#1F3C68] truncate">
                 Welcome, {user?.name || "User"}!
               </h1>
-              <p className="text-sm text-[#1E293B] mt-1 font-medium">
+              <p className="text-xs sm:text-sm text-[#1E293B] mt-1 font-medium truncate">
                 {currentTime.toLocaleDateString("en-US", {
-                  weekday: "long",
+                  weekday: "short",
                   year: "numeric",
-                  month: "long",
+                  month: "short",
                   day: "numeric",
                 })}
               </p>
             </div>
           </div>
 
-          <div className="hidden md:flex items-center gap-3 bg-gradient-to-r from-[#F28C28] to-[#E67E22] text-white px-6 py-3 rounded-xl shadow-lg">
+          
+          <div className="hidden md:flex lg:hidden items-center gap-2 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-3 py-2 rounded-lg shadow-lg md:w-[92px]">
+            <Clock className="w-4 h-4" />
+            <p className="font-bold text-xs tabular-nums">
+              {currentTime.toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </p>
+          </div>
+
+          <div className="hidden lg:flex items-center gap-3 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-6 py-3 rounded-xl shadow-lg">
             <Clock className="w-5 h-5" />
             <p className="font-bold text-lg tabular-nums">
               {currentTime.toLocaleTimeString("en-US", {
@@ -175,53 +186,53 @@ function Dashboard() {
           </div>
         </motion.div>
         {/* Widgets Grid */}
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 md:gap-5 lg:gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 auto-rows-max">
           {/* Time Tracking - Featured */}
           <motion.div
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ delay: 0.1 }}
-            className="md:col-span-2 bg-white rounded-3xl shadow-xl border-2 border-[#F28C28]/20 overflow-hidden"
+            className="col-span-1 lg:col-span-2 bg-white rounded-2xl md:rounded-2.5xl lg:rounded-3xl shadow-xl border-2 border-[#F28C28]/20 overflow-hidden"
           >
-            <div className="bg-gradient-to-r from-[#F28C28] to-[#E67E22] p-6 text-white">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-white/20 backdrop-blur-sm rounded-xl">
-                    <Clock className="w-6 h-6" />
+            <div className="bg-gradient-to-r from-[#F28C28] to-[#E97638] p-3 md:p-4 lg:p-6 text-white">
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-3 lg:gap-4">
+                <div className="flex items-start md:items-center gap-2 md:gap-2.5 lg:gap-3 min-w-0">
+                  <div className="p-1.5 md:p-2 lg:p-3 bg-white/20 backdrop-blur-sm rounded-lg md:rounded-lg lg:rounded-xl flex-shrink-0">
+                    <Clock className="w-4 md:w-4.5 lg:w-6 h-4 md:h-4.5 lg:h-6" />
                   </div>
-                  <div>
-                    <h2 className="text-2xl font-bold">Time Tracking</h2>
-                    <p className="text-sm text-white/90">
+                  <div className="min-w-0">
+                    <h2 className="text-sm md:text-lg lg:text-2xl font-bold">Time Tracking</h2>
+                    <p className="text-[10px] md:text-[11px] lg:text-sm text-white/90">
                       Track your daily work hours
                     </p>
                   </div>
                 </div>
 
-                <div className="text-right">
-                  <p className="text-sm text-white/80 mb-1">Status</p>
-                  <div className={`flex items-center gap-2 font-bold ${
+                <div className="text-right flex-shrink-0">
+                  <p className="text-[9px] md:text-[10px] lg:text-sm text-white/80 mb-0.5 md:mb-0.5 lg:mb-1">Status</p>
+                  <div className={`flex items-center gap-1.5 md:gap-1.5 lg:gap-2 font-bold whitespace-nowrap ${
                     !todayRecord?.timeIn 
                       ? "text-white/60" 
                       : todayRecord.timeOut 
                         ? "text-red-200" 
                         : "text-green-200"
                   }`}>
-                    <div className="w-2 h-2 rounded-full bg-current animate-pulse" />
-                    <span className="text-lg">{getStatus()}</span>
+                    <div className="w-1.5 md:w-1.5 lg:w-2 h-1.5 md:h-1.5 lg:h-2 rounded-full bg-current animate-pulse" />
+                    <span className="text-[10px] md:text-xs lg:text-lg">{getStatus()}</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="p-6 md:p-8">
+            <div className="p-3 md:p-4 lg:p-8">
               {/* Action Buttons */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-4 md:mb-6">
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={handleTimeIn}
                   disabled={!!todayRecord?.timeIn}
-                  className={`relative overflow-hidden p-6 rounded-2xl font-bold text-white shadow-lg transition-all ${
+                  className={`relative overflow-hidden p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
                     todayRecord?.timeIn
                       ? "bg-slate-300 cursor-not-allowed"
                       : "bg-gradient-to-br from-green-500 to-emerald-600 hover:shadow-2xl hover:shadow-green-500/30"
@@ -235,9 +246,9 @@ function Dashboard() {
                       className="absolute inset-0 bg-white rounded-full"
                     />
                   )}
-                  <div className="relative flex items-center justify-center gap-2">
-                    <LogIn className="w-5 h-5" />
-                    <span className="text-lg">Time In</span>
+                  <div className="relative flex flex-col items-center justify-center gap-0.5 md:gap-1">
+                    <LogIn className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
+                    <span className="text-[10px] md:text-xs lg:text-lg">Time In</span>
                   </div>
                 </motion.button>
                 <motion.button
@@ -249,17 +260,17 @@ function Dashboard() {
                   !!todayRecord?.lunchOut ||
                   !!todayRecord?.timeOut
                 }
-                className={`p-6 rounded-2xl font-bold text-white shadow-lg transition-all ${
+                className={`p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
                   !todayRecord?.timeIn ||
                   todayRecord?.lunchOut ||
                   todayRecord?.timeOut
                     ? "bg-slate-300 cursor-not-allowed"
-                    : "bg-gradient-to-br from-yellow-500 to-orange-500"
+                    : "bg-gradient-to-br from-yellow-500 to-primary"
                 }`}
               >
-                <div className="flex items-center justify-center gap-2">
-                  <Clock className="w-5 h-5" />
-                  <span className="text-lg">Lunch Out</span>
+                <div className="flex flex-col items-center justify-center gap-0.5 md:gap-1">
+                  <Clock className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
+                  <span className="text-[10px] md:text-xs lg:text-lg">Lunch Out</span>
                 </div>
               </motion.button>
                 <motion.button
@@ -271,7 +282,7 @@ function Dashboard() {
                     !!todayRecord?.lunchIn ||
                     !!todayRecord?.timeOut
                   }
-                  className={`p-6 rounded-2xl font-bold text-white shadow-lg transition-all ${
+                  className={`p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
                     !todayRecord?.lunchOut ||
                     todayRecord?.lunchIn ||
                     todayRecord?.timeOut
@@ -279,9 +290,9 @@ function Dashboard() {
                       : "bg-gradient-to-br from-blue-500 to-indigo-600"
                   }`}
                 >
-                  <div className="flex items-center justify-center gap-2">
-                    <Clock className="w-5 h-5" />
-                    <span className="text-lg">Lunch In</span>
+                  <div className="flex flex-col items-center justify-center gap-0.5 md:gap-1">
+                    <Clock className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
+                    <span className="text-[10px] md:text-xs lg:text-lg">Lunch In</span>
                   </div>
                 </motion.button>
 
@@ -290,7 +301,7 @@ function Dashboard() {
                   whileTap={{ scale: 0.98 }}
                   onClick={handleTimeOut}
                   disabled={!todayRecord?.timeIn || !!todayRecord?.timeOut}
-                  className={`relative overflow-hidden p-6 rounded-2xl font-bold text-white shadow-lg transition-all ${
+                  className={`relative overflow-hidden p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
                     !todayRecord?.timeIn || todayRecord?.timeOut
                       ? "bg-slate-300 cursor-not-allowed"
                       : "bg-gradient-to-br from-red-500 to-rose-600 hover:shadow-2xl hover:shadow-red-500/30"
@@ -304,23 +315,23 @@ function Dashboard() {
                       className="absolute inset-0 bg-white rounded-full"
                     />
                   )}
-                  <div className="relative flex items-center justify-center gap-2">
-                    <LogOutIcon className="w-5 h-5" />
-                    <span className="text-lg">Time Out</span>
+                  <div className="relative flex flex-col items-center justify-center gap-0.5 md:gap-1">
+                    <LogOutIcon className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
+                    <span className="text-[10px] md:text-xs lg:text-lg">Time Out</span>
                   </div>
                 </motion.button>
               </div>
 
               {/* Time Details */}
-             <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 md:gap-2.5 lg:gap-3">
             {detailItems.map((item, idx) => (
               <div
                 key={idx}
-                className={`p-4 rounded-xl border ${item.borderClass} bg-gradient-to-br ${item.bgClass}`}
+                className={`p-2 md:p-2.5 lg:p-4 rounded-md md:rounded-lg lg:rounded-xl border ${item.borderClass} bg-gradient-to-br ${item.bgClass}`}
               >
-                <p className="text-xs text-slate-600 mb-1 font-medium">{item.label}</p>
+                <p className="text-[9px] md:text-[10px] lg:text-xs text-slate-600 mb-0.5 md:mb-0.5 lg:mb-1 font-medium">{item.label}</p>
                 <p
-                  className={`text-lg font-bold tabular-nums`}
+                  className={`text-xs md:text-sm lg:text-lg font-bold tabular-nums`}
                   style={{ color: item.textColor }}
                 >
                   {item.isElapsed
@@ -341,37 +352,32 @@ function Dashboard() {
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ delay: 0.2 }}
-            className="bg-white p-6 rounded-3xl shadow-lg border border-slate-100 hover:shadow-xl hover:border-[#F28C28]/30 transition-all"
+            className="bg-white p-4 md:p-5 lg:p-6 rounded-2xl md:rounded-2.5xl lg:rounded-3xl shadow-lg border border-slate-100 hover:shadow-xl hover:border-[#F28C28]/30 transition-all"
           >
-            <div className="flex items-center gap-3 mb-4">
-          <div className="flex items-center gap-3 mb-6">
-              <div className="p-3 bg-amber-100 rounded-xl">
-                <Clock className="w-5 h-5 text-amber-600" />
+            <div className="flex flex-col gap-3 md:gap-3">
+              <div className="flex items-start md:items-center gap-2 md:gap-2.5 lg:gap-3">
+                <div className="p-2 md:p-2 lg:p-3 bg-amber-100 rounded-lg md:rounded-lg lg:rounded-xl flex-shrink-0">
+                  <Clock className="w-4 md:w-4 lg:w-5 h-4 md:h-4 lg:h-5 text-amber-600" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-xs md:text-sm lg:text-base font-bold text-amber-900">Pending Leave Requests</h3>
+                  <p className="text-[9px] md:text-[10px] lg:text-sm text-amber-700">You have {pendingLeavesCount} leave request(s) awaiting approval</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-sm md:text-base font-bold text-amber-900">Pending Leave Requests</h3>
-                <p className="text-xs md:text-sm text-amber-700">You have {pendingLeavesCount} leave request(s) awaiting approval</p>
-              </div>
-            </div>
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => navigate("/leave", { state: { user } })}
-              className="shrink-0 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-medium rounded-lg transition-colors text-sm"
-            >
-              View
-            </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => navigate("/leave", { state: { user } })}
+                className="w-full md:w-auto px-3 md:px-3 lg:px-4 py-1.5 md:py-1.5 lg:py-2 bg-primary hover:bg-primary text-white font-medium rounded-lg transition-colors text-xs md:text-xs lg:text-sm"
+              >
+                View
+              </motion.button>
             </div>
             {/* Pending Leaves Alert */}
         {pendingLeavesCount > 0 && (
           <motion.div
             initial={{ y: -20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}>
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => navigate("/leave", { state: { user } })}>
-            </motion.button>
           </motion.div>
         )}  
           </motion.div>
@@ -381,63 +387,63 @@ function Dashboard() {
           initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ delay: 0.3 }}
-          className="md:col-span-2 lg:col-span-3 bg-white p-6 rounded-3xl shadow-md border border-slate-100"
+          className="col-span-1 md:col-span-2 lg:col-span-3 bg-white p-4 md:p-5 lg:p-6 rounded-2xl md:rounded-2.5xl lg:rounded-3xl shadow-md border border-slate-100"
         >
           {/* Header */}
-          <div className="flex items-center gap-3 mb-6">
-            <div className="p-3 bg-[#E0F2FE] rounded-xl"> {/* subtle blue background for icon */}
-              <ListTodo className="w-6 h-6 text-[#1F3C68]" />
+          <div className="flex items-center gap-2 md:gap-2.5 lg:gap-3 mb-4 md:mb-5 lg:mb-6">
+            <div className="p-2 md:p-2 lg:p-3 bg-[#E0F2FE] rounded-lg md:rounded-lg lg:rounded-xl flex-shrink-0"> {/* subtle blue background for icon */}
+              <ListTodo className="w-4 md:w-4.5 lg:w-6 h-4 md:h-4.5 lg:h-6 text-[#1F3C68]" />
             </div>
-            <div>
-              <h2 className="text-xl font-bold text-[#1F3C68]">Task Summary</h2>
-              <p className="text-sm text-slate-500">Your daily task overview</p>
+            <div className="min-w-0">
+              <h2 className="text-sm md:text-base lg:text-xl font-bold text-[#1F3C68]">Task Summary</h2>
+              <p className="text-[10px] md:text-[11px] lg:text-sm text-slate-500">Your daily task overview</p>
             </div>
           </div>
 
           {/* Task Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3 lg:gap-4">
             {/* Pending */}
             <motion.div
               whileHover={{ y: -2 }}
-              className="bg-white p-5 rounded-2xl border border-yellow-200 shadow-sm hover:shadow-md transition-all"
+              className="bg-white p-2.5 md:p-3 lg:p-5 rounded-lg md:rounded-lg lg:rounded-2xl border border-yellow-200 shadow-sm hover:shadow-md transition-all"
             >
-              <div className="flex items-center justify-between mb-3">
-                <Circle className="w-5 h-5 text-yellow-600" />
-                <span className="text-2xl font-bold text-yellow-600">3</span>
+              <div className="flex items-center justify-between mb-2 md:mb-2">
+                <Circle className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5 text-yellow-600" />
+                <span className="text-lg md:text-xl lg:text-2xl font-bold text-yellow-600">3</span>
               </div>
-              <p className="text-slate-700 font-semibold text-lg">Pending</p>
-              <p className="text-xs text-slate-500 mt-1 mb-3">Waiting to start</p>
-              <div className="border-t border-yellow-100 pt-2 space-y-1">
+              <p className="text-xs md:text-xs lg:text-lg font-semibold text-slate-700">Pending</p>
+              <p className="text-[9px] md:text-[9px] lg:text-xs text-slate-500 mt-0.5 mb-2">Waiting to start</p>
+              <div className="border-t border-yellow-100 pt-1 space-y-1">
               </div>
             </motion.div>
 
             {/* In Progress */}
             <motion.div
               whileHover={{ y: -2 }}
-              className="bg-white p-5 rounded-2xl border border-blue-200 shadow-sm hover:shadow-md transition-all"
+              className="bg-white p-2.5 md:p-3 lg:p-5 rounded-lg md:rounded-lg lg:rounded-2xl border border-blue-200 shadow-sm hover:shadow-md transition-all"
             >
-              <div className="flex items-center justify-between mb-3">
-                <PlayCircle className="w-5 h-5 text-[#1F3C68]" />
-                <span className="text-2xl font-bold text-[#1F3C68]">2</span>
+              <div className="flex items-center justify-between mb-2 md:mb-2">
+                <PlayCircle className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5 text-[#1F3C68]" />
+                <span className="text-lg md:text-xl lg:text-2xl font-bold text-[#1F3C68]">2</span>
               </div>
-              <p className="text-slate-700 font-semibold text-lg">In Progress</p>
-              <p className="text-xs text-slate-500 mt-1 mb-3">Currently working</p>
-              <div className="border-t border-blue-100 pt-2 space-y-1">
+              <p className="text-xs md:text-xs lg:text-lg font-semibold text-slate-700">In Progress</p>
+              <p className="text-[9px] md:text-[9px] lg:text-xs text-slate-500 mt-0.5 mb-2">Currently working</p>
+              <div className="border-t border-blue-100 pt-1 space-y-1">
               </div>
             </motion.div>
 
             {/* Completed */}
             <motion.div
               whileHover={{ y: -2 }}
-              className="bg-white p-5 rounded-2xl border border-green-200 shadow-sm hover:shadow-md transition-all"
+              className="bg-white p-2.5 md:p-3 lg:p-5 rounded-lg md:rounded-lg lg:rounded-2xl border border-green-200 shadow-sm hover:shadow-md transition-all"
             >
-              <div className="flex items-center justify-between mb-3">
-                <CheckCircle2 className="w-5 h-5 text-green-600" />
-                <span className="text-2xl font-bold text-green-600">5</span>
+              <div className="flex items-center justify-between mb-2 md:mb-2">
+                <CheckCircle2 className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5 text-green-600" />
+                <span className="text-lg md:text-xl lg:text-2xl font-bold text-green-600">5</span>
               </div>
-              <p className="text-slate-700 font-semibold text-lg">Completed</p>
-              <p className="text-xs text-slate-500 mt-1 mb-3">Successfully done</p>
-              <div className="border-t border-green-100 pt-2 space-y-1">
+              <p className="text-xs md:text-xs lg:text-lg font-semibold text-slate-700">Completed</p>
+              <p className="text-[9px] md:text-[9px] lg:text-xs text-slate-500 mt-0.5 mb-2">Successfully done</p>
+              <div className="border-t border-green-100 pt-1 space-y-1">
               </div>
             </motion.div>
         </div>

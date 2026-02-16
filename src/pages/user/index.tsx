@@ -30,7 +30,7 @@ function Login() {
   };
 
   return (
-    <main className="min-h-screen bg-background flex items-center justify-center px-4">
+    <main className="min-h-screen bg-secondary flex items-center justify-center px-4">
       <div className="bg-card w-full max-w-md rounded-2xl shadow-xl p-8 transition hover:shadow-2xl duration-300">
 
         {/* Logo */}
@@ -92,7 +92,7 @@ function Login() {
           {/* Forgot */}
           <div className="text-center">
             <a
-              href="#"
+              href="/forgot-password"
               className="text-sm text-primary hover:underline"
             >
               Forgot password?

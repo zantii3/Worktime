@@ -216,7 +216,17 @@ function Leave() {
               </p>
             </div>
           </div>
-          <div className="hidden md:flex items-center gap-3 bg-gradient-to-r from-[#F28C28] to-[#E67E22] text-white px-6 py-3 rounded-xl shadow-lg">
+          <div className="hidden md:flex lg:hidden items-center gap-2 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-3 py-2 rounded-lg shadow-lg md:w-[92px]">
+            <Clock className="w-4 h-4" />
+            <p className="font-bold text-xs tabular-nums">
+              {currentTime.toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </p>
+          </div>
+
+          <div className="hidden lg:flex items-center gap-3 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-6 py-3 rounded-xl shadow-lg">
             <Clock className="w-5 h-5" />
             <p className="font-bold text-lg tabular-nums">
               {currentTime.toLocaleTimeString("en-US", {
@@ -288,7 +298,7 @@ function Leave() {
           transition={{ delay: 0.2 }}
           className="bg-white rounded-3xl shadow-xl border-2 border-[#F28C28]/20 overflow-hidden mb-6"
         >
-          <div className="bg-gradient-to-r from-[#F28C28] to-[#E67E22] p-6 text-white">
+          <div className="bg-gradient-to-r from-[#F28C28] to-[#E97638] p-6 text-white">
             <div className="flex items-center gap-3">
               <div className="p-3 bg-white/20 backdrop-blur-sm rounded-xl">
                 <ClipboardList className="w-6 h-6" />
@@ -334,7 +344,7 @@ function Leave() {
                     (Optional)
                   </span>
                 </label>
-                <label className="flex items-center gap-3 w-full bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl cursor-pointer hover:border-[#F28C28] hover:bg-orange-50/30 transition-all">
+                <label className="flex items-center gap-3 w-full bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl cursor-pointer hover:border-[#E97638] hover:bg-orange-50/30 transition-all">
                   <Paperclip className="w-4 h-4 text-slate-400 shrink-0" />
                   <span className="text-sm text-slate-500 truncate">
                     {fileName || "No file chosen"}
@@ -387,7 +397,7 @@ function Leave() {
                 <motion.div
                   initial={{ opacity: 0, y: -4 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="mb-5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-amber-700 font-medium"
+                  className="mb-5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-primary font-medium"
                 >
                   📅 {calculateDays(form.startDate, form.endDate)} day(s) of
                   leave
@@ -424,7 +434,7 @@ function Leave() {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleSubmit}
-              className="relative overflow-hidden flex items-center gap-2 px-8 py-3 rounded-xl bg-gradient-to-r from-[#F28C28] to-[#E67E22] text-white font-bold shadow-lg hover:shadow-xl hover:shadow-orange-500/30 transition-all"
+              className="relative overflow-hidden flex items-center gap-2 px-8 py-3 rounded-xl bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white font-bold shadow-lg hover:shadow-xl hover:shadow-orange-500/30 transition-all"
             >
               {isAnimating && (
                 <motion.div
@@ -451,7 +461,7 @@ function Leave() {
             <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-100 p-5 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-amber-100 rounded-xl">
-                  <Clock3 className="w-5 h-5 text-amber-600" />
+                  <Clock3 className="w-5 h-5 text-primary" />
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-[#1F3C68]">
@@ -460,7 +470,7 @@ function Leave() {
                   <p className="text-xs text-slate-500">Awaiting approval</p>
                 </div>
               </div>
-              <span className="bg-amber-500 text-white text-sm font-bold px-3 py-1 rounded-full">
+              <span className="bg-primary text-white text-sm font-bold px-3 py-1 rounded-full">
                 {pendingLeaves.length}
               </span>
             </div>
@@ -493,7 +503,7 @@ function Leave() {
                   </div>
                   {/* Status indicator only - no action buttons */}
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-100 text-amber-700 border border-amber-200 text-sm font-semibold">
+                    <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-100 text-primary border border-amber-200 text-sm font-semibold">
                       <Clock3 className="w-4 h-4" />
                       Awaiting Approval
                     </span>
@@ -531,7 +541,7 @@ function Leave() {
                     onClick={() => setActiveTab(s)}
                     className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                       activeTab === s
-                        ? "bg-[#F28C28] text-white shadow"
+                        ? "bg-[#E97638] text-white shadow"
                         : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                     }`}
                   >
@@ -593,7 +603,7 @@ function Leave() {
                           )}
                         </td>
                         <td className="py-4 pr-4 hidden md:table-cell">
-                          <span className="font-bold text-[#F28C28]">
+                          <span className="font-bold text-[#e97638]">
                             {leave.days}d
                           </span>
                         </td>
