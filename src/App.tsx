@@ -7,6 +7,7 @@ import UserDashboard from "./pages/user/Dashboard";
 import Leave from "./pages/user/Leave";
 import Login from "./pages/user/index";
 import ForgotPassword from "./pages/user/ForgotPassword";
+import Tasks from "./pages/user/Tasks";
 
 // ADMIN PAGES
 import AdminDashboard from "./pages/admin/Admindashboard";
@@ -73,6 +74,7 @@ export default function App() {
         <Route path="/attendance" element={<Attendance />} />
         <Route path="/leave" element={<Leave />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/tasks" element={<Tasks />} />
 
         {/* OPTIONAL: if user Tasks page exists later, add it back */}
         {/* <Route path="/tasks" element={<Tasks />} /> */}

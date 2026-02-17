@@ -1,11 +1,23 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, Clock, LogIn, LogOut as LogOutIcon, CheckCircle2, Circle, PlayCircle, ListTodo } from "lucide-react";
+import { Menu, Clock, LogIn, LogOut as LogOutIcon, CheckCircle2, Circle, PlayCircle, BookmarkCheck } from "lucide-react";
 import { useClock } from "./hooks/useClock";
 import { useAttendance } from "./hooks/useAttendance";
 import type { TimeRecord } from "./hooks/useAttendance";
 import Usersidebar from "./components/Usersidebar.tsx";
+
+type TaskStatus = "Pending" | "In Progress" | "Completed";
+
+interface Task {
+  id: number;
+  title: string;
+  description: string;
+  priority: string;
+  status: TaskStatus;
+  dueDate: string;
+  createdAt: string;
+}
 
 function Dashboard() {
   const location = useLocation();
@@ -16,6 +28,44 @@ function Dashboard() {
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [pendingLeavesCount, setPendingLeavesCount] = useState(0);
+
+  // ── Real task counts from localStorage (same key as TaskPage) ──
+  const [taskCounts, setTaskCounts] = useState({
+    pending: 0,
+    inProgress: 0,
+    completed: 0,
+    total: 0,
+  });
+
+  useEffect(() => {
+    const loadTaskCounts = () => {
+      const stored = localStorage.getItem(`tasks_${user?.id || "user"}`);
+      if (stored) {
+        try {
+          const tasks: Task[] = JSON.parse(stored);
+          setTaskCounts({
+            pending: tasks.filter((t) => t.status === "Pending").length,
+            inProgress: tasks.filter((t) => t.status === "In Progress").length,
+            completed: tasks.filter((t) => t.status === "Completed").length,
+            total: tasks.length,
+          });
+        } catch {
+          // skip invalid data
+        }
+      } else {
+        setTaskCounts({ pending: 0, inProgress: 0, completed: 0, total: 0 });
+      }
+    };
+
+    loadTaskCounts();
+    // Poll every 2s so changes from TaskPage reflect immediately
+    const interval = setInterval(loadTaskCounts, 2000);
+    return () => clearInterval(interval);
+  }, [user?.id]);
+
+  const completionPct = taskCounts.total
+    ? Math.round((taskCounts.completed / taskCounts.total) * 100)
+    : 0;
 
   const {
     todayRecord,
@@ -29,8 +79,6 @@ function Dashboard() {
     calculateElapsedTime,
   } = useAttendance(user?.id || "user");
 
-  // (device detection is handled inside the attendance hook)
-  // Handle window resize to update device type (update record via hook)
   useEffect(() => {
     const handleResize = () => {
       setTodayRecord((prev: TimeRecord | null) => {
@@ -42,17 +90,19 @@ function Dashboard() {
         const isMobileViewport = screenWidth <= 765;
         const isTabletViewport = screenWidth > 765 && screenWidth <= 1024;
         const hasTouch = () => "ontouchstart" in window || navigator.maxTouchPoints > 0;
-        const newDevice = isMobileUA || (isMobileViewport && hasTouch()) ? "Mobile" : isTabletUA || isTabletViewport ? "Tablet" : "Desktop";
+        const newDevice = isMobileUA || (isMobileViewport && hasTouch())
+          ? "Mobile"
+          : isTabletUA || isTabletViewport
+          ? "Tablet"
+          : "Desktop";
         if (newDevice !== prev.device) return { ...prev, device: newDevice };
         return prev;
       });
     };
-
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, [setTodayRecord]);
 
-  // Load pending leaves count
   useEffect(() => {
     const loadPendingLeaves = () => {
       const leaveRequests = localStorage.getItem(`leave_requests_${user?.id || "user"}`);
@@ -62,11 +112,10 @@ function Dashboard() {
           const pending = leaves.filter((l: { status: string }) => l.status === "Pending").length;
           setPendingLeavesCount(pending);
         } catch {
-          // Skip invalid data
+          // skip invalid data
         }
       }
     };
-
     if (user?.id) {
       loadPendingLeaves();
       const interval = setInterval(loadPendingLeaves, 2000);
@@ -74,22 +123,18 @@ function Dashboard() {
     }
   }, [user?.id]);
 
-  // Prepare detail items for rendering
   const detailItems = [
-    { label: "Time In", value: todayRecord?.timeIn, isTime: true,  textColor: "#1F3C68", bgClass: "from-blue-50 to-blue-100/50", borderClass: "border-blue-200" },
-    { label: "Lunch Out", value: todayRecord?.lunchOut, isTime: true,textColor: "#F28C28", bgClass: "from-blue-50 to-blue-100/50",borderClass: "border-blue-200"},
-    { label: "Lunch In", value: todayRecord?.lunchIn, isTime: true, textColor: "#F28C28", bgClass: "from-blue-50 to-blue-100/50", borderClass: "border-blue-200" },
-    { label: "Time Out", value: todayRecord?.timeOut, isTime: true, textColor: "#e91f1f", bgClass: "from-red-50 to-red-100/50", borderClass: "border-red-200" },
-    { label: "Elapsed Time", value: calculateElapsedTime(), isElapsed: true, textColor: "#F28C28" , bgClass: "from-yellow-50 to-yellow-100/50", borderClass: "border-yellow-200" }, 
-    { label: "Device", value: todayRecord?.device || "---", isTime: false, textColor: "#1F3C68", bgClass: "from-blue-50 to-blue-100/50", borderClass: "border-blue-200"},
+    { label: "Time In",      value: todayRecord?.timeIn,    isTime: true,    textColor: "#1F3C68", bgClass: "from-blue-50 to-blue-100/50",    borderClass: "border-blue-200"   },
+    { label: "Lunch Out",    value: todayRecord?.lunchOut,  isTime: true,    textColor: "#F28C28", bgClass: "from-blue-50 to-blue-100/50",    borderClass: "border-blue-200"   },
+    { label: "Lunch In",     value: todayRecord?.lunchIn,   isTime: true,    textColor: "#F28C28", bgClass: "from-blue-50 to-blue-100/50",    borderClass: "border-blue-200"   },
+    { label: "Time Out",     value: todayRecord?.timeOut,   isTime: true,    textColor: "#e91f1f", bgClass: "from-red-50 to-red-100/50",      borderClass: "border-red-200"    },
+    { label: "Elapsed Time", value: calculateElapsedTime(), isElapsed: true, textColor: "#F28C28", bgClass: "from-yellow-50 to-yellow-100/50", borderClass: "border-yellow-200" },
+    { label: "Device",       value: todayRecord?.device || "---", isTime: false, textColor: "#1F3C68", bgClass: "from-blue-50 to-blue-100/50", borderClass: "border-blue-200" },
   ];
 
   const formatTimeLocal = (date?: string | number | Date) => {
     if (!date) return "--:--";
-    return new Date(date).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    return new Date(date).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
   };
 
   const handleLogout = () => {
@@ -122,11 +167,7 @@ function Dashboard() {
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
               className="fixed left-0 top-0 w-64 bg-white h-full shadow-2xl z-50"
             >
-              <Usersidebar
-                navigate={navigate}
-                logout={handleLogout}
-                close={() => setMenuOpen(false)}
-              />
+              <Usersidebar navigate={navigate} logout={handleLogout} close={() => setMenuOpen(false)} />
             </motion.aside>
           </>
         )}
@@ -147,47 +188,37 @@ function Dashboard() {
             >
               <Menu className="text-[#1F3C68]" />
             </button>
-
             <div className="min-w-0">
               <h1 className="text-lg sm:text-2xl md:text-3xl font-bold text-[#1F3C68] truncate">
                 Welcome, {user?.name || "User"}!
               </h1>
               <p className="text-xs sm:text-sm text-[#1E293B] mt-1 font-medium truncate">
                 {currentTime.toLocaleDateString("en-US", {
-                  weekday: "short",
-                  year: "numeric",
-                  month: "short",
-                  day: "numeric",
+                  weekday: "short", year: "numeric", month: "long", day: "numeric",
                 })}
               </p>
             </div>
           </div>
 
-          
           <div className="hidden md:flex lg:hidden items-center gap-2 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-3 py-2 rounded-lg shadow-lg md:w-[92px]">
             <Clock className="w-4 h-4" />
             <p className="font-bold text-xs tabular-nums">
-              {currentTime.toLocaleTimeString("en-US", {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
+              {currentTime.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
             </p>
           </div>
 
           <div className="hidden lg:flex items-center gap-3 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-6 py-3 rounded-xl shadow-lg">
             <Clock className="w-5 h-5" />
             <p className="font-bold text-lg tabular-nums">
-              {currentTime.toLocaleTimeString("en-US", {
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              })}
+              {currentTime.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
             </p>
           </div>
         </motion.div>
+
         {/* Widgets Grid */}
         <div className="grid gap-4 md:gap-5 lg:gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 auto-rows-max">
-          {/* Time Tracking - Featured */}
+
+          {/* ── Time Tracking ── */}
           <motion.div
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
@@ -202,20 +233,13 @@ function Dashboard() {
                   </div>
                   <div className="min-w-0">
                     <h2 className="text-sm md:text-lg lg:text-2xl font-bold">Time Tracking</h2>
-                    <p className="text-[10px] md:text-[11px] lg:text-sm text-white/90">
-                      Track your daily work hours
-                    </p>
+                    <p className="text-[10px] md:text-[11px] lg:text-sm text-white/90">Track your daily work hours</p>
                   </div>
                 </div>
-
                 <div className="text-right flex-shrink-0">
                   <p className="text-[9px] md:text-[10px] lg:text-sm text-white/80 mb-0.5 md:mb-0.5 lg:mb-1">Status</p>
                   <div className={`flex items-center gap-1.5 md:gap-1.5 lg:gap-2 font-bold whitespace-nowrap ${
-                    !todayRecord?.timeIn 
-                      ? "text-white/60" 
-                      : todayRecord.timeOut 
-                        ? "text-red-200" 
-                        : "text-green-200"
+                    !todayRecord?.timeIn ? "text-white/60" : todayRecord.timeOut ? "text-red-200" : "text-green-200"
                   }`}>
                     <div className="w-1.5 md:w-1.5 lg:w-2 h-1.5 md:h-1.5 lg:h-2 rounded-full bg-current animate-pulse" />
                     <span className="text-[10px] md:text-xs lg:text-lg">{getStatus()}</span>
@@ -227,93 +251,48 @@ function Dashboard() {
             <div className="p-3 md:p-4 lg:p-8">
               {/* Action Buttons */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-4 md:mb-6">
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={handleTimeIn}
-                  disabled={!!todayRecord?.timeIn}
+                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={handleTimeIn} disabled={!!todayRecord?.timeIn}
                   className={`relative overflow-hidden p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
-                    todayRecord?.timeIn
-                      ? "bg-slate-300 cursor-not-allowed"
-                      : "bg-gradient-to-br from-green-500 to-emerald-600 hover:shadow-2xl hover:shadow-green-500/30"
-                  }`}
-                >
+                    todayRecord?.timeIn ? "bg-slate-300 cursor-not-allowed" : "bg-gradient-to-br from-green-500 to-emerald-600 hover:shadow-2xl hover:shadow-green-500/30"
+                  }`}>
                   {isAnimating && !todayRecord?.timeOut && (
-                    <motion.div
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 2, opacity: 0 }}
-                      transition={{ duration: 1 }}
-                      className="absolute inset-0 bg-white rounded-full"
-                    />
+                    <motion.div initial={{ scale: 0 }} animate={{ scale: 2, opacity: 0 }} transition={{ duration: 1 }} className="absolute inset-0 bg-white rounded-full" />
                   )}
                   <div className="relative flex flex-col items-center justify-center gap-0.5 md:gap-1">
                     <LogIn className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
                     <span className="text-[10px] md:text-xs lg:text-lg">Time In</span>
                   </div>
                 </motion.button>
-                <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handleLunchOut}
-                disabled={
-                  !todayRecord?.timeIn ||
-                  !!todayRecord?.lunchOut ||
-                  !!todayRecord?.timeOut
-                }
-                className={`p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
-                  !todayRecord?.timeIn ||
-                  todayRecord?.lunchOut ||
-                  todayRecord?.timeOut
-                    ? "bg-slate-300 cursor-not-allowed"
-                    : "bg-gradient-to-br from-yellow-500 to-primary"
-                }`}
-              >
-                <div className="flex flex-col items-center justify-center gap-0.5 md:gap-1">
-                  <Clock className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
-                  <span className="text-[10px] md:text-xs lg:text-lg">Lunch Out</span>
-                </div>
-              </motion.button>
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={handleLunchIn}
-                  disabled={
-                    !todayRecord?.lunchOut ||
-                    !!todayRecord?.lunchIn ||
-                    !!todayRecord?.timeOut
-                  }
+
+                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={handleLunchOut}
+                  disabled={!todayRecord?.timeIn || !!todayRecord?.lunchOut || !!todayRecord?.timeOut}
                   className={`p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
-                    !todayRecord?.lunchOut ||
-                    todayRecord?.lunchIn ||
-                    todayRecord?.timeOut
-                      ? "bg-slate-300 cursor-not-allowed"
-                      : "bg-gradient-to-br from-blue-500 to-indigo-600"
-                  }`}
-                >
+                    !todayRecord?.timeIn || todayRecord?.lunchOut || todayRecord?.timeOut ? "bg-slate-300 cursor-not-allowed" : "bg-gradient-to-br from-yellow-500 to-primary"
+                  }`}>
+                  <div className="flex flex-col items-center justify-center gap-0.5 md:gap-1">
+                    <Clock className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
+                    <span className="text-[10px] md:text-xs lg:text-lg">Lunch Out</span>
+                  </div>
+                </motion.button>
+
+                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={handleLunchIn}
+                  disabled={!todayRecord?.lunchOut || !!todayRecord?.lunchIn || !!todayRecord?.timeOut}
+                  className={`p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
+                    !todayRecord?.lunchOut || todayRecord?.lunchIn || todayRecord?.timeOut ? "bg-slate-300 cursor-not-allowed" : "bg-gradient-to-br from-blue-500 to-indigo-600"
+                  }`}>
                   <div className="flex flex-col items-center justify-center gap-0.5 md:gap-1">
                     <Clock className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
                     <span className="text-[10px] md:text-xs lg:text-lg">Lunch In</span>
                   </div>
                 </motion.button>
 
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={handleTimeOut}
+                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={handleTimeOut}
                   disabled={!todayRecord?.timeIn || !!todayRecord?.timeOut}
                   className={`relative overflow-hidden p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
-                    !todayRecord?.timeIn || todayRecord?.timeOut
-                      ? "bg-slate-300 cursor-not-allowed"
-                      : "bg-gradient-to-br from-red-500 to-rose-600 hover:shadow-2xl hover:shadow-red-500/30"
-                  }`}
-                >
+                    !todayRecord?.timeIn || todayRecord?.timeOut ? "bg-slate-300 cursor-not-allowed" : "bg-gradient-to-br from-red-500 to-rose-600 hover:shadow-2xl hover:shadow-red-500/30"
+                  }`}>
                   {isAnimating && todayRecord?.timeOut && (
-                    <motion.div
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 2, opacity: 0 }}
-                      transition={{ duration: 1 }}
-                      className="absolute inset-0 bg-white rounded-full"
-                    />
+                    <motion.div initial={{ scale: 0 }} animate={{ scale: 2, opacity: 0 }} transition={{ duration: 1 }} className="absolute inset-0 bg-white rounded-full" />
                   )}
                   <div className="relative flex flex-col items-center justify-center gap-0.5 md:gap-1">
                     <LogOutIcon className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
@@ -323,31 +302,20 @@ function Dashboard() {
               </div>
 
               {/* Time Details */}
-             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 md:gap-2.5 lg:gap-3">
-            {detailItems.map((item, idx) => (
-              <div
-                key={idx}
-                className={`p-2 md:p-2.5 lg:p-4 rounded-md md:rounded-lg lg:rounded-xl border ${item.borderClass} bg-gradient-to-br ${item.bgClass}`}
-              >
-                <p className="text-[9px] md:text-[10px] lg:text-xs text-slate-600 mb-0.5 md:mb-0.5 lg:mb-1 font-medium">{item.label}</p>
-                <p
-                  className={`text-xs md:text-sm lg:text-lg font-bold tabular-nums`}
-                  style={{ color: item.textColor }}
-                >
-                  {item.isElapsed
-                    ? item.value
-                    : item.isTime
-                    ? formatTimeLocal(item.value ?? undefined)
-                    : item.value}
-                </p>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 md:gap-2.5 lg:gap-3">
+                {detailItems.map((item, idx) => (
+                  <div key={idx} className={`p-2 md:p-2.5 lg:p-4 rounded-md md:rounded-lg lg:rounded-xl border ${item.borderClass} bg-gradient-to-br ${item.bgClass}`}>
+                    <p className="text-[9px] md:text-[10px] lg:text-xs text-slate-600 mb-0.5 md:mb-0.5 lg:mb-1 font-medium">{item.label}</p>
+                    <p className="text-xs md:text-sm lg:text-lg font-bold tabular-nums" style={{ color: item.textColor }}>
+                      {item.isElapsed ? item.value : item.isTime ? formatTimeLocal(item.value ?? undefined) : item.value}
+                    </p>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-
             </div>
           </motion.div>
 
-          {/* Pending Leave */}
+          {/* ── Pending Leave ── */}
           <motion.div
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
@@ -361,7 +329,9 @@ function Dashboard() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <h3 className="text-xs md:text-sm lg:text-base font-bold text-amber-900">Pending Leave Requests</h3>
-                  <p className="text-[9px] md:text-[10px] lg:text-sm text-amber-700">You have {pendingLeavesCount} leave request(s) awaiting approval</p>
+                  <p className="text-[9px] md:text-[10px] lg:text-sm text-amber-700">
+                    You have {pendingLeavesCount} leave request(s) awaiting approval
+                  </p>
                 </div>
               </div>
               <motion.button
@@ -373,85 +343,142 @@ function Dashboard() {
                 View
               </motion.button>
             </div>
-            {/* Pending Leaves Alert */}
-        {pendingLeavesCount > 0 && (
+          </motion.div>
+
+          {/* ── Task Summary ── (wired to real localStorage tasks) */}
           <motion.div
-            initial={{ y: -20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}>
-          </motion.div>
-        )}  
-          </motion.div>
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ delay: 0.3 }}
+            className="col-span-1 md:col-span-2 lg:col-span-3 bg-white p-4 md:p-5 lg:p-6 rounded-2xl md:rounded-2.5xl lg:rounded-3xl shadow-md border border-slate-100"
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between mb-4 md:mb-5 lg:mb-6 flex-wrap gap-3">
+              <div className="flex items-center gap-2 md:gap-2.5 lg:gap-3">
+                <div className="p-2 md:p-2 lg:p-3 bg-[#E0F2FE] rounded-lg md:rounded-lg lg:rounded-xl flex-shrink-0">
+                  <BookmarkCheck className="w-4 md:w-4.5 lg:w-6 h-4 md:h-4.5 lg:h-6 text-[#1F3C68]" />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-sm md:text-base lg:text-xl font-bold text-[#1F3C68]">Task Summary</h2>
+                  <p className="text-[10px] md:text-[11px] lg:text-sm text-slate-500">Your daily task overview</p>
+                </div>
+              </div>
 
-         {/* Task Summary */}
-        <motion.div
-          initial={{ scale: 0.95, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ delay: 0.3 }}
-          className="col-span-1 md:col-span-2 lg:col-span-3 bg-white p-4 md:p-5 lg:p-6 rounded-2xl md:rounded-2.5xl lg:rounded-3xl shadow-md border border-slate-100"
-        >
-          {/* Header */}
-          <div className="flex items-center gap-2 md:gap-2.5 lg:gap-3 mb-4 md:mb-5 lg:mb-6">
-            <div className="p-2 md:p-2 lg:p-3 bg-[#E0F2FE] rounded-lg md:rounded-lg lg:rounded-xl flex-shrink-0"> {/* subtle blue background for icon */}
-              <ListTodo className="w-4 md:w-4.5 lg:w-6 h-4 md:h-4.5 lg:h-6 text-[#1F3C68]" />
+              {/* Go to Tasks shortcut */}
+              <motion.button
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => navigate("/tasks", { state: { user } })}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#E97638] text-white text-xs font-bold shadow-sm hover:shadow-md transition-all"
+              >
+                <BookmarkCheck className="w-3.5 h-3.5" />
+                View All Tasks
+              </motion.button>
             </div>
-            <div className="min-w-0">
-              <h2 className="text-sm md:text-base lg:text-xl font-bold text-[#1F3C68]">Task Summary</h2>
-              <p className="text-[10px] md:text-[11px] lg:text-sm text-slate-500">Your daily task overview</p>
+
+            {/* Progress bar */}
+            {taskCounts.total > 0 && (
+              <div className="mb-4 md:mb-5">
+                <div className="flex justify-between text-xs font-medium text-slate-500 mb-1.5">
+                  <span>Overall Completion</span>
+                  <span className="font-bold text-[#1F3C68]">{completionPct}%</span>
+                </div>
+                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                  <motion.div
+                    initial={{ width: 0 }}
+                    animate={{ width: `${completionPct}%` }}
+                    transition={{ duration: 0.8, ease: "easeOut" }}
+                    className="h-full rounded-full bg-gradient-to-r from-[#F28C28] to-[#E97638]"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  {taskCounts.completed} of {taskCounts.total} tasks complete
+                </p>
+              </div>
+            )}
+
+            {/* Task Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3 lg:gap-4">
+
+              {/* Pending */}
+              <motion.div
+                whileHover={{ y: -2 }}
+                onClick={() => navigate("/tasks", { state: { user } })}
+                className="cursor-pointer bg-white p-2.5 md:p-3 lg:p-5 rounded-lg md:rounded-lg lg:rounded-2xl border border-yellow-200 shadow-sm hover:shadow-md transition-all"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <Circle className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5 text-yellow-500" />
+                  <motion.span
+                    key={taskCounts.pending}
+                    initial={{ scale: 1.3, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="text-lg md:text-xl lg:text-2xl font-bold text-yellow-600 tabular-nums"
+                  >
+                    {taskCounts.pending}
+                  </motion.span>
+                </div>
+                <p className="text-xs md:text-xs lg:text-lg font-semibold text-slate-700">Pending</p>
+                <p className="text-[9px] md:text-[9px] lg:text-xs text-slate-500 mt-0.5">Waiting to start</p>
+              </motion.div>
+
+              {/* In Progress */}
+              <motion.div
+                whileHover={{ y: -2 }}
+                onClick={() => navigate("/tasks", { state: { user } })}
+                className="cursor-pointer bg-white p-2.5 md:p-3 lg:p-5 rounded-lg md:rounded-lg lg:rounded-2xl border border-blue-200 shadow-sm hover:shadow-md transition-all"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <PlayCircle className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5 text-[#1F3C68]" />
+                  <motion.span
+                    key={taskCounts.inProgress}
+                    initial={{ scale: 1.3, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="text-lg md:text-xl lg:text-2xl font-bold text-[#1F3C68] tabular-nums"
+                  >
+                    {taskCounts.inProgress}
+                  </motion.span>
+                </div>
+                <p className="text-xs md:text-xs lg:text-lg font-semibold text-slate-700">In Progress</p>
+                <p className="text-[9px] md:text-[9px] lg:text-xs text-slate-500 mt-0.5">Currently working</p>
+              </motion.div>
+
+              {/* Completed */}
+              <motion.div
+                whileHover={{ y: -2 }}
+                onClick={() => navigate("/tasks", { state: { user } })}
+                className="cursor-pointer bg-white p-2.5 md:p-3 lg:p-5 rounded-lg md:rounded-lg lg:rounded-2xl border border-green-200 shadow-sm hover:shadow-md transition-all"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <CheckCircle2 className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5 text-green-600" />
+                  <motion.span
+                    key={taskCounts.completed}
+                    initial={{ scale: 1.3, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="text-lg md:text-xl lg:text-2xl font-bold text-green-600 tabular-nums"
+                  >
+                    {taskCounts.completed}
+                  </motion.span>
+                </div>
+                <p className="text-xs md:text-xs lg:text-lg font-semibold text-slate-700">Completed</p>
+                <p className="text-[9px] md:text-[9px] lg:text-xs text-slate-500 mt-0.5">Successfully done</p>
+              </motion.div>
+
             </div>
-          </div>
 
-          {/* Task Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3 lg:gap-4">
-            {/* Pending */}
-            <motion.div
-              whileHover={{ y: -2 }}
-              className="bg-white p-2.5 md:p-3 lg:p-5 rounded-lg md:rounded-lg lg:rounded-2xl border border-yellow-200 shadow-sm hover:shadow-md transition-all"
-            >
-              <div className="flex items-center justify-between mb-2 md:mb-2">
-                <Circle className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5 text-yellow-600" />
-                <span className="text-lg md:text-xl lg:text-2xl font-bold text-yellow-600">3</span>
+            {/* Empty state */}
+            {taskCounts.total === 0 && (
+              <div className="text-center py-6 text-slate-300">
+                <BookmarkCheck className="w-8 h-8 mx-auto mb-2" />
+                <p className="text-sm font-semibold text-slate-400">No tasks yet</p>
+                <p className="text-xs text-slate-300 mt-0.5">Go to Tasks to add your first task</p>
               </div>
-              <p className="text-xs md:text-xs lg:text-lg font-semibold text-slate-700">Pending</p>
-              <p className="text-[9px] md:text-[9px] lg:text-xs text-slate-500 mt-0.5 mb-2">Waiting to start</p>
-              <div className="border-t border-yellow-100 pt-1 space-y-1">
-              </div>
-            </motion.div>
-
-            {/* In Progress */}
-            <motion.div
-              whileHover={{ y: -2 }}
-              className="bg-white p-2.5 md:p-3 lg:p-5 rounded-lg md:rounded-lg lg:rounded-2xl border border-blue-200 shadow-sm hover:shadow-md transition-all"
-            >
-              <div className="flex items-center justify-between mb-2 md:mb-2">
-                <PlayCircle className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5 text-[#1F3C68]" />
-                <span className="text-lg md:text-xl lg:text-2xl font-bold text-[#1F3C68]">2</span>
-              </div>
-              <p className="text-xs md:text-xs lg:text-lg font-semibold text-slate-700">In Progress</p>
-              <p className="text-[9px] md:text-[9px] lg:text-xs text-slate-500 mt-0.5 mb-2">Currently working</p>
-              <div className="border-t border-blue-100 pt-1 space-y-1">
-              </div>
-            </motion.div>
-
-            {/* Completed */}
-            <motion.div
-              whileHover={{ y: -2 }}
-              className="bg-white p-2.5 md:p-3 lg:p-5 rounded-lg md:rounded-lg lg:rounded-2xl border border-green-200 shadow-sm hover:shadow-md transition-all"
-            >
-              <div className="flex items-center justify-between mb-2 md:mb-2">
-                <CheckCircle2 className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5 text-green-600" />
-                <span className="text-lg md:text-xl lg:text-2xl font-bold text-green-600">5</span>
-              </div>
-              <p className="text-xs md:text-xs lg:text-lg font-semibold text-slate-700">Completed</p>
-              <p className="text-[9px] md:text-[9px] lg:text-xs text-slate-500 mt-0.5 mb-2">Successfully done</p>
-              <div className="border-t border-green-100 pt-1 space-y-1">
-              </div>
-            </motion.div>
-        </div>
-      </motion.div>
+            )}
+          </motion.div>
 
         </div>
       </main>
     </div>
   );
 }
+
 export default Dashboard;

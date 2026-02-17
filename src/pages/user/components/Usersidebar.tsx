@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { LayoutDashboard, CalendarDays, ClipboardList, ListTodo, LogOut, X } from "lucide-react";
+import { LayoutDashboard, CalendarDays, FileUser, ListTodo, LogOut, X } from "lucide-react";
 import picture from "/logo.png";
 
 type Props = {
@@ -12,8 +12,8 @@ export default function Usersidebar({ navigate, logout, close }: Props) {
   const navItems = [
     { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
     { icon: CalendarDays, label: "Attendance", path: "/attendance" },
-    { icon: ClipboardList, label: "Leave", path: "/leave" },
-    { icon: ListTodo, label: "Task", path: "/task" },
+    { icon: FileUser, label: "Leave", path: "/leave" },
+    { icon: ListTodo, label: "Task", path: "/tasks" },
   ];
 
   return (

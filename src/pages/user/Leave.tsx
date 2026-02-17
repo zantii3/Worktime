@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, ClipboardList, ListTodo, Clock, CheckCircle2, XCircle, Clock3, ChevronDown, Paperclip, Send } from "lucide-react";
+import { Menu, ClipboardList, Clock, CheckCircle2, XCircle, Clock3, ChevronDown, Paperclip, Send, FileUser, FileClock} from "lucide-react";
 import { useClock } from "./hooks/useClock";
 import Usersidebar from "./components/Usersidebar.tsx";
 import type { LeaveRequest, LeaveType, LeaveStatus, LeavePolicy } from "./types/leavetypes";
@@ -208,7 +208,7 @@ function Leave() {
               </h1>
               <p className="text-sm text-[#1E293B] mt-1 font-medium">
                 {currentTime.toLocaleDateString("en-US", {
-                  weekday: "long",
+                  weekday: "short",
                   year: "numeric",
                   month: "long",
                   day: "numeric",
@@ -301,7 +301,7 @@ function Leave() {
           <div className="bg-gradient-to-r from-[#F28C28] to-[#E97638] p-6 text-white">
             <div className="flex items-center gap-3">
               <div className="p-3 bg-white/20 backdrop-blur-sm rounded-xl">
-                <ClipboardList className="w-6 h-6" />
+                <FileUser className="w-6 h-6" />
               </div>
               <div>
                 <h2 className="text-2xl font-bold">File a Leave Request</h2>
@@ -524,7 +524,7 @@ function Leave() {
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
               <div className="p-3 bg-[#E0F2FE] rounded-xl">
-                <ListTodo className="w-6 h-6 text-[#1F3C68]" />
+                <FileClock className="w-6 h-6 text-[#1F3C68]" />
               </div>
               <div>
                 <h2 className="text-xl font-bold text-[#1F3C68]">

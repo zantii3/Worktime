@@ -153,7 +153,7 @@ function AttendanceApp() {
               <h1 className="text-xl md:text-3xl font-bold text-[#1F3C68]">Attendance Records</h1>
               <p className="text-sm text-[#1E293B] mt-1 font-medium">
                 {currentTime.toLocaleDateString("en-US", {
-                  weekday: "long",
+                  weekday: "short",
                   year: "numeric",
                   month: "long",
                   day: "numeric",
