@@ -40,23 +40,35 @@ export default function Usersidebar({ navigate, logout, close }: Props) {
       </div>
 
       <nav className="flex flex-col gap-2">
-        {navItems.map((item, index) => (
-          <motion.button
-            key={item.path}
-            initial={{ x: -20, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            transition={{ delay: index * 0.05 }}
-            whileHover={{ x: 4, backgroundColor: "#F2F2F2" }}
-            onClick={() => {
-              navigate(item.path);
-              close?.();
-            }}
-            className="flex items-center gap-3 px-4 py-3 rounded-xl text-[#1E293B] font-medium transition-all group border-b-2 border-transparent hover:border-secondary focus:border-secondary"
-          >
-            <item.icon size={20} className="text-slate-500 group-hover:text-primary transition-colors" />
-            <span className="group-hover:text-primary transition-colors">{item.label}</span>
-          </motion.button>
-        ))}
+        {navItems.map((item, index) => {
+          const isActive = window.location.pathname === item.path;
+          return (
+            <motion.button
+              key={item.path}
+              initial={{ x: -20, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              transition={{ delay: index * 0.05 }}
+              whileHover={{ x: 4, backgroundColor: "#F2F2F2" }}
+              onClick={() => {
+                navigate(item.path);
+                close?.();
+              }}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl text-[#1E293B] font-medium transition-all group
+                border-b-2 ${isActive ? "border-secondary" : "border-transparent"}
+                ${isActive ? "bg-secondary/10" : ""}`}
+            >
+              <item.icon
+                size={20}
+                className={`text-slate-500 transition-colors ${isActive ? "text-primary" : "group-hover:text-primary"}`}
+              />
+              <span
+                className={`transition-colors ${isActive ? "text-primary" : "group-hover:text-primary"}`}
+              >
+                {item.label}
+              </span>
+            </motion.button>
+          );
+        })}
       </nav>
 
       <motion.button
