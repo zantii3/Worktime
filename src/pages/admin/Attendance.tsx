@@ -65,11 +65,15 @@ export default function Attendance() {
   const employeeList = employees as Employee[];
   const allRecords = attendanceRecords as AttendanceRecord[];
 
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState(employeeList[0]?.id ?? "");
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState(
+    employeeList[0]?.id ?? ""
+  );
   const [viewMonth, setViewMonth] = useState<Date>(new Date());
-  const [selectedDateISO, setSelectedDateISO] = useState<string>(toISODate(new Date()));
+  const [selectedDateISO, setSelectedDateISO] = useState<string>(
+    toISODate(new Date())
+  );
 
-  // realtime clock (badge at top-right like screenshot)
+  // realtime clock (badge at top-right)
   const [now, setNow] = useState<Date>(new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -105,7 +109,10 @@ export default function Attendance() {
   }, [recordsForMonth]);
 
   const targetMinutes = 160 * 60;
-  const progressPct = Math.min(100, Math.round((monthTotalMinutes / targetMinutes) * 100));
+  const progressPct = Math.min(
+    100,
+    Math.round((monthTotalMinutes / targetMinutes) * 100)
+  );
 
   function prevMonth() {
     setViewMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1));
@@ -115,7 +122,6 @@ export default function Attendance() {
   }
 
   const selectedEmployee = employeeList.find((e) => e.id === selectedEmployeeId);
-
   const dailyMinutes = selectedDayRecord ? computeWorkMinutes(selectedDayRecord) : 0;
 
   return (
@@ -125,10 +131,12 @@ export default function Attendance() {
       transition={{ duration: 0.25 }}
       className="p-6 space-y-6"
     >
-      {/* Header card like screenshot */}
+      {/* Header card */}
       <div className="bg-card border border-slate-200 rounded-2xl shadow-sm p-5 flex items-center justify-between gap-4">
         <div>
-          <div className="text-2xl font-bold text-text-heading">Attendance Records</div>
+          <div className="text-2xl font-bold text-text-heading">
+            Attendance Records
+          </div>
           <div className="text-sm text-text-primary/70">
             {formatFullDate(selectedDateISO)}
           </div>
@@ -141,7 +149,7 @@ export default function Attendance() {
             <select
               value={selectedEmployeeId}
               onChange={(e) => setSelectedEmployeeId(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-text-heading outline-none focus:ring-2 focus:ring-orange-300"
+              className="rounded-xl border border-slate-200 bg-card px-3 py-2 text-sm text-text-heading outline-none focus:ring-2 focus:ring-primary/30"
             >
               {employeeList.map((emp) => (
                 <option key={emp.id} value={emp.id}>
@@ -151,16 +159,21 @@ export default function Attendance() {
             </select>
 
             <span className="text-xs text-text-primary/60">
-              Viewing: <span className="font-semibold">{selectedEmployee?.name}</span>
+              Viewing:{" "}
+              <span className="font-semibold">{selectedEmployee?.name}</span>
             </span>
           </div>
         </div>
 
         {/* Clock badge */}
-        <div className="bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
+        <div className="bg-primary text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
           <span>🕒</span>
           <span>
-            {now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            {now.toLocaleTimeString("en-US", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}
           </span>
         </div>
       </div>
@@ -185,26 +198,27 @@ export default function Attendance() {
             initial={{ opacity: 0, x: 10 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.25 }}
-            className="rounded-2xl overflow-hidden border border-orange-200 shadow-sm"
+            className="rounded-2xl overflow-hidden border border-slate-200 shadow-sm bg-card"
           >
-            <div className="bg-gradient-to-r from-orange-500 to-orange-600 p-5 text-white">
+            <div className="bg-primary p-5 text-white">
               <div className="flex items-start justify-between">
                 <div>
-                  <div className="text-xs font-semibold opacity-90">Total Hours</div>
+                  <div className="text-xs font-semibold opacity-90">
+                    Total Hours
+                  </div>
                   <div className="text-xs opacity-80">This Month</div>
                 </div>
-                <div className="h-10 w-10 rounded-xl bg-white/20 flex items-center justify-center">
+                <div className="h-10 w-10 rounded-xl bg-white/15 flex items-center justify-center">
                   ⏱️
                 </div>
               </div>
 
-              <div className="mt-4 text-4xl font-extrabold">{formatHours(monthTotalMinutes)} hrs</div>
+              <div className="mt-4 text-4xl font-extrabold">
+                {formatHours(monthTotalMinutes)} hrs
+              </div>
 
               <div className="mt-4 h-2 rounded-full bg-white/25 overflow-hidden">
-                <div
-                  className="h-full bg-white"
-                  style={{ width: `${progressPct}%` }}
-                />
+                <div className="h-full bg-white" style={{ width: `${progressPct}%` }} />
               </div>
               <div className="mt-2 text-xs opacity-90">
                 {progressPct}% of monthly target (160 hrs)
@@ -217,20 +231,22 @@ export default function Attendance() {
             initial={{ opacity: 0, x: 10 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.3, delay: 0.05 }}
-            className="rounded-2xl bg-card border border-slate-200 shadow-sm"
+            className="rounded-2xl bg-card border border-slate-200 shadow-sm overflow-hidden"
           >
             <div className="p-5 border-b border-slate-100 flex items-start justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-xl bg-orange-50 flex items-center justify-center">🧾</div>
-                  <div>
-                    <div className="font-bold text-text-heading">Daily Logs</div>
-                    <div className="text-xs text-text-primary/70">Selected day attendance record</div>
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-xl bg-soft flex items-center justify-center">
+                  🧾
+                </div>
+                <div>
+                  <div className="font-bold text-text-heading">Daily Logs</div>
+                  <div className="text-xs text-text-primary/70">
+                    Selected day attendance record
                   </div>
                 </div>
               </div>
 
-              <div className="text-xs font-bold rounded-full bg-orange-50 text-orange-700 px-3 py-1">
+              <div className="text-xs font-bold rounded-full bg-soft border border-slate-200 text-text-heading px-3 py-1">
                 {selectedDayRecord ? `${formatHours(dailyMinutes)} hrs` : "0 hrs"}
               </div>
             </div>
@@ -250,47 +266,23 @@ export default function Attendance() {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-sm font-bold text-text-heading">
-                        {new Date(selectedDayRecord.dateISO + "T00:00:00").toLocaleDateString("en-US", {
-                          weekday: "short",
-                          month: "short",
-                          day: "2-digit",
-                        })}
+                        {new Date(selectedDayRecord.dateISO + "T00:00:00").toLocaleDateString(
+                          "en-US",
+                          { weekday: "short", month: "short", day: "2-digit" }
+                        )}
                       </div>
-                      <div className="text-xs text-text-primary/70">• {selectedDayRecord.source}</div>
+                      <div className="text-xs text-text-primary/70">
+                        • {selectedDayRecord.source}
+                      </div>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-[10px] font-bold text-slate-500">TIME IN</div>
-                      <div className="text-sm font-extrabold text-green-700">
-                        {formatTime(selectedDayRecord.timeIn)}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-[10px] font-bold text-slate-500">LUNCH OUT</div>
-                      <div className="text-sm font-extrabold text-yellow-700">
-                        {formatTime(selectedDayRecord.lunchOut)}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-[10px] font-bold text-slate-500">LUNCH IN</div>
-                      <div className="text-sm font-extrabold text-blue-700">
-                        {formatTime(selectedDayRecord.lunchIn)}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-[10px] font-bold text-slate-500">TIME OUT</div>
-                      <div className="text-sm font-extrabold text-red-700">
-                        {formatTime(selectedDayRecord.timeOut)}
-                      </div>
-                    </div>
+                    <LogBox label="TIME IN" value={formatTime(selectedDayRecord.timeIn)} tone="ok" />
+                    <LogBox label="LUNCH OUT" value={formatTime(selectedDayRecord.lunchOut)} tone="warn" />
+                    <LogBox label="LUNCH IN" value={formatTime(selectedDayRecord.lunchIn)} tone="info" />
+                    <LogBox label="TIME OUT" value={formatTime(selectedDayRecord.timeOut)} tone="danger" />
                   </div>
-
-                  
                 </motion.div>
               )}
             </div>
@@ -300,6 +292,35 @@ export default function Attendance() {
     </motion.div>
   );
 }
+
+function LogBox({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "ok" | "warn" | "info" | "danger";
+}) {
+  const valueTone =
+    tone === "ok"
+      ? "text-green-700"
+      : tone === "warn"
+      ? "text-yellow-700"
+      : tone === "info"
+      ? "text-blue-700"
+      : "text-red-700";
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-card p-3">
+      <div className="text-[10px] font-extrabold tracking-wide text-text-primary/60">
+        {label}
+      </div>
+      <div className={`text-sm font-extrabold ${valueTone}`}>{value}</div>
+    </div>
+  );
+}
+
 // to add
 // Export CSV / Print report (month / date range / employee)
 // Edit attendance (admin correction modal: adjust IN/OUT, lunch, add remark)

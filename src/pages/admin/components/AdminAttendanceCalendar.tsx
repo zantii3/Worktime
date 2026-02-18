@@ -118,7 +118,7 @@ export default function AdminAttendanceCalendar({
   return (
     <div className="rounded-2xl bg-card border border-slate-200 shadow-sm overflow-hidden">
       {/* Orange header like screenshot */}
-      <div className="bg-gradient-to-r from-orange-500 to-orange-600 px-5 py-4 flex items-center justify-between">
+      <div className="bg-primary 0 px-5 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3 text-white">
           <div className="h-10 w-10 rounded-xl bg-white/20 flex items-center justify-center text-lg">
             📅

@@ -8,7 +8,7 @@ import { notifyError, notifySuccess } from "./utils/toast";
 type AdminTask = Task & {
   // Optional admin-side metadata (frontend-only; backward compatible)
   dueDate?: string; // YYYY-MM-DD
-  tags?: string[];  // ["UI", "Bug", ...]
+  tags?: string[]; // ["UI", "Bug", ...]
 };
 
 type TaskForm = Omit<AdminTask, "id">;
@@ -37,13 +37,24 @@ function statusRank(s: TaskStatus) {
   return s === "Completed" ? 3 : s === "In Progress" ? 2 : 1;
 }
 
-function Pill({ children, tone }: { children: string; tone: "orange" | "blue" | "green" | "slate" }) {
-  const base = "inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold border";
+/**
+ * UI-only change:
+ * - tones now map to your theme, not orange palette
+ */
+function Pill({
+  children,
+  tone,
+}: {
+  children: string;
+  tone: "primary" | "secondary" | "success" | "slate";
+}) {
+  const base =
+    "inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold border";
   const map = {
-    orange: "bg-orange-50 text-orange-700 border-orange-200",
-    blue: "bg-blue-50 text-blue-700 border-blue-200",
-    green: "bg-green-50 text-green-700 border-green-200",
-    slate: "bg-slate-50 text-slate-700 border-slate-200",
+    primary: "bg-primary/10 text-primary border-primary/20",
+    secondary: "bg-secondary/10 text-secondary border-secondary/20",
+    success: "bg-green-50 text-green-700 border-green-200",
+    slate: "bg-soft text-text-primary border-slate-200",
   } as const;
 
   return <span className={`${base} ${map[tone]}`}>{children}</span>;
@@ -62,7 +73,9 @@ export default function Tasks() {
   // --- Admin UX state ---
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "All">("All");
-  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "All">("All");
+  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "All">(
+    "All"
+  );
   const [sort, setSort] = useState<SortKey>("newest");
 
   const [selected, setSelected] = useState<Record<number, boolean>>({});
@@ -86,7 +99,9 @@ export default function Tasks() {
   const [editingId, setEditingId] = useState<number | null>(null);
 
   const onChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >
   ) => {
     const { name, value } = e.target;
     setForm((p) => ({ ...p, [name]: value }));
@@ -108,11 +123,14 @@ export default function Tasks() {
 
   const save = () => {
     if (!form.title.trim()) return notifyError("Task title is required.");
-    if (!form.assignedTo.trim()) return notifyError("Assigned user is required.");
+    if (!form.assignedTo.trim())
+      return notifyError("Assigned user is required.");
 
     if (editingId) {
       setTasks((prev) =>
-        (prev as AdminTask[]).map((t) => (t.id === editingId ? { ...t, ...form } : t))
+        (prev as AdminTask[]).map((t) =>
+          t.id === editingId ? { ...t, ...form } : t
+        )
       );
       notifySuccess("Task updated.");
       reset();
@@ -207,15 +225,18 @@ export default function Tasks() {
       });
     }
 
-    if (statusFilter !== "All") list = list.filter((t) => t.status === statusFilter);
-    if (priorityFilter !== "All") list = list.filter((t) => t.priority === priorityFilter);
+    if (statusFilter !== "All")
+      list = list.filter((t) => t.status === statusFilter);
+    if (priorityFilter !== "All")
+      list = list.filter((t) => t.priority === priorityFilter);
 
-    // Sort
     list.sort((a, b) => {
       if (sort === "newest") return b.id - a.id;
       if (sort === "oldest") return a.id - b.id;
-      if (sort === "priority") return priorityRank(b.priority) - priorityRank(a.priority);
-      if (sort === "status") return statusRank(b.status) - statusRank(a.status);
+      if (sort === "priority")
+        return priorityRank(b.priority) - priorityRank(a.priority);
+      if (sort === "status")
+        return statusRank(b.status) - statusRank(a.status);
       return 0;
     });
 
@@ -223,6 +244,7 @@ export default function Tasks() {
   }, [typedTasks, query, statusFilter, priorityFilter, sort]);
 
   const visibleIds = useMemo(() => filtered.map((t) => t.id), [filtered]);
+
   const allVisibleSelected = useMemo(() => {
     if (visibleIds.length === 0) return false;
     return visibleIds.every((id) => selected[id]);
@@ -246,14 +268,23 @@ export default function Tasks() {
       {/* Header card */}
       <div className="bg-card border border-slate-200 rounded-2xl shadow-sm p-5 flex items-center justify-between gap-4">
         <div>
-          <div className="text-2xl font-bold text-text-heading">Task Management</div>
-          <div className="text-sm text-text-primary/70">{formatFullDate(now)}</div>
+          <div className="text-2xl font-bold text-text-heading">
+            Task Management
+          </div>
+          <div className="text-sm text-text-primary/70">
+            {formatFullDate(now)}
+          </div>
         </div>
 
-        <div className="bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
+        {/* Clock badge */}
+        <div className="bg-primary text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
           <span>🕒</span>
           <span>
-            {now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            {now.toLocaleTimeString("en-US", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}
           </span>
         </div>
       </div>
@@ -266,12 +297,12 @@ export default function Tasks() {
         className="grid grid-cols-1 md:grid-cols-4 gap-6"
       >
         <StatCard label="Total Tasks" value={stats.total} tone="slate" />
-        <StatCard label="Pending" value={stats.pending} tone="orange" />
-        <StatCard label="In Progress" value={stats.inProgress} tone="blue" />
-        <StatCard label="Completed" value={stats.completed} tone="green" />
+        <StatCard label="Pending" value={stats.pending} tone="secondary" />
+        <StatCard label="In Progress" value={stats.inProgress} tone="primary" />
+        <StatCard label="Completed" value={stats.completed} tone="success" />
       </motion.div>
 
-      {/* Create/Edit Form (admin metadata) */}
+      {/* Create/Edit Form */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -279,7 +310,9 @@ export default function Tasks() {
         className="bg-card rounded-2xl shadow-sm border border-slate-200 p-6 space-y-4"
       >
         <div className="flex items-center justify-between">
-          <div className="text-sm font-semibold text-text-heading">Task Details</div>
+          <div className="text-sm font-semibold text-text-heading">
+            Task Details
+          </div>
           <div className="text-xs text-text-primary/70">
             {editingId ? `Editing #${editingId}` : "Create a new task"}
           </div>
@@ -291,14 +324,14 @@ export default function Tasks() {
             value={form.title}
             onChange={onChange}
             placeholder="Task title"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-orange-300"
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
           />
           <input
             name="assignedTo"
             value={form.assignedTo}
             onChange={onChange}
             placeholder="Assigned to (name)"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-orange-300"
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
           />
         </div>
 
@@ -307,7 +340,7 @@ export default function Tasks() {
           value={form.description}
           onChange={onChange}
           placeholder="Description"
-          className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white min-h-[90px] outline-none focus:ring-2 focus:ring-orange-300"
+          className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white min-h-[90px] outline-none focus:ring-2 focus:ring-primary/30"
         />
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -315,10 +348,12 @@ export default function Tasks() {
             name="priority"
             value={form.priority}
             onChange={onChange}
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-orange-300"
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
           >
             {PRIORITY.map((p) => (
-              <option key={p} value={p}>{p}</option>
+              <option key={p} value={p}>
+                {p}
+              </option>
             ))}
           </select>
 
@@ -326,10 +361,12 @@ export default function Tasks() {
             name="status"
             value={form.status}
             onChange={onChange}
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-orange-300"
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
           >
             {STATUS.map((s) => (
-              <option key={s} value={s}>{s}</option>
+              <option key={s} value={s}>
+                {s}
+              </option>
             ))}
           </select>
 
@@ -338,19 +375,22 @@ export default function Tasks() {
             type="date"
             value={form.dueDate ?? ""}
             onChange={onChange}
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-orange-300"
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
           />
         </div>
 
         {/* Tags */}
         <div className="space-y-2">
-          <div className="text-xs font-semibold text-text-heading">Tags (optional)</div>
+          <div className="text-xs font-semibold text-text-heading">
+            Tags (optional)
+          </div>
+
           <div className="flex gap-2">
             <input
               value={tagInput}
               onChange={(e) => setTagInput(e.target.value)}
               placeholder="e.g., UI, Bug, Backend"
-              className="flex-1 border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-orange-300"
+              className="flex-1 border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -358,9 +398,10 @@ export default function Tasks() {
                 }
               }}
             />
+
             <button
               onClick={addTag}
-              className="bg-slate-100 hover:bg-slate-200 text-slate-800 px-4 py-2 rounded-xl text-sm font-semibold"
+              className="bg-soft hover:bg-slate-200 text-text-primary px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200"
               type="button"
             >
               Add
@@ -371,12 +412,12 @@ export default function Tasks() {
             {(form.tags ?? []).map((tag) => (
               <span
                 key={tag}
-                className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-700"
+                className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-slate-200 bg-white text-xs font-semibold text-text-primary"
               >
                 {tag}
                 <button
                   type="button"
-                  className="text-slate-400 hover:text-slate-700"
+                  className="text-text-primary/50 hover:text-text-primary"
                   onClick={() => removeTag(tag)}
                   aria-label={`Remove tag ${tag}`}
                 >
@@ -390,7 +431,7 @@ export default function Tasks() {
         <div className="flex gap-2">
           <button
             onClick={save}
-            className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow-sm"
+            className="bg-primary hover:opacity-95 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow-sm"
           >
             {editingId ? "Update Task" : "Add Task"}
           </button>
@@ -398,7 +439,7 @@ export default function Tasks() {
           {editingId && (
             <button
               onClick={reset}
-              className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-sm font-semibold"
+              className="bg-soft hover:bg-slate-200 text-text-primary px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200"
             >
               Cancel Edit
             </button>
@@ -428,35 +469,43 @@ export default function Tasks() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search tasks..."
-                className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-orange-300 text-sm"
+                className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
               />
 
               <select
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as TaskStatus | "All")}
-                className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-orange-300 text-sm"
+                onChange={(e) =>
+                  setStatusFilter(e.target.value as TaskStatus | "All")
+                }
+                className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
               >
                 <option value="All">All Status</option>
                 {STATUS.map((s) => (
-                  <option key={s} value={s}>{s}</option>
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
                 ))}
               </select>
 
               <select
                 value={priorityFilter}
-                onChange={(e) => setPriorityFilter(e.target.value as TaskPriority | "All")}
-                className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-orange-300 text-sm"
+                onChange={(e) =>
+                  setPriorityFilter(e.target.value as TaskPriority | "All")
+                }
+                className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
               >
                 <option value="All">All Priority</option>
                 {PRIORITY.map((p) => (
-                  <option key={p} value={p}>{p}</option>
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
                 ))}
               </select>
 
               <select
                 value={sort}
                 onChange={(e) => setSort(e.target.value as SortKey)}
-                className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-orange-300 text-sm"
+                className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
               >
                 <option value="newest">Sort: Newest</option>
                 <option value="oldest">Sort: Oldest</option>
@@ -474,30 +523,34 @@ export default function Tasks() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 6 }}
                 transition={{ duration: 0.15 }}
-                className="flex items-center justify-between gap-3 flex-wrap bg-orange-50 border border-orange-200 rounded-2xl p-3"
+                className="flex items-center justify-between gap-3 flex-wrap bg-soft border border-slate-200 rounded-2xl p-3"
               >
-                <div className="text-sm font-semibold text-orange-800">
+                <div className="text-sm font-semibold text-text-heading">
                   {selectedIds.length} selected
                 </div>
+
                 <div className="flex items-center gap-2 flex-wrap">
                   <button
                     onClick={() => bulkSetStatus("Pending")}
-                    className="px-3 py-2 rounded-xl text-xs font-semibold border border-orange-200 bg-white hover:bg-orange-100"
+                    className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-white hover:bg-soft"
                   >
                     Mark Pending
                   </button>
+
                   <button
                     onClick={() => bulkSetStatus("In Progress")}
-                    className="px-3 py-2 rounded-xl text-xs font-semibold border border-orange-200 bg-white hover:bg-orange-100"
+                    className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-white hover:bg-soft"
                   >
                     Mark In Progress
                   </button>
+
                   <button
                     onClick={() => bulkSetStatus("Completed")}
-                    className="px-3 py-2 rounded-xl text-xs font-semibold border border-orange-200 bg-white hover:bg-orange-100"
+                    className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-white hover:bg-soft"
                   >
                     Mark Completed
                   </button>
+
                   <button
                     onClick={bulkDelete}
                     className="px-3 py-2 rounded-xl text-xs font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
@@ -511,8 +564,8 @@ export default function Tasks() {
         </div>
 
         <AdminTable headers={["", "Title", "Assigned To", "Priority", "Status", "Due", "Actions"]}>
-          {/* Select-all row behavior driven by header checkbox below */}
-          <tr className="bg-slate-50 border-b border-slate-200">
+          {/* Select-all row */}
+          <tr className="bg-soft border-b border-slate-200">
             <td className="px-4 py-3">
               <input
                 type="checkbox"
@@ -520,7 +573,7 @@ export default function Tasks() {
                 onChange={(e) => toggleAllVisible(visibleIds, e.target.checked)}
               />
             </td>
-            <td className="px-4 py-3 font-medium text-slate-600" colSpan={6}>
+            <td className="px-4 py-3 font-medium text-text-primary" colSpan={6}>
               Select all visible
             </td>
           </tr>
@@ -543,18 +596,21 @@ export default function Tasks() {
               <td className="px-4 py-3">
                 <div className="font-semibold text-text-heading">{t.title}</div>
                 <div className="text-xs text-text-primary/70">{t.description}</div>
+
                 {(t.tags?.length ?? 0) > 0 && (
                   <div className="mt-2 flex flex-wrap gap-2">
                     {t.tags!.slice(0, 4).map((tag) => (
                       <span
                         key={tag}
-                        className="px-2 py-0.5 rounded-full border border-slate-200 bg-white text-[10px] font-semibold text-slate-700"
+                        className="px-2 py-0.5 rounded-full border border-slate-200 bg-white text-[10px] font-semibold text-text-primary"
                       >
                         {tag}
                       </span>
                     ))}
                     {t.tags!.length > 4 && (
-                      <span className="text-[10px] text-slate-500">+{t.tags!.length - 4}</span>
+                      <span className="text-[10px] text-text-primary/60">
+                        +{t.tags!.length - 4}
+                      </span>
                     )}
                   </div>
                 )}
@@ -563,30 +619,44 @@ export default function Tasks() {
               <td className="px-4 py-3">{t.assignedTo}</td>
 
               <td className="px-4 py-3">
-                <Pill tone={t.priority === "High" ? "orange" : t.priority === "Medium" ? "blue" : "slate"}>
+                <Pill
+                  tone={
+                    t.priority === "High"
+                      ? "secondary"
+                      : t.priority === "Medium"
+                      ? "primary"
+                      : "slate"
+                  }
+                >
                   {t.priority}
                 </Pill>
               </td>
 
               <td className="px-4 py-3">
-                {/* Quick status changer */}
                 <select
                   value={t.status}
-                  onChange={(e) => setTaskStatus(t.id, e.target.value as TaskStatus)}
-                  className="border border-slate-200 rounded-xl px-2 py-1 bg-white outline-none focus:ring-2 focus:ring-orange-300 text-sm"
+                  onChange={(e) =>
+                    setTaskStatus(t.id, e.target.value as TaskStatus)
+                  }
+                  className="border border-slate-200 rounded-xl px-2 py-1 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
                 >
                   {STATUS.map((s) => (
-                    <option key={s} value={s}>{s}</option>
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
                   ))}
                 </select>
               </td>
 
-              <td className="px-4 py-3 text-sm text-slate-700">
-                {t.dueDate ? t.dueDate : <span className="text-slate-400">—</span>}
+              <td className="px-4 py-3 text-sm text-text-primary">
+                {t.dueDate ? t.dueDate : <span className="text-text-primary/50">—</span>}
               </td>
 
               <td className="px-4 py-3 space-x-3">
-                <button onClick={() => edit(t)} className="text-sm text-blue-700 hover:underline font-semibold">
+                <button
+                  onClick={() => edit(t)}
+                  className="text-sm text-primary hover:underline font-semibold"
+                >
                   Edit
                 </button>
                 <button
@@ -601,7 +671,7 @@ export default function Tasks() {
 
           {filtered.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+              <td colSpan={7} className="px-4 py-10 text-center text-text-primary/60">
                 No tasks found.
               </td>
             </tr>
@@ -619,15 +689,15 @@ function StatCard({
 }: {
   label: string;
   value: number;
-  tone: "orange" | "blue" | "green" | "slate";
+  tone: "secondary" | "primary" | "success" | "slate";
 }) {
   const bar =
-    tone === "orange"
-      ? "bg-orange-500"
-      : tone === "blue"
-      ? "bg-blue-500"
-      : tone === "green"
-      ? "bg-green-500"
+    tone === "primary"
+      ? "bg-primary"
+      : tone === "secondary"
+      ? "bg-secondary"
+      : tone === "success"
+      ? "bg-green-600"
       : "bg-slate-400";
 
   const pct = Math.max(8, Math.min(100, value * 10));
@@ -638,15 +708,17 @@ function StatCard({
       transition={{ duration: 0.15 }}
       className="bg-card rounded-2xl shadow-sm border border-slate-200 p-5"
     >
-      <div className="text-[10px] font-bold text-slate-500">{label.toUpperCase()}</div>
+      <div className="text-[10px] font-bold text-text-primary/60">
+        {label.toUpperCase()}
+      </div>
       <div className="mt-2 flex items-baseline gap-2">
         <div className="text-3xl font-extrabold text-text-heading">{value}</div>
         <div className="text-xs text-text-primary/70">items</div>
       </div>
-      <div className="mt-3 h-1.5 rounded-full bg-slate-200 overflow-hidden">
+      <div className="mt-3 h-1.5 rounded-full bg-soft overflow-hidden">
         <div className={`h-full ${bar}`} style={{ width: `${pct}%` }} />
       </div>
-      <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500">
+      <div className="mt-2 flex items-center justify-between text-[10px] text-text-primary/60">
         <span>0</span>
         <span>{value}</span>
       </div>

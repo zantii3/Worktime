@@ -23,7 +23,7 @@ export default function Dashboard() {
     return { completed, inProgress, pending, total, pct };
   }, [tasks]);
 
-  const today = "2026-02-12"; // demo constant; later replace with real date filter
+  const today = "2026-02-12"; // demo constant
   const todayAttendance = attendance.filter((a) => a.date === today).length;
 
   const recentLeaves = leaves.slice(0, 5);
@@ -36,7 +36,7 @@ export default function Dashboard() {
       transition={{ duration: 0.25 }}
       className="space-y-6"
     >
-      {/* Header card like Attendance */}
+      {/* Header */}
       <div className="bg-card border border-slate-200 rounded-2xl shadow-sm p-5 flex items-center justify-between gap-4">
         <div>
           <div className="text-2xl font-bold text-text-heading">Admin Dashboard</div>
@@ -45,7 +45,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
+        <div className="bg-primary text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
           <span>🕒</span>
           <span>
             {now.toLocaleTimeString("en-US", {
@@ -64,10 +64,30 @@ export default function Dashboard() {
         transition={{ duration: 0.25 }}
         className="grid grid-cols-1 md:grid-cols-4 gap-6"
       >
-        <KpiCard title="Active Users" value={activeUsers} subtitle={`Out of ${users.length} users`} />
-        <KpiCard title="Pending Leaves" value={pendingLeaves} subtitle="Needs approval" tone="warning" />
-        <KpiCard title="Task Completion" value={`${taskStats.pct}%`} subtitle={`${taskStats.completed}/${taskStats.total} completed`} />
-        <KpiCard title="Attendance Today" value={todayAttendance} subtitle={today} />
+        <KpiCard
+          title="Active Users"
+          value={activeUsers}
+          subtitle={`Out of ${users.length} users`}
+          accent="primary"
+        />
+        <KpiCard
+          title="Pending Leaves"
+          value={pendingLeaves}
+          subtitle="Needs approval"
+          accent="primary"
+        />
+        <KpiCard
+          title="Task Completion"
+          value={`${taskStats.pct}%`}
+          subtitle={`${taskStats.completed}/${taskStats.total} completed`}
+          accent="primary"
+        />
+        <KpiCard
+          title="Attendance Today"
+          value={todayAttendance}
+          subtitle={today}
+          accent="primary"
+        />
       </motion.div>
 
       {/* Progress panel */}
@@ -82,9 +102,9 @@ export default function Dashboard() {
           <span className="text-xs text-text-primary/70">{taskStats.pct}%</span>
         </div>
 
-        <div className="mt-3 w-full bg-slate-200 rounded-full h-3">
+        <div className="mt-3 w-full bg-soft rounded-full h-3 overflow-hidden border border-slate-200">
           <div
-            className="bg-orange-600 h-3 rounded-full transition-all"
+            className="bg-primary h-3 rounded-full transition-all"
             style={{ width: `${taskStats.pct}%` }}
           />
         </div>
@@ -108,7 +128,7 @@ export default function Dashboard() {
             >
               <Row
                 primary={l.employee}
-                secondary={`${l.type} • ${l.date}`}
+                secondary={`${l.type} • ${l.dateFrom ?? l.date ?? ""}`}
                 badge={l.status}
               />
             </motion.div>
@@ -142,29 +162,31 @@ function KpiCard({
   title,
   value,
   subtitle,
-  tone = "default",
+  accent = "primary",
 }: {
   title: string;
   value: string | number;
   subtitle: string;
-  tone?: "default" | "warning";
+  accent?: "primary" | "secondary";
 }) {
-  // Orange gradient like attendance vibe
-  const gradient =
-    tone === "warning"
-      ? "from-orange-500 to-orange-600"
-      : "from-orange-500 to-orange-600";
+  const headerBg = accent === "secondary" ? "bg-secondary" : "bg-primary";
 
   return (
     <motion.div
       whileHover={{ y: -2 }}
+      whileTap={{ scale: 0.99 }}
       transition={{ duration: 0.15 }}
-      className="rounded-2xl overflow-hidden border border-orange-200 shadow-sm"
+      className="rounded-2xl overflow-hidden border border-slate-200 shadow-sm bg-card"
     >
-      <div className={`bg-gradient-to-r ${gradient} p-5 text-white`}>
-        <div className="text-xs font-semibold opacity-90">{title}</div>
-        <div className="mt-3 text-4xl font-extrabold">{value}</div>
-        <div className="mt-2 text-xs opacity-90">{subtitle}</div>
+      <div className={`${headerBg} p-4 text-white`}>
+        <div className="text-[11px] font-extrabold tracking-wide opacity-95">
+          {title}
+        </div>
+        <div className="mt-2 text-4xl font-extrabold leading-none">{value}</div>
+      </div>
+
+      <div className="p-4 bg-card">
+        <div className="text-xs text-text-primary/70">{subtitle}</div>
       </div>
     </motion.div>
   );
@@ -172,9 +194,11 @@ function KpiCard({
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div>
-      <div className="font-semibold text-text-heading">{value}</div>
-      <div>{label}</div>
+    <div className="bg-soft border border-slate-200 rounded-xl p-3">
+      <div className="font-extrabold text-text-heading text-lg leading-none">
+        {value}
+      </div>
+      <div className="text-[11px] text-text-primary/70 mt-1">{label}</div>
     </div>
   );
 }
@@ -220,8 +244,12 @@ function StatusBadge({ status }: { status: string }) {
     Pending: "bg-yellow-50 text-yellow-700 border-yellow-200",
     Approved: "bg-green-50 text-green-700 border-green-200",
     Rejected: "bg-red-50 text-red-700 border-red-200",
-    "In Progress": "bg-blue-50 text-blue-700 border-blue-200",
+    "In Progress": "bg-soft text-text-heading border-slate-200",
     Completed: "bg-green-50 text-green-700 border-green-200",
   };
-  return <span className={`${base} ${map[status] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}>{status}</span>;
+  return (
+    <span className={`${base} ${map[status] ?? "bg-soft text-text-primary border-slate-200"}`}>
+      {status}
+    </span>
+  );
 }
