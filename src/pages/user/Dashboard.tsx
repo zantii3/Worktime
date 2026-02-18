@@ -267,7 +267,7 @@ function Dashboard() {
                 <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={handleLunchOut}
                   disabled={!todayRecord?.timeIn || !!todayRecord?.lunchOut || !!todayRecord?.timeOut}
                   className={`p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
-                    !todayRecord?.timeIn || todayRecord?.lunchOut || todayRecord?.timeOut ? "bg-slate-300 cursor-not-allowed" : "bg-gradient-to-br from-yellow-500 to-primary"
+                    !todayRecord?.timeIn || todayRecord?.lunchOut || todayRecord?.timeOut ? "bg-slate-300 cursor-not-allowed" : "bg-gradient-to-br from-yellow-500 to-secondary"
                   }`}>
                   <div className="flex flex-col items-center justify-center gap-0.5 md:gap-1">
                     <Clock className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
