@@ -172,7 +172,7 @@ function AttendanceApp() {
             </p>
           </div>
 
-          <div className="hidden lg:flex items-center gap-3 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-6 py-3 rounded-xl shadow-lg">
+          <div className="hidden lg:flex items-center gap-3 bg-primary text-white px-6 py-3 rounded-xl shadow-lg">
             <Clock className="w-5 h-5" />
             <p className="font-bold text-lg tabular-nums">
               {currentTime.toLocaleTimeString("en-US", {
@@ -192,7 +192,7 @@ function AttendanceApp() {
             transition={{ delay: 0.1 }}
             className="lg:col-span-2 bg-white rounded-3xl shadow-md border border-slate-100 overflow-hidden"
           >
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-primary text-white">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-white/20 backdrop-blur-sm rounded-xl">
                   <Calendar className="w-6 h-6" />
@@ -243,7 +243,7 @@ function AttendanceApp() {
               transition={{ delay: 0.2 }}
               className="bg-white rounded-3xl shadow-md border-2 border-[#F28C28]/20 overflow-hidden"
             >
-              <div className="bg-gradient-to-r from-[#F28C28] to-[#E97638] p-6 text-white">
+              <div className="bg-primary p-6 text-white">
                 <div className="flex items-center gap-3 mb-4">
                   <div className="p-3 bg-white/20 backdrop-blur-sm rounded-xl">
                     <Timer className="w-6 h-6" />
@@ -279,14 +279,14 @@ function AttendanceApp() {
               transition={{ delay: 0.3 }}
               className="bg-white rounded-3xl shadow-md border border-slate-100 overflow-hidden flex flex-col h-[500px]"
             >
-              <div className="p-5 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-orange-50">
+              <div className="p-5 border-b border-slate-100 bg-primary">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-[#F28C28]/10 rounded-xl">
-                    <History className="w-5 h-5 text-[#E97638]" />
+                    <History className="w-5 h-5 text-white" />
                   </div>
                   <div>
-                    <h2 className="text-lg font-bold text-[#1F3C68]">Daily Logs</h2>
-                    <p className="text-xs text-slate-500">Recent attendance records</p>
+                    <h2 className="text-lg font-bold text-[#F2F2F2]">Daily Logs</h2>
+                    <p className="text-xs text-slate-300">Recent attendance records</p>
                   </div>
                 </div>
               </div>
@@ -316,7 +316,7 @@ function AttendanceApp() {
                                 {record.device}
                             </p>
                           </div>
-                            <div className="bg-gradient-to-r from-[#F28C28] to-[#E97638] px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
+                            <div className="bg-primary px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
                               {(record.hours ?? 0)} hrs
                             </div>
                         </div>

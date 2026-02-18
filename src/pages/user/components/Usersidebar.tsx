@@ -46,15 +46,15 @@ export default function Usersidebar({ navigate, logout, close }: Props) {
             initial={{ x: -20, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             transition={{ delay: index * 0.05 }}
-            whileHover={{ x: 4, backgroundColor: "rgba(242, 140, 40, 0.1)" }}
+            whileHover={{ x: 4, backgroundColor: "#F2F2F2" }}
             onClick={() => {
               navigate(item.path);
               close?.();
             }}
-            className="flex items-center gap-3 px-4 py-3 rounded-xl text-[#1E293B] font-medium transition-all group"
+            className="flex items-center gap-3 px-4 py-3 rounded-xl text-[#1E293B] font-medium transition-all group border-b-2 border-transparent hover:border-secondary focus:border-secondary"
           >
-            <item.icon size={20} className="text-slate-500 group-hover:text-[#F28C28] transition-colors" />
-            <span className="group-hover:text-[#F28C28] transition-colors">{item.label}</span>
+            <item.icon size={20} className="text-slate-500 group-hover:text-primary transition-colors" />
+            <span className="group-hover:text-primary transition-colors">{item.label}</span>
           </motion.button>
         ))}
       </nav>

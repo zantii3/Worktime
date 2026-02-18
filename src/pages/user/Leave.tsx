@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, ClipboardList, Clock, CheckCircle2, XCircle, Clock3, ChevronDown, Paperclip, Send, FileUser, FileClock} from "lucide-react";
+import { Menu, Clock, CheckCircle2, XCircle, Clock3, ChevronDown, Paperclip, Send, FileUser, FileClock} from "lucide-react";
 import { useClock } from "./hooks/useClock";
 import Usersidebar from "./components/Usersidebar.tsx";
 import type { LeaveRequest, LeaveType, LeaveStatus, LeavePolicy } from "./types/leavetypes";
@@ -216,7 +216,7 @@ function Leave() {
               </p>
             </div>
           </div>
-          <div className="hidden md:flex lg:hidden items-center gap-2 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-3 py-2 rounded-lg shadow-lg md:w-[92px]">
+          <div className="hidden md:flex lg:hidden items-center gap-2 bg-primary text-white px-3 py-2 rounded-lg shadow-lg md:w-[92px]">
             <Clock className="w-4 h-4" />
             <p className="font-bold text-xs tabular-nums">
               {currentTime.toLocaleTimeString("en-US", {
@@ -226,7 +226,7 @@ function Leave() {
             </p>
           </div>
 
-          <div className="hidden lg:flex items-center gap-3 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-6 py-3 rounded-xl shadow-lg">
+          <div className="hidden lg:flex items-center gap-3 bg-primary text-white px-6 py-3 rounded-xl shadow-lg">
             <Clock className="w-5 h-5" />
             <p className="font-bold text-lg tabular-nums">
               {currentTime.toLocaleTimeString("en-US", {
@@ -298,7 +298,7 @@ function Leave() {
           transition={{ delay: 0.2 }}
           className="bg-white rounded-3xl shadow-xl border-2 border-[#F28C28]/20 overflow-hidden mb-6"
         >
-          <div className="bg-gradient-to-r from-[#F28C28] to-[#E97638] p-6 text-white">
+          <div className="bg-primary p-6 text-white">
             <div className="flex items-center gap-3">
               <div className="p-3 bg-white/20 backdrop-blur-sm rounded-xl">
                 <FileUser className="w-6 h-6" />
@@ -434,7 +434,7 @@ function Leave() {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleSubmit}
-              className="relative overflow-hidden flex items-center gap-2 px-8 py-3 rounded-xl bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white font-bold shadow-lg hover:shadow-xl hover:shadow-orange-500/30 transition-all"
+              className="relative overflow-hidden flex items-center gap-2 px-8 py-3 rounded-xl bg-primary text-white font-bold shadow-lg hover:shadow-xl hover:shadow-orange-500/30 transition-all"
             >
               {isAnimating && (
                 <motion.div

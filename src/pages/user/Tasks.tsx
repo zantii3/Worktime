@@ -236,7 +236,7 @@ function TaskPage() {
           </div>
 
           {/* Live Clock pill */}
-         <div className="hidden md:flex lg:hidden items-center gap-2 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-3 py-2 rounded-lg shadow-lg md:w-[92px]">
+         <div className="hidden md:flex lg:hidden items-center gap-2 bg-primary text-white px-3 py-2 rounded-lg shadow-lg md:w-[92px]">
             <Clock className="w-4 h-4" />
             <p className="font-bold text-xs tabular-nums">
               {currentTime.toLocaleTimeString("en-US", {
@@ -245,7 +245,7 @@ function TaskPage() {
               })}
             </p>
           </div>
-            <div className="hidden lg:flex items-center gap-3 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-6 py-3 rounded-xl shadow-lg">
+            <div className="hidden lg:flex items-center gap-3 bg-primary text-white px-6 py-3 rounded-xl shadow-lg">
             <Clock className="w-5 h-5" />
             <p className="font-bold text-lg tabular-nums">
               {currentTime.toLocaleTimeString("en-US", {
@@ -259,10 +259,10 @@ function TaskPage() {
 
         {/* ── Stat Cards ── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <StatCard label="Total" value={total} icon={Layers} accent="bg-slate-200" delay={0.05} />
-          <StatCard label="Completed" value={completed} icon={CheckCircle2} accent="bg-[#F28C28]" delay={0.1} />
-          <StatCard label="In Progress" value={inProgress} icon={Zap} accent="bg-[#F28C28]" delay={0.15} />
-          <StatCard label="Pending" value={pending} icon={Circle} accent="bg-slate-300" delay={0.2} />
+          <StatCard label="Total" value={total} icon={Layers} accent="bg-primary" delay={0.05} />
+          <StatCard label="Completed" value={completed} icon={CheckCircle2} accent="bg-secondary" delay={0.1} />
+          <StatCard label="In Progress" value={inProgress} icon={Zap} accent="bg-primary" delay={0.15} />
+          <StatCard label="Pending" value={pending} icon={Circle} accent="bg-secondary" delay={0.2} />
         </div>
 
         {/* ── Progress Banner ── */}
@@ -270,7 +270,7 @@ function TaskPage() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.22 }}
-          className="bg-[#F28C28] text-white rounded-2xl px-6 py-5 mb-6 shadow-md relative overflow-hidden"
+          className="bg-primary text-white rounded-2xl px-6 py-5 mb-6 shadow-md relative overflow-hidden"
         >
           {/* decorative blobs */}
           <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full bg-white/5" />
@@ -278,8 +278,8 @@ function TaskPage() {
 
           <div className="relative z-10 flex flex-col sm:flex-row sm:items-center gap-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-[#F28C28] rounded-lg">
-                <TrendingUp className="w-5 h-5 text-white" />
+              <div className="p-2 bg-soft rounded-lg">
+                <TrendingUp className="w-5 h-5 text-primary " />
               </div>
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-widest text-white/80">

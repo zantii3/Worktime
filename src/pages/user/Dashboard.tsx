@@ -125,8 +125,8 @@ function Dashboard() {
 
   const detailItems = [
     { label: "Time In",      value: todayRecord?.timeIn,    isTime: true,    textColor: "#1F3C68", bgClass: "from-blue-50 to-blue-100/50",    borderClass: "border-blue-200"   },
-    { label: "Lunch Out",    value: todayRecord?.lunchOut,  isTime: true,    textColor: "#F28C28", bgClass: "from-blue-50 to-blue-100/50",    borderClass: "border-blue-200"   },
-    { label: "Lunch In",     value: todayRecord?.lunchIn,   isTime: true,    textColor: "#F28C28", bgClass: "from-blue-50 to-blue-100/50",    borderClass: "border-blue-200"   },
+    { label: "Start Break",    value: todayRecord?.lunchOut,  isTime: true,    textColor: "#F28C28", bgClass: "from-blue-50 to-blue-100/50",    borderClass: "border-blue-200"   },
+    { label: "End Break",     value: todayRecord?.lunchIn,   isTime: true,    textColor: "#F28C28", bgClass: "from-blue-50 to-blue-100/50",    borderClass: "border-blue-200"   },
     { label: "Time Out",     value: todayRecord?.timeOut,   isTime: true,    textColor: "#e91f1f", bgClass: "from-red-50 to-red-100/50",      borderClass: "border-red-200"    },
     { label: "Elapsed Time", value: calculateElapsedTime(), isElapsed: true, textColor: "#F28C28", bgClass: "from-yellow-50 to-yellow-100/50", borderClass: "border-yellow-200" },
     { label: "Device",       value: todayRecord?.device || "---", isTime: false, textColor: "#1F3C68", bgClass: "from-blue-50 to-blue-100/50", borderClass: "border-blue-200" },
@@ -207,7 +207,7 @@ function Dashboard() {
             </p>
           </div>
 
-          <div className="hidden lg:flex items-center gap-3 bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white px-6 py-3 rounded-xl shadow-lg">
+          <div className="hidden lg:flex items-center gap-3 bg-primary text-white px-6 py-3 rounded-xl shadow-lg">
             <Clock className="w-5 h-5" />
             <p className="font-bold text-lg tabular-nums">
               {currentTime.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
@@ -225,7 +225,7 @@ function Dashboard() {
             transition={{ delay: 0.1 }}
             className="col-span-1 lg:col-span-2 bg-white rounded-2xl md:rounded-2.5xl lg:rounded-3xl shadow-xl border-2 border-[#F28C28]/20 overflow-hidden"
           >
-            <div className="bg-gradient-to-r from-[#F28C28] to-[#E97638] p-3 md:p-4 lg:p-6 text-white">
+            <div className="bg-primary p-3 md:p-4 lg:p-6 text-white">
               <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-3 lg:gap-4">
                 <div className="flex items-start md:items-center gap-2 md:gap-2.5 lg:gap-3 min-w-0">
                   <div className="p-1.5 md:p-2 lg:p-3 bg-white/20 backdrop-blur-sm rounded-lg md:rounded-lg lg:rounded-xl flex-shrink-0">
@@ -271,7 +271,7 @@ function Dashboard() {
                   }`}>
                   <div className="flex flex-col items-center justify-center gap-0.5 md:gap-1">
                     <Clock className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
-                    <span className="text-[10px] md:text-xs lg:text-lg">Lunch Out</span>
+                    <span className="text-[10px] md:text-xs lg:text-lg">Start Break</span>
                   </div>
                 </motion.button>
 
@@ -282,7 +282,7 @@ function Dashboard() {
                   }`}>
                   <div className="flex flex-col items-center justify-center gap-0.5 md:gap-1">
                     <Clock className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
-                    <span className="text-[10px] md:text-xs lg:text-lg">Lunch In</span>
+                    <span className="text-[10px] md:text-xs lg:text-lg">End Break</span>
                   </div>
                 </motion.button>
 
@@ -325,7 +325,7 @@ function Dashboard() {
             <div className="flex flex-col gap-3 md:gap-3">
               <div className="flex items-start md:items-center gap-2 md:gap-2.5 lg:gap-3">
                 <div className="p-2 md:p-2 lg:p-3 bg-amber-100 rounded-lg md:rounded-lg lg:rounded-xl flex-shrink-0">
-                  <Clock className="w-4 md:w-4 lg:w-5 h-4 md:h-4 lg:h-5 text-amber-600" />
+                  <Clock className="w-4 md:w-4 lg:w-5 h-4 md:h-4 lg:h-5 text-ambe r-600" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <h3 className="text-xs md:text-sm lg:text-base font-bold text-amber-900">Pending Leave Requests</h3>
@@ -341,7 +341,7 @@ function Dashboard() {
                 className="w-full md:w-auto px-3 md:px-3 lg:px-4 py-1.5 md:py-1.5 lg:py-2 bg-primary hover:bg-primary text-white font-medium rounded-lg transition-colors text-xs md:text-xs lg:text-sm"
               >
                 View
-              </motion.button>
+              </motion.button>  
             </div>
           </motion.div>
 
@@ -369,7 +369,7 @@ function Dashboard() {
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.97 }}
                 onClick={() => navigate("/tasks", { state: { user } })}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#E97638] text-white text-xs font-bold shadow-sm hover:shadow-md transition-all"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-bold shadow-sm hover:shadow-md transition-all"
               >
                 <BookmarkCheck className="w-3.5 h-3.5" />
                 View All Tasks
