@@ -1,5 +1,5 @@
-import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import AdminTable from "./components/AdminTable";
 import { useAdmin } from "./context/AdminProvider";
 import type { LeaveRequest, LeaveStatus, LeaveType } from "./context/AdminTypes";
@@ -13,11 +13,18 @@ const FILTERS = ["All", "Pending", "Approved", "Rejected"] as const;
 type Filter = (typeof FILTERS)[number];
 
 const LEAVE_TYPES: LeaveType[] = [
-  "Vacation Leave",
-  "Sick Leave",
-  "Emergency Leave",
-  "Maternity/Paternity Leave",
+  "Vacation",
+  "Sick",
+  "Emergency",
+  "Maternity/Paternity",
 ];
+
+const LEAVE_TYPE_LABEL: Record<LeaveType, string> = {
+  Vacation: "Vacation Leave",
+  Sick: "Sick Leave",
+  Emergency: "Emergency Leave",
+  "Maternity/Paternity": "Maternity/Paternity Leave",
+};
 
 function formatFullDate(now: Date) {
   return now.toLocaleDateString("en-US", {
@@ -49,13 +56,14 @@ function diffDaysInclusive(from: string, to: string) {
 }
 
 function statusPillClass(status: LeaveStatus) {
-  const base = "inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold border";
+  const base =
+    "inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold border";
   const map: Record<LeaveStatus, string> = {
     Pending: "bg-yellow-50 text-yellow-700 border-yellow-200",
     Approved: "bg-green-50 text-green-700 border-green-200",
     Rejected: "bg-red-50 text-red-700 border-red-200",
   };
-  return `${base} ${map[status]}`;
+  return `${base} ${map[status] ?? "bg-slate-50 text-slate-700 border-slate-200"}`;
 }
 
 export default function Leave() {
@@ -68,76 +76,83 @@ export default function Leave() {
   }, []);
 
   const [filter, setFilter] = useState<Filter>("All");
+  const [typeFilter, setTypeFilter] = useState<LeaveType | "All">("All");
 
   const [form, setForm] = useState<LeaveForm>({
     employee: "",
-    type: "Vacation Leave",
+    type: "Vacation",
     dateFrom: "",
     dateTo: "",
     reason: "",
     status: "Pending",
     attachmentName: null,
     appliedOn: undefined,
-    date: undefined, // backward compat
+    date: undefined,
   });
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  // backward compat: old records that only have `date`
   const normalizedLeaves = useMemo(() => {
-    return leaves.map((l) => {
-      const dateFrom = l.dateFrom || l.date || "";
-      const dateTo = l.dateTo || l.date || "";
-      return {
-        ...l,
-        dateFrom,
-        dateTo,
-        attachmentName: l.attachmentName ?? null,
-      };
-    });
+    return leaves.map((l) => ({
+      ...l,
+      dateFrom: l.dateFrom || l.date || "",
+      dateTo: l.dateTo || l.date || "",
+      attachmentName: l.attachmentName ?? null,
+      appliedOn: l.appliedOn ?? l.date ?? undefined,
+    }));
   }, [leaves]);
 
   const filteredLeaves = useMemo(() => {
-    if (filter === "All") return normalizedLeaves;
-    return normalizedLeaves.filter((l) => l.status === filter);
-  }, [normalizedLeaves, filter]);
+    let list = normalizedLeaves;
 
-  const stats = useMemo(() => {
-    const byType: Record<LeaveType, number> = {
-      "Vacation Leave": 0,
-      "Sick Leave": 0,
-      "Emergency Leave": 0,
-      "Maternity/Paternity Leave": 0,
+    if (filter !== "All") list = list.filter((l) => l.status === filter);
+    if (typeFilter !== "All") list = list.filter((l) => l.type === typeFilter);
+
+    return list;
+  }, [normalizedLeaves, filter, typeFilter]);
+
+  const cardStats = useMemo(() => {
+    const init = () => ({ total: 0, pending: 0, approved: 0, rejected: 0 });
+    const byType: Record<LeaveType, ReturnType<typeof init>> = {
+      Vacation: init(),
+      Sick: init(),
+      Emergency: init(),
+      "Maternity/Paternity": init(),
     };
-    for (const l of normalizedLeaves) byType[l.type] = (byType[l.type] ?? 0) + 1;
-    const pending = normalizedLeaves.filter((l) => l.status === "Pending").length;
-    const approved = normalizedLeaves.filter((l) => l.status === "Approved").length;
-    const rejected = normalizedLeaves.filter((l) => l.status === "Rejected").length;
-    return { byType, pending, approved, rejected, total: normalizedLeaves.length };
+
+    for (const l of normalizedLeaves) {
+      const bucket = byType[l.type];
+      bucket.total += 1;
+      if (l.status === "Pending") bucket.pending += 1;
+      if (l.status === "Approved") bucket.approved += 1;
+      if (l.status === "Rejected") bucket.rejected += 1;
+    }
+
+    return byType;
   }, [normalizedLeaves]);
 
-  function onChange(
+  const onChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
-  ) {
+  ) => {
     const { name, value } = e.target;
     setForm((p) => ({ ...p, [name]: value }));
-  }
+  };
 
-  function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     setForm((p) => ({ ...p, attachmentName: file ? file.name : null }));
-  }
+  };
 
-  function clearFile() {
+  const clearFile = () => {
     if (fileRef.current) fileRef.current.value = "";
     setForm((p) => ({ ...p, attachmentName: null }));
-  }
+  };
 
-  function reset() {
+  const reset = () => {
     setForm({
       employee: "",
-      type: "Vacation Leave",
+      type: "Vacation",
       dateFrom: "",
       dateTo: "",
       reason: "",
@@ -148,20 +163,21 @@ export default function Leave() {
     });
     setEditingId(null);
     clearFile();
-  }
+  };
 
-  function validate() {
-    if (!form.employee.trim()) return "Employee is required.";
-    if (!form.dateFrom.trim()) return "Date From is required.";
-    if (!form.dateTo.trim()) return "Date To is required.";
-    if (safeISO(form.dateTo) < safeISO(form.dateFrom)) return "Date To must be on/after Date From.";
-    if (!form.reason.trim()) return "Reason is required.";
+  const validate = () => {
+    if (!form.employee.trim()) return notifyError("Employee is required.");
+    if (!form.dateFrom.trim()) return notifyError("Date From is required.");
+    if (!form.dateTo.trim()) return notifyError("Date To is required.");
+    if (safeISO(form.dateTo) < safeISO(form.dateFrom))
+      return notifyError("Date To must be on/after Date From.");
+    if (!form.reason.trim()) return notifyError("Reason is required.");
     return null;
-  }
+  };
 
-  function save() {
+  const save = () => {
     const err = validate();
-    if (err) return notifyError(err);
+    if (err) return;
 
     if (editingId) {
       setLeaves((prev) =>
@@ -190,32 +206,38 @@ export default function Leave() {
     setLeaves((prev) => [newLeave, ...prev]);
     notifySuccess("Leave request created.");
     reset();
-  }
+  };
 
-  function edit(l: LeaveRequest) {
-    const dateFrom = l.dateFrom || l.date || "";
-    const dateTo = l.dateTo || l.date || "";
-
+  const edit = (l: LeaveRequest) => {
     setEditingId(l.id);
     setForm({
       employee: l.employee,
       type: l.type,
-      dateFrom,
-      dateTo,
+      dateFrom: l.dateFrom || l.date || "",
+      dateTo: l.dateTo || l.date || "",
       reason: l.reason,
       status: l.status,
       attachmentName: l.attachmentName ?? null,
       appliedOn: l.appliedOn,
       date: l.date,
     });
-
     if (fileRef.current) fileRef.current.value = "";
-  }
+  };
 
-  function setStatus(id: number, status: "Approved" | "Rejected") {
+  const setStatus = (id: number, status: "Approved" | "Rejected") => {
     setLeaves((prev) => prev.map((l) => (l.id === id ? { ...l, status } : l)));
     notifySuccess(`Leave ${status.toLowerCase()}.`);
-  }
+  };
+
+  const openType = (t: LeaveType) => setTypeFilter(t);
+
+  const clearType = () => setTypeFilter("All");
+  const clearAllFilters = () => {
+    setTypeFilter("All");
+    setFilter("All");
+  };
+
+  const hasAnyFilter = filter !== "All" || typeFilter !== "All";
 
   return (
     <motion.div
@@ -231,192 +253,153 @@ export default function Leave() {
           <div className="text-sm text-text-primary/70">{formatFullDate(now)}</div>
         </div>
 
-        <div className="bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
+        <div className="bg-gradient-to-r from-slate-800 to-blue-700 text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
           <span>🕒</span>
           <span>
-            {now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            {now.toLocaleTimeString("en-US", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}
           </span>
         </div>
       </div>
 
-      {/* Top summary cards (optional, still admin useful) */}
+      {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <LeaveSummaryCard title="VACATION LEAVE" value={stats.byType["Vacation Leave"]} color="orange" />
-        <LeaveSummaryCard title="SICK LEAVE" value={stats.byType["Sick Leave"]} color="green" />
-        <LeaveSummaryCard title="EMERGENCY LEAVE" value={stats.byType["Emergency Leave"]} color="red" />
-        <LeaveSummaryCard title="MATERNITY/PATERNITY LEAVE" value={stats.byType["Maternity/Paternity Leave"]} color="blue" />
+        <LeaveSummaryCard
+          title="VACATION LEAVE"
+          value={cardStats.Vacation.total}
+          breakdown={cardStats.Vacation}
+          color="navy"
+          active={typeFilter === "Vacation"}
+          onClick={() => openType("Vacation")}
+        />
+        <LeaveSummaryCard
+          title="SICK LEAVE"
+          value={cardStats.Sick.total}
+          breakdown={cardStats.Sick}
+          color="steel"
+          active={typeFilter === "Sick"}
+          onClick={() => openType("Sick")}
+        />
+        <LeaveSummaryCard
+          title="EMERGENCY LEAVE"
+          value={cardStats.Emergency.total}
+          breakdown={cardStats.Emergency}
+          color="slate"
+          active={typeFilter === "Emergency"}
+          onClick={() => openType("Emergency")}
+        />
+        <LeaveSummaryCard
+          title="MATERNITY/PATERNITY LEAVE"
+          value={cardStats["Maternity/Paternity"].total}
+          breakdown={cardStats["Maternity/Paternity"]}
+          color="steel"
+          active={typeFilter === "Maternity/Paternity"}
+          onClick={() => openType("Maternity/Paternity")}
+        />
       </div>
 
-      {/* ✅ FORM PANEL — MATCHES THE SCREENSHOT UI */}
+      {/* Filter bar (navy/steel) */}
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.18 }}
+        className="flex items-center justify-between gap-3"
+      >
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="text-xs font-semibold text-slate-500">Filters</div>
+
+          <AnimatePresence>
+            {typeFilter !== "All" && (
+              <motion.div
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-blue-200 bg-blue-50 text-blue-800 text-xs font-semibold"
+              >
+                <span>Type:</span>
+                <span className="font-extrabold">{LEAVE_TYPE_LABEL[typeFilter]}</span>
+                <button
+                  onClick={clearType}
+                  className="ml-1 h-5 w-5 rounded-full bg-white border border-blue-200 hover:bg-blue-100 flex items-center justify-center"
+                  aria-label="Clear leave type filter"
+                  title="Clear type"
+                  type="button"
+                >
+                  ✕
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {filter !== "All" && (
+              <motion.div
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-slate-700 text-xs font-semibold"
+              >
+                <span>Status:</span>
+                <span className="font-extrabold">{filter}</span>
+                <button
+                  onClick={() => setFilter("All")}
+                  className="ml-1 h-5 w-5 rounded-full bg-slate-50 border border-slate-200 hover:bg-slate-100 flex items-center justify-center"
+                  aria-label="Clear status filter"
+                  title="Clear status"
+                  type="button"
+                >
+                  ✕
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {!hasAnyFilter && (
+            <div className="text-xs text-slate-400">No filters applied</div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={clearAllFilters}
+            disabled={!hasAnyFilter}
+            className={[
+              "px-3 py-1.5 rounded-xl text-xs font-bold border transition",
+              hasAnyFilter
+                ? "bg-slate-900 text-white border-slate-900 hover:bg-slate-800"
+                : "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed",
+            ].join(" ")}
+            type="button"
+          >
+            Clear all
+          </button>
+        </div>
+      </motion.div>
+
+      {/* Leave History (above form) */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, delay: 0.05 }}
-        className="rounded-3xl overflow-hidden border border-orange-200 shadow-sm bg-card"
-      >
-        {/* orange header */}
-        <div className="bg-gradient-to-r from-orange-500 to-orange-600 px-6 py-6">
-          <div className="flex items-start gap-4 text-white">
-            <div className="h-12 w-12 rounded-2xl bg-white/20 flex items-center justify-center text-2xl">
-              🧾
-            </div>
-            <div>
-              <div className="text-2xl font-extrabold leading-tight">
-                {editingId ? "Update a Leave Request" : "File a Leave Request"}
-              </div>
-              <div className="text-sm opacity-90">Complete the form below to submit</div>
-            </div>
-          </div>
-        </div>
-
-        {/* form body */}
-        <div className="p-6 md:p-8 space-y-6">
-          {/* Row 1: Leave Type + Supporting Document */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Field label="LEAVE TYPE">
-              <select
-                name="type"
-                value={form.type}
-                onChange={onChange}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-orange-300"
-              >
-                {LEAVE_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <Field label="SUPPORTING DOCUMENT" optional>
-              {/* Styled fake input bar like screenshot, but wired to real file input */}
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-left flex items-center gap-3 outline-none focus:ring-2 focus:ring-orange-300"
-              >
-                <span className="text-xl">📎</span>
-                <span className="text-slate-600">
-                  {form.attachmentName ? form.attachmentName : "No file chosen"}
-                </span>
-
-                {form.attachmentName ? (
-                  <span className="ml-auto text-xs font-semibold text-slate-500 underline" onClick={(e) => { e.stopPropagation(); clearFile(); }}>
-                    Remove
-                  </span>
-                ) : null}
-              </button>
-
-              <input
-                ref={fileRef}
-                type="file"
-                onChange={onPickFile}
-                className="hidden"
-              />
-            </Field>
-          </div>
-
-          {/* Row 2: Date From + Date To */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Field label="DATE FROM">
-              <input
-                name="dateFrom"
-                type="date"
-                value={form.dateFrom}
-                onChange={onChange}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-orange-300"
-              />
-            </Field>
-
-            <Field label="DATE TO">
-              <input
-                name="dateTo"
-                type="date"
-                value={form.dateTo}
-                onChange={onChange}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-orange-300"
-              />
-            </Field>
-          </div>
-
-          {/* Row 3: Reason (big textarea) */}
-          <Field label="REASON">
-            <textarea
-              name="reason"
-              value={form.reason}
-              onChange={onChange}
-              placeholder="Provide a reason for your leave..."
-              className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-4 text-base outline-none focus:ring-2 focus:ring-orange-300 min-h-[160px]"
-            />
-          </Field>
-
-          {/* Admin-only: employee + status row (kept but styled to match) */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Field label="EMPLOYEE">
-              <input
-                name="employee"
-                value={form.employee}
-                onChange={onChange}
-                placeholder="Employee name"
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-orange-300"
-              />
-            </Field>
-
-            <Field label="STATUS">
-              <select
-                name="status"
-                value={form.status}
-                onChange={onChange}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-orange-300"
-              >
-                {(["Pending", "Approved", "Rejected"] as LeaveStatus[]).map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-
-          {/* Submit button (orange, left) */}
-          <div className="pt-2">
-            <motion.button
-              whileHover={{ y: -1 }}
-              whileTap={{ scale: 0.99 }}
-              onClick={save}
-              className="inline-flex items-center gap-2 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white px-7 py-3 rounded-2xl text-base font-extrabold shadow-sm"
-            >
-              <span>✈️</span>
-              <span>{editingId ? "Update Request" : "Submit Request"}</span>
-            </motion.button>
-
-            {editingId && (
-              <motion.button
-                whileHover={{ y: -1 }}
-                whileTap={{ scale: 0.99 }}
-                onClick={reset}
-                className="ml-3 inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-7 py-3 rounded-2xl text-base font-extrabold"
-              >
-                Cancel
-              </motion.button>
-            )}
-          </div>
-        </div>
-      </motion.div>
-
-      {/* History table */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25, delay: 0.08 }}
         className="bg-card rounded-2xl shadow-sm border border-slate-200 overflow-hidden"
       >
         <div className="p-5 border-b border-slate-100 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-orange-50 flex items-center justify-center">📚</div>
+            <div className="h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center">
+              📚
+            </div>
             <div>
-              <div className="font-bold text-text-heading">Leave History</div>
-              <div className="text-xs text-text-primary/70">All leave requests</div>
+              <div className="font-bold text-text-heading">
+                Leave History
+                {typeFilter !== "All" ? ` • ${LEAVE_TYPE_LABEL[typeFilter]}` : ""}
+                {filter !== "All" ? ` • ${filter}` : ""}
+              </div>
+              <div className="text-xs text-text-primary/70">
+                {hasAnyFilter ? "Showing filtered results" : "All leave requests"}
+              </div>
             </div>
           </div>
 
@@ -428,9 +411,10 @@ export default function Leave() {
                 className={[
                   "px-3 py-1.5 rounded-lg text-xs font-semibold border transition",
                   f === filter
-                    ? "bg-orange-500 text-white border-orange-500"
+                    ? "bg-blue-700 text-white border-blue-700"
                     : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
                 ].join(" ")}
+                type="button"
               >
                 {f}
               </button>
@@ -438,7 +422,18 @@ export default function Leave() {
           </div>
         </div>
 
-        <AdminTable headers={["Employee", "Type", "Duration", "Days", "Reason", "Applied On", "Status", "Actions"]}>
+        <AdminTable
+          headers={[
+            "Employee",
+            "Type",
+            "Duration",
+            "Days",
+            "Reason",
+            "Applied On",
+            "Status",
+            "Actions",
+          ]}
+        >
           <AnimatePresence>
             {filteredLeaves.length === 0 ? (
               <tr>
@@ -448,8 +443,11 @@ export default function Leave() {
               </tr>
             ) : (
               filteredLeaves.map((l) => {
-                const days = l.dateFrom && l.dateTo ? diffDaysInclusive(l.dateFrom, l.dateTo) : 0;
-                const duration = l.dateFrom && l.dateTo ? `${l.dateFrom} → ${l.dateTo}` : (l.date ?? "—");
+                const days =
+                  l.dateFrom && l.dateTo ? diffDaysInclusive(l.dateFrom, l.dateTo) : 0;
+
+                const duration =
+                  l.dateFrom && l.dateTo ? `${l.dateFrom} → ${l.dateTo}` : l.date ?? "—";
 
                 return (
                   <motion.tr
@@ -460,7 +458,7 @@ export default function Leave() {
                     transition={{ duration: 0.15 }}
                   >
                     <td className="px-4 py-3">{l.employee}</td>
-                    <td className="px-4 py-3">{l.type}</td>
+                    <td className="px-4 py-3">{LEAVE_TYPE_LABEL[l.type]}</td>
                     <td className="px-4 py-3 text-xs text-slate-600">{duration}</td>
                     <td className="px-4 py-3 font-semibold">{days || "—"}</td>
                     <td className="px-4 py-3">{l.reason}</td>
@@ -469,15 +467,28 @@ export default function Leave() {
                       <span className={statusPillClass(l.status)}>{l.status}</span>
                     </td>
                     <td className="px-4 py-3 space-x-3">
-                      <button onClick={() => edit(l)} className="text-sm text-blue-700 hover:underline font-semibold">
+                      <button
+                        onClick={() => edit(l)}
+                        className="text-sm text-blue-700 hover:underline font-semibold"
+                        type="button"
+                      >
                         Edit
                       </button>
+
                       {l.status === "Pending" && (
                         <>
-                          <button onClick={() => setStatus(l.id, "Approved")} className="text-sm text-green-700 hover:underline font-semibold">
+                          <button
+                            onClick={() => setStatus(l.id, "Approved")}
+                            className="text-sm text-green-700 hover:underline font-semibold"
+                            type="button"
+                          >
                             Approve
                           </button>
-                          <button onClick={() => setStatus(l.id, "Rejected")} className="text-sm text-red-700 hover:underline font-semibold">
+                          <button
+                            onClick={() => setStatus(l.id, "Rejected")}
+                            className="text-sm text-red-700 hover:underline font-semibold"
+                            type="button"
+                          >
                             Reject
                           </button>
                         </>
@@ -489,6 +500,160 @@ export default function Leave() {
             )}
           </AnimatePresence>
         </AdminTable>
+      </motion.div>
+
+      {/* File a Leave Request (below history) */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25, delay: 0.08 }}
+        className="rounded-3xl overflow-hidden border border-blue-200 shadow-sm bg-card"
+      >
+        <div className="bg-gradient-to-r from-slate-800 to-blue-700 px-6 py-6">
+          <div className="flex items-start gap-4 text-white">
+            <div className="h-12 w-12 rounded-2xl bg-white/15 flex items-center justify-center text-2xl">
+              🧾
+            </div>
+            <div>
+              <div className="text-2xl font-extrabold leading-tight">
+                {editingId ? "Update a Leave Request" : "File a Leave Request"}
+              </div>
+              <div className="text-sm opacity-90">
+                Complete the form below to submit
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-6 md:p-8 space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Field label="LEAVE TYPE">
+              <select
+                name="type"
+                value={form.type}
+                onChange={onChange}
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-blue-300"
+              >
+                {LEAVE_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {LEAVE_TYPE_LABEL[t]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="SUPPORTING DOCUMENT" optional>
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-left flex items-center gap-3 outline-none focus:ring-2 focus:ring-blue-300"
+              >
+                <span className="text-xl">📎</span>
+                <span className="text-slate-600">
+                  {form.attachmentName ? form.attachmentName : "No file chosen"}
+                </span>
+
+                {form.attachmentName ? (
+                  <span
+                    className="ml-auto text-xs font-semibold text-slate-500 underline"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      clearFile();
+                    }}
+                  >
+                    Remove
+                  </span>
+                ) : null}
+              </button>
+
+              <input ref={fileRef} type="file" onChange={onPickFile} className="hidden" />
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Field label="DATE FROM">
+              <input
+                name="dateFrom"
+                type="date"
+                value={form.dateFrom}
+                onChange={onChange}
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-blue-300"
+              />
+            </Field>
+
+            <Field label="DATE TO">
+              <input
+                name="dateTo"
+                type="date"
+                value={form.dateTo}
+                onChange={onChange}
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-blue-300"
+              />
+            </Field>
+          </div>
+
+          <Field label="REASON">
+            <textarea
+              name="reason"
+              value={form.reason}
+              onChange={onChange}
+              placeholder="Provide a reason for your leave..."
+              className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-4 text-base outline-none focus:ring-2 focus:ring-blue-300 min-h-[160px]"
+            />
+          </Field>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Field label="EMPLOYEE">
+              <input
+                name="employee"
+                value={form.employee}
+                onChange={onChange}
+                placeholder="Employee name"
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-blue-300"
+              />
+            </Field>
+
+            <Field label="STATUS">
+              <select
+                name="status"
+                value={form.status}
+                onChange={onChange}
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-blue-300"
+              >
+                {(["Pending", "Approved", "Rejected"] as LeaveStatus[]).map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+
+          <div className="pt-2">
+            <motion.button
+              whileHover={{ y: -1 }}
+              whileTap={{ scale: 0.99 }}
+              onClick={save}
+              className="inline-flex items-center gap-2 bg-gradient-to-r from-slate-800 to-blue-700 hover:from-slate-900 hover:to-blue-800 text-white px-7 py-3 rounded-2xl text-base font-extrabold shadow-sm"
+              type="button"
+            >
+              <span>✈️</span>
+              <span>{editingId ? "Update Request" : "Submit Request"}</span>
+            </motion.button>
+
+            {editingId && (
+              <motion.button
+                whileHover={{ y: -1 }}
+                whileTap={{ scale: 0.99 }}
+                onClick={reset}
+                className="ml-3 inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-7 py-3 rounded-2xl text-base font-extrabold"
+                type="button"
+              >
+                Cancel
+              </motion.button>
+            )}
+          </div>
+        </div>
       </motion.div>
     </motion.div>
   );
@@ -517,30 +682,44 @@ function Field({
 function LeaveSummaryCard({
   title,
   value,
+  breakdown,
   color,
+  active,
+  onClick,
 }: {
   title: string;
   value: number;
-  color: "orange" | "green" | "red" | "blue";
+  breakdown: { total: number; pending: number; approved: number; rejected: number };
+  color: "navy" | "steel" | "slate";
+  active?: boolean;
+  onClick?: () => void;
 }) {
   const bar =
-    color === "orange"
-      ? "bg-orange-500"
-      : color === "green"
-      ? "bg-green-500"
-      : color === "red"
-      ? "bg-red-500"
-      : "bg-blue-500";
+    color === "navy"
+      ? "bg-slate-800"
+      : color === "steel"
+      ? "bg-blue-600"
+      : "bg-slate-500";
 
-  const pct = Math.max(5, Math.min(100, value * 10));
+  const pct = breakdown.total
+    ? Math.round((breakdown.approved / breakdown.total) * 100)
+    : 0;
 
   return (
-    <motion.div
+    <motion.button
+      type="button"
+      onClick={onClick}
       whileHover={{ y: -2 }}
+      whileTap={{ scale: 0.99 }}
       transition={{ duration: 0.15 }}
-      className="bg-card rounded-2xl shadow-sm border border-slate-200 p-5"
+      className={[
+        "text-left bg-card rounded-2xl shadow-sm border p-5 w-full",
+        "focus:outline-none focus:ring-2 focus:ring-blue-300",
+        active ? "border-blue-300 ring-2 ring-blue-200" : "border-slate-200",
+      ].join(" ")}
     >
       <div className="text-[10px] font-bold text-slate-500">{title}</div>
+
       <div className="mt-2 flex items-baseline gap-2">
         <div className="text-3xl font-extrabold text-text-heading">{value}</div>
         <div className="text-xs text-text-primary/70">requests</div>
@@ -550,10 +729,20 @@ function LeaveSummaryCard({
         <div className={`h-full ${bar}`} style={{ width: `${pct}%` }} />
       </div>
 
-      <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500">
-        <span>0 used</span>
-        <span>{value} total</span>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] text-slate-500">
+        <div className="flex items-center justify-between">
+          <span>Pending</span>
+          <span className="font-semibold text-slate-700">{breakdown.pending}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span>Approved</span>
+          <span className="font-semibold text-slate-700">{breakdown.approved}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span>Rejected</span>
+          <span className="font-semibold text-slate-700">{breakdown.rejected}</span>
+        </div>
       </div>
-    </motion.div>
+    </motion.button>
   );
 }
