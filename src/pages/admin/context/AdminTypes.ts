@@ -12,32 +12,31 @@ export interface Task {
 
 export type LeaveStatus = "Pending" | "Approved" | "Rejected";
 export type LeaveType =
-  | "Vacation Leave"
-  | "Sick Leave"
-  | "Emergency Leave"
-  | "Maternity/Paternity Leave";
+  | "Vacation"
+  | "Sick"
+  | "Emergency"
+  | "Maternity/Paternity";
 
-export type LeaveRequest = {
+export interface LeaveRequest {
   id: number;
   employee: string;
   type: LeaveType;
 
-  // NEW (preferred)
+  // ✅ new range fields (admin UI + user UI style)
   dateFrom: string; // YYYY-MM-DD
   dateTo: string;   // YYYY-MM-DD
 
   reason: string;
   status: LeaveStatus;
 
-  // NEW (frontend-only)
+  // ✅ frontend-only
   attachmentName?: string | null;
-
-  // OPTIONAL: for “Applied On” column (nice UX)
   appliedOn?: string; // YYYY-MM-DD
 
-  // BACKWARD COMPAT (old data)
+  // ✅ backward compatibility if you still have old records
   date?: string;
-};
+}
+
 
 
 export type UserRole = "Employee" | "Admin";
