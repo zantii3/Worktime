@@ -15,11 +15,25 @@ function Login() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    const user = accounts.find(
-      (u) => u.email === email && u.password === password
-    );
+    const user = accounts.find((u) => u.email === email && u.password === password);
 
     if (user) {
+      // ✅ ADDED: Block login if this user is deactivated
+      try {
+        const statusMap = JSON.parse(
+          localStorage.getItem("worktime_account_status_v1") || "{}"
+        ) as Record<string, "Active" | "Inactive">;
+
+        const key = `user:${user.id}`;
+        if (statusMap[key] === "Inactive") {
+          setError("");
+          showError("This account is deactivated.");
+          return;
+        }
+      } catch {
+        // fail-open for demo if storage is corrupted
+      }
+
       setError("");
       localStorage.setItem("currentUser", JSON.stringify(user));
       showSuccess("Login successful!");
@@ -32,14 +46,13 @@ function Login() {
   return (
     <main className="min-h-screen bg-white flex items-center justify-center px-4">
       <div className="bg-card w-full max-w-md rounded-2xl shadow-xl p-8 transition hover:shadow-2xl duration-300">
-
         {/* Logo */}
         <div className="flex justify-center">
           <img
             src={picture}
             alt="WorkTime+ Logo"
-             className="h-16 md:h-16 lg:h-24 w-auto object-contain mb-10 transition duration-300 hover:scale-105"
-          /> 
+            className="h-16 md:h-16 lg:h-24 w-auto object-contain mb-10 transition duration-300 hover:scale-105"
+          />
         </div>
 
         {/* Title */}
@@ -48,7 +61,6 @@ function Login() {
         </h1>
 
         <form className="space-y-5" onSubmit={handleSubmit}>
-
           {/* Email */}
           <div className="relative">
             <Mail className="absolute left-3 top-3.5 w-5 h-5 text-primary" />
@@ -85,16 +97,11 @@ function Login() {
           </div>
 
           {/* Error */}
-          {error && (
-            <p className="text-red-500 text-sm text-center">{error}</p>
-          )}
+          {error && <p className="text-red-500 text-sm text-center">{error}</p>}
 
           {/* Forgot */}
           <div className="text-center">
-            <a
-              href="/forgot-password"
-              className="text-sm text-primary hover:underline"
-            >
+            <a href="/forgot-password" className="text-sm text-primary hover:underline">
               Forgot password?
             </a>
           </div>

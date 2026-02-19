@@ -1,12 +1,13 @@
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
-import attendanceRecords from "../../data/attendanceRecords.json";
-import employees from "../../data/employees.json";
+import accounts from "../data/accounts.json";
+import adminAccounts from "./data/adminAccounts.json";
 import AdminAttendanceCalendar, {
   type AttendanceRecord,
 } from "./components/AdminAttendanceCalendar";
+import { Clock, Timer, Receipt, X } from "lucide-react";
 
-type Employee = { id: string; name: string };
+type Account = { id: number; email: string; password: string; name: string };
 
 function toISODate(d: Date) {
   const y = d.getFullYear();
@@ -107,18 +108,18 @@ function ActionButton({
   className,
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "default" | "orange" | "danger" | "dark";
+  variant?: "default" | "primary" | "danger" | "dark";
 }) {
   const base =
-    "inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-orange-300 disabled:cursor-not-allowed disabled:opacity-50";
+    "inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 disabled:cursor-not-allowed disabled:opacity-50";
   const styles =
-    variant === "orange"
-      ? "bg-orange-600 text-white hover:bg-orange-700"
+    variant === "primary"
+      ? "bg-primary text-white hover:opacity-95 focus:ring-primary/30"
       : variant === "danger"
       ? "bg-rose-600 text-white hover:bg-rose-700 focus:ring-rose-200"
       : variant === "dark"
       ? "bg-slate-900 text-white hover:opacity-95 focus:ring-slate-200"
-      : "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50";
+      : "border border-slate-200 bg-white text-text-heading hover:bg-soft focus:ring-primary/20";
 
   return <button className={cx(base, styles, className)} {...props} />;
 }
@@ -139,12 +140,14 @@ function Modal({
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
       <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <div className="text-sm font-bold text-slate-900">{title}</div>
+          <div className="text-sm font-bold text-text-heading">{title}</div>
           <button
             onClick={onClose}
-            className="rounded-lg px-2 py-1 text-sm text-slate-600 hover:bg-slate-50"
+            className="rounded-lg p-2 text-text-primary/70 hover:bg-soft"
+            type="button"
+            aria-label="Close modal"
           >
-            ✕
+            <X className="h-4 w-4" />
           </button>
         </div>
         <div className="px-5 py-4">{children}</div>
@@ -161,16 +164,61 @@ function isValidISODateText(s: string) {
 }
 
 export default function Attendance() {
-  const employeeList = employees as Employee[];
+  // ✅ Use accounts.json as employee list
+  const employeeList = useMemo(() => {
+  const admins = (adminAccounts as Account[]).map(a => ({
+    id: String(a.id),
+    name: `${a.name} (Admin)`,
+  }));
 
-  // Copy JSON into state so edits persist while app is running
-  const [allRecords, setAllRecords] = useState<AttendanceRecord[]>(
-    attendanceRecords as AttendanceRecord[]
+  const users = (accounts as Account[]).map(u => ({
+    id: String(u.id),
+    name: `${u.name} (User)`,
+  }));
+
+  return [...admins, ...users];
+}, []);
+
+  const ATTENDANCE_KEY = "worktime_attendance_v1";
+
+  function readAttendance(): AttendanceRecord[] {
+    try {
+      const raw = localStorage.getItem(ATTENDANCE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? (parsed as AttendanceRecord[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  const [allRecords, setAllRecords] = useState<AttendanceRecord[]>(() =>
+    readAttendance()
   );
 
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState(employeeList[0]?.id ?? "");
+  useEffect(() => {
+    try {
+      localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(allRecords));
+    } catch (e) {
+      console.error("Failed to save attendance records:", e);
+    }
+  }, [allRecords]);
+
+  // optional: live sync when another tab changes attendance
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === ATTENDANCE_KEY) setAllRecords(readAttendance());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState(
+    employeeList[0]?.id ?? ""
+  );
   const [viewMonth, setViewMonth] = useState<Date>(new Date());
-  const [selectedDateISO, setSelectedDateISO] = useState<string>(toISODate(new Date()));
+  const [selectedDateISO, setSelectedDateISO] = useState<string>(
+    toISODate(new Date())
+  );
 
   // ✅ Date search bar state
   const [dateQuery, setDateQuery] = useState<string>(selectedDateISO);
@@ -195,6 +243,14 @@ export default function Attendance() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDateISO]);
 
+  // If accounts list changes (rare), ensure selected employee still exists
+  useEffect(() => {
+    if (!employeeList.length) return;
+    const exists = employeeList.some((e) => e.id === selectedEmployeeId);
+    if (!exists) setSelectedEmployeeId(employeeList[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employeeList.length]);
+
   const recordsForEmployee = useMemo(() => {
     return allRecords.filter((r) => r.employeeId === selectedEmployeeId);
   }, [allRecords, selectedEmployeeId]);
@@ -218,25 +274,17 @@ export default function Attendance() {
 
   // ✅ Attendance Overview (Month)
   const monthOverview = useMemo(() => {
-    // Map dateISO -> record (just in case duplicates exist, pick the first)
     const byDate = new Map<string, AttendanceRecord>();
     for (const r of recordsForMonth) {
       if (!byDate.has(r.dateISO)) byDate.set(r.dateISO, r);
     }
 
-    const totalDaysWithAnyRecord = byDate.size;
-
     let presentDays = 0;
     let absentDays = 0;
     let incompleteDays = 0;
 
-    // Rules:
-    // - Absent: no timeIn and no timeOut and no lunch times (all null)
-    // - Present: has timeIn and timeOut (complete)
-    // - Incomplete: anything else (missing some times)
     for (const r of byDate.values()) {
-      const hasAny =
-        !!r.timeIn || !!r.timeOut || !!r.lunchIn || !!r.lunchOut;
+      const hasAny = !!r.timeIn || !!r.timeOut || !!r.lunchIn || !!r.lunchOut;
 
       if (!hasAny) {
         absentDays += 1;
@@ -248,11 +296,11 @@ export default function Attendance() {
       else incompleteDays += 1;
     }
 
-    const workDaysCount = presentDays + incompleteDays; // days with any work activity
-    const avgMins = workDaysCount > 0 ? Math.round(monthTotalMinutes / workDaysCount) : 0;
+    const workDaysCount = presentDays + incompleteDays;
+    const avgMins =
+      workDaysCount > 0 ? Math.round(monthTotalMinutes / workDaysCount) : 0;
 
     return {
-      totalDaysWithAnyRecord,
       presentDays,
       absentDays,
       incompleteDays,
@@ -261,7 +309,10 @@ export default function Attendance() {
   }, [recordsForMonth, monthTotalMinutes]);
 
   const targetMinutes = 160 * 60;
-  const progressPct = Math.min(100, Math.round((monthTotalMinutes / targetMinutes) * 100));
+  const progressPct = Math.min(
+    100,
+    Math.round((monthTotalMinutes / targetMinutes) * 100)
+  );
 
   function prevMonth() {
     setViewMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1));
@@ -273,9 +324,11 @@ export default function Attendance() {
   const selectedEmployee = employeeList.find((e) => e.id === selectedEmployeeId);
   const dailyMinutes = selectedDayRecord ? computeWorkMinutes(selectedDayRecord) : 0;
 
-  // Export month CSV
   function exportMonthCSV() {
-    const monthLabel = viewMonth.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+    const monthLabel = viewMonth.toLocaleDateString("en-US", {
+      month: "short",
+      year: "numeric",
+    });
 
     const header = [
       "Employee ID",
@@ -307,7 +360,8 @@ export default function Attendance() {
       ]);
 
     const csv =
-      [header, ...rows].map((r) => r.map(safeTextCSV).join(",")).join("\n") + "\n";
+      [header, ...rows].map((r) => r.map(safeTextCSV).join(",")).join("\n") +
+      "\n";
 
     downloadCSV(
       `attendance_${selectedEmployeeId}_${toISODate(startOfMonth(viewMonth))}.csv`,
@@ -319,7 +373,6 @@ export default function Attendance() {
     window.print();
   }
 
-  // ✅ Date search action
   function goToDate() {
     const q = dateQuery.trim();
     if (!isValidISODateText(q)) {
@@ -396,17 +449,23 @@ export default function Attendance() {
       {/* Header card */}
       <div className="bg-card border border-slate-200 rounded-2xl shadow-sm p-5 flex items-center justify-between gap-4">
         <div>
-          <div className="text-2xl font-bold text-text-heading">Attendance Records</div>
-          <div className="text-sm text-text-primary/70">{formatFullDate(selectedDateISO)}</div>
+          <div className="text-2xl font-bold text-text-heading">
+            Attendance Records
+          </div>
+          <div className="text-sm text-text-primary/70">
+            {formatFullDate(selectedDateISO)}
+          </div>
 
           {/* Employee selector + Date Search + Actions */}
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <label className="text-xs font-semibold text-text-primary/70">Employee</label>
+            <label className="text-xs font-semibold text-text-primary/70">
+              Employee
+            </label>
 
             <select
               value={selectedEmployeeId}
               onChange={(e) => setSelectedEmployeeId(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-text-heading outline-none focus:ring-2 focus:ring-orange-300"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-text-heading outline-none focus:ring-2 focus:ring-primary/30"
             >
               {employeeList.map((emp) => (
                 <option key={emp.id} value={emp.id}>
@@ -416,10 +475,11 @@ export default function Attendance() {
             </select>
 
             <span className="text-xs text-text-primary/60">
-              Viewing: <span className="font-semibold">{selectedEmployee?.name}</span>
+              Viewing:{" "}
+              <span className="font-semibold">{selectedEmployee?.name}</span>
             </span>
 
-            {/* ✅ Date Search */}
+            {/* Date Search */}
             <div className="flex flex-wrap items-center gap-2 sm:ml-2">
               <div className="relative">
                 <input
@@ -433,7 +493,7 @@ export default function Attendance() {
                     "w-44 rounded-xl border bg-white px-3 py-2 text-sm outline-none focus:ring-2",
                     dateError
                       ? "border-rose-300 focus:ring-rose-200"
-                      : "border-slate-200 focus:ring-orange-300"
+                      : "border-slate-200 focus:ring-primary/30"
                   )}
                 />
                 {dateError && (
@@ -442,14 +502,24 @@ export default function Attendance() {
                   </div>
                 )}
               </div>
-              <ActionButton variant="default" onClick={goToDate}>
+
+              <ActionButton variant="default" onClick={goToDate} type="button">
                 Go
               </ActionButton>
 
-              <ActionButton variant="orange" onClick={exportMonthCSV}>
+              <ActionButton
+                variant="primary"
+                onClick={exportMonthCSV}
+                type="button"
+              >
                 Export CSV (Month)
               </ActionButton>
-              <ActionButton variant="default" onClick={printReport}>
+
+              <ActionButton
+                variant="default"
+                onClick={printReport}
+                type="button"
+              >
                 Print
               </ActionButton>
             </div>
@@ -457,10 +527,14 @@ export default function Attendance() {
         </div>
 
         {/* Clock badge */}
-        <div className="bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
-          <span>🕒</span>
-          <span>
-            {now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+        <div className="bg-primary text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
+          <Clock className="h-4 w-4 opacity-90" />
+          <span className="tabular-nums">
+            {now.toLocaleTimeString("en-US", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}
           </span>
         </div>
       </div>
@@ -480,7 +554,7 @@ export default function Attendance() {
 
         {/* Right side cards */}
         <div className="lg:col-span-1 space-y-6">
-          {/* ✅ Attendance Overview */}
+          {/* Attendance Overview */}
           <motion.div
             initial={{ opacity: 0, x: 10 }}
             animate={{ opacity: 1, x: 0 }}
@@ -489,12 +563,17 @@ export default function Attendance() {
           >
             <div className="p-5 border-b border-slate-100 flex items-center justify-between">
               <div>
-                <div className="font-bold text-text-heading">Attendance Overview</div>
+                <div className="font-bold text-text-heading">
+                  Attendance Overview
+                </div>
                 <div className="text-xs text-text-primary/70">
-                  {viewMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+                  {viewMonth.toLocaleDateString("en-US", {
+                    month: "long",
+                    year: "numeric",
+                  })}
                 </div>
               </div>
-              <div className="text-xs font-bold rounded-full bg-orange-50 text-orange-700 px-3 py-1">
+              <div className="text-xs font-bold rounded-full bg-secondary/10 text-secondary px-3 py-1">
                 Avg {monthOverview.avgHoursPerWorkDay.toFixed(1)} hrs/day
               </div>
             </div>
@@ -502,44 +581,55 @@ export default function Attendance() {
             <div className="p-5 space-y-4">
               <div className="grid grid-cols-3 gap-3">
                 <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <div className="text-[10px] font-bold text-slate-500">PRESENT</div>
+                  <div className="text-[10px] font-bold text-slate-500">
+                    PRESENT
+                  </div>
                   <div className="text-xl font-extrabold text-emerald-700">
                     {monthOverview.presentDays}
                   </div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <div className="text-[10px] font-bold text-slate-500">ABSENT</div>
+                  <div className="text-[10px] font-bold text-slate-500">
+                    ABSENT
+                  </div>
                   <div className="text-xl font-extrabold text-rose-700">
                     {monthOverview.absentDays}
                   </div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <div className="text-[10px] font-bold text-slate-500">INCOMPLETE</div>
+                  <div className="text-[10px] font-bold text-slate-500">
+                    INCOMPLETE
+                  </div>
                   <div className="text-xl font-extrabold text-amber-700">
                     {monthOverview.incompleteDays}
                   </div>
                 </div>
               </div>
 
-              <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
+              <div className="rounded-xl border border-secondary/20 bg-secondary/10 p-4">
                 <div className="flex items-start justify-between">
                   <div>
-                    <div className="text-xs font-semibold text-orange-800">Total Work Hours</div>
-                    <div className="text-xs text-orange-800/70">This Month</div>
+                    <div className="text-xs font-semibold text-text-heading">
+                      Total Work Hours
+                    </div>
+                    <div className="text-xs text-text-primary/70">This Month</div>
                   </div>
                   <div className="h-9 w-9 rounded-xl bg-white/60 flex items-center justify-center">
-                    ⏱️
+                    <Timer className="h-4 w-4 text-text-primary/70" />
                   </div>
                 </div>
 
-                <div className="mt-3 text-3xl font-extrabold text-orange-900">
+                <div className="mt-3 text-3xl font-extrabold text-text-heading">
                   {formatHours(monthTotalMinutes)} hrs
                 </div>
 
                 <div className="mt-3 h-2 rounded-full bg-white/70 overflow-hidden">
-                  <div className="h-full bg-orange-600" style={{ width: `${progressPct}%` }} />
+                  <div
+                    className="h-full bg-secondary"
+                    style={{ width: `${progressPct}%` }}
+                  />
                 </div>
-                <div className="mt-2 text-xs font-semibold text-orange-900/80">
+                <div className="mt-2 text-xs font-semibold text-text-primary/80">
                   {progressPct}% of monthly target (160 hrs)
                 </div>
               </div>
@@ -555,16 +645,22 @@ export default function Attendance() {
           >
             <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-3">
               <div className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-xl bg-orange-50 flex items-center justify-center">🧾</div>
+                <div className="h-8 w-8 rounded-xl bg-soft flex items-center justify-center">
+                  <Receipt className="h-4 w-4 text-text-primary/70" />
+                </div>
                 <div>
                   <div className="font-bold text-text-heading">Daily Logs</div>
-                  <div className="text-xs text-text-primary/70">Selected day attendance record</div>
+                  <div className="text-xs text-text-primary/70">
+                    Selected day attendance record
+                  </div>
                 </div>
               </div>
 
               <div className="flex flex-col items-end gap-2">
-                <div className="text-xs font-bold rounded-full bg-orange-50 text-orange-700 px-3 py-1">
-                  {selectedDayRecord ? `${formatHours(dailyMinutes)} hrs` : "0 hrs"}
+                <div className="text-xs font-bold rounded-full bg-secondary/10 text-secondary px-3 py-1">
+                  {selectedDayRecord
+                    ? `${formatHours(dailyMinutes)} hrs`
+                    : "0 hrs"}
                 </div>
 
                 <ActionButton
@@ -572,7 +668,12 @@ export default function Attendance() {
                   onClick={openEditModal}
                   disabled={!selectedDayRecord}
                   className="px-3 py-1.5 text-xs"
-                  title={!selectedDayRecord ? "No record to edit for this day" : "Edit this record"}
+                  title={
+                    !selectedDayRecord
+                      ? "No record to edit for this day"
+                      : "Edit this record"
+                  }
+                  type="button"
                 >
                   Edit
                 </ActionButton>
@@ -582,7 +683,8 @@ export default function Attendance() {
             <div className="p-5">
               {!selectedDayRecord ? (
                 <div className="text-sm text-text-primary/70">
-                  No logs for <span className="font-semibold">{selectedDateISO}</span>.
+                  No logs for{" "}
+                  <span className="font-semibold">{selectedDateISO}</span>.
                 </div>
               ) : (
                 <motion.div
@@ -594,35 +696,55 @@ export default function Attendance() {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-sm font-bold text-text-heading">
-                        {new Date(selectedDayRecord.dateISO + "T00:00:00").toLocaleDateString("en-US", {
+                        {new Date(
+                          selectedDayRecord.dateISO + "T00:00:00"
+                        ).toLocaleDateString("en-US", {
                           weekday: "short",
                           month: "short",
                           day: "2-digit",
                         })}
                       </div>
-                      <div className="text-xs text-text-primary/70">• {(selectedDayRecord as any).source ?? "—"}</div>
+                      <div className="text-xs text-text-primary/70">
+                        • {(selectedDayRecord as any).source ?? "—"}
+                      </div>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
                     <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-[10px] font-bold text-slate-500">TIME IN</div>
-                      <div className="text-sm font-extrabold text-green-700">{formatTime(selectedDayRecord.timeIn)}</div>
+                      <div className="text-[10px] font-bold text-slate-500">
+                        TIME IN
+                      </div>
+                      <div className="text-sm font-extrabold text-green-700">
+                        {formatTime(selectedDayRecord.timeIn)}
+                      </div>
                     </div>
 
                     <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-[10px] font-bold text-slate-500">LUNCH OUT</div>
-                      <div className="text-sm font-extrabold text-yellow-700">{formatTime(selectedDayRecord.lunchOut)}</div>
+                      <div className="text-[10px] font-bold text-slate-500">
+                        LUNCH OUT
+                      </div>
+                      <div className="text-sm font-extrabold text-yellow-700">
+                        {formatTime(selectedDayRecord.lunchOut)}
+                      </div>
                     </div>
 
                     <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-[10px] font-bold text-slate-500">LUNCH IN</div>
-                      <div className="text-sm font-extrabold text-blue-700">{formatTime(selectedDayRecord.lunchIn)}</div>
+                      <div className="text-[10px] font-bold text-slate-500">
+                        LUNCH IN
+                      </div>
+                      <div className="text-sm font-extrabold text-blue-700">
+                        {formatTime(selectedDayRecord.lunchIn)}
+                      </div>
                     </div>
 
                     <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-[10px] font-bold text-slate-500">TIME OUT</div>
-                      <div className="text-sm font-extrabold text-red-700">{formatTime(selectedDayRecord.timeOut)}</div>
+                      <div className="text-[10px] font-bold text-slate-500">
+                        TIME OUT
+                      </div>
+                      <div className="text-sm font-extrabold text-red-700">
+                        {formatTime(selectedDayRecord.timeOut)}
+                      </div>
                     </div>
                   </div>
                 </motion.div>
@@ -635,7 +757,9 @@ export default function Attendance() {
       {/* EDIT MODAL */}
       <Modal
         open={editOpen}
-        title={`Admin Edit • ${selectedEmployee?.name ?? selectedEmployeeId} • ${editDraft.dateISO}`}
+        title={`Admin Edit • ${
+          selectedEmployee?.name ?? selectedEmployeeId
+        } • ${editDraft.dateISO}`}
         onClose={() => setEditOpen(false)}
       >
         <div className="space-y-4">
@@ -645,59 +769,81 @@ export default function Attendance() {
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-600">Time In</label>
+              <label className="text-xs font-semibold text-slate-600">
+                Time In
+              </label>
               <input
                 type="datetime-local"
                 value={editDraft.timeIn}
-                onChange={(e) => setEditDraft((p) => ({ ...p, timeIn: e.target.value }))}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-300"
+                onChange={(e) =>
+                  setEditDraft((p) => ({ ...p, timeIn: e.target.value }))
+                }
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-600">Time Out</label>
+              <label className="text-xs font-semibold text-slate-600">
+                Time Out
+              </label>
               <input
                 type="datetime-local"
                 value={editDraft.timeOut}
-                onChange={(e) => setEditDraft((p) => ({ ...p, timeOut: e.target.value }))}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-300"
+                onChange={(e) =>
+                  setEditDraft((p) => ({ ...p, timeOut: e.target.value }))
+                }
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-600">Lunch Out</label>
+              <label className="text-xs font-semibold text-slate-600">
+                Lunch Out
+              </label>
               <input
                 type="datetime-local"
                 value={editDraft.lunchOut}
-                onChange={(e) => setEditDraft((p) => ({ ...p, lunchOut: e.target.value }))}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-300"
+                onChange={(e) =>
+                  setEditDraft((p) => ({ ...p, lunchOut: e.target.value }))
+                }
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-600">Lunch In</label>
+              <label className="text-xs font-semibold text-slate-600">
+                Lunch In
+              </label>
               <input
                 type="datetime-local"
                 value={editDraft.lunchIn}
-                onChange={(e) => setEditDraft((p) => ({ ...p, lunchIn: e.target.value }))}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-300"
+                onChange={(e) =>
+                  setEditDraft((p) => ({ ...p, lunchIn: e.target.value }))
+                }
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-600">Source / Remark</label>
+            <label className="text-xs font-semibold text-slate-600">
+              Source / Remark
+            </label>
             <input
               value={editDraft.source}
-              onChange={(e) => setEditDraft((p) => ({ ...p, source: e.target.value }))}
+              onChange={(e) =>
+                setEditDraft((p) => ({ ...p, source: e.target.value }))
+              }
               placeholder="e.g. Admin correction"
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-300"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
             />
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
-            <ActionButton onClick={() => setEditOpen(false)}>Cancel</ActionButton>
-            <ActionButton variant="orange" onClick={saveEdit}>
+            <ActionButton onClick={() => setEditOpen(false)} type="button">
+              Cancel
+            </ActionButton>
+            <ActionButton variant="primary" onClick={saveEdit} type="button">
               Save Changes
             </ActionButton>
           </div>

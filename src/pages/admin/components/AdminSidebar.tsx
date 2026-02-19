@@ -34,12 +34,14 @@ export default function AdminSidebar({ close }: Props) {
   };
 
   const logout = () => {
-    localStorage.removeItem("admin_token");
-    localStorage.removeItem("admin_email");
-    notifySuccess("Logged out successfully.");
-    close?.();
-    navigate("/admin/login", { replace: true });
-  };
+  localStorage.removeItem("admin_token");
+  localStorage.removeItem("admin_email");
+  localStorage.removeItem("currentAdmin"); // ✅ REQUIRED
+  notifySuccess("Logged out successfully.");
+  close?.();
+  navigate("/admin/login", { replace: true });
+};
+
 
   const isActive = (itemPath: string) => {
     const current = location.pathname;
@@ -130,3 +132,4 @@ export default function AdminSidebar({ close }: Props) {
     </aside>
   );
 }
+
