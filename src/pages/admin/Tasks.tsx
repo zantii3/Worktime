@@ -1,14 +1,33 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Clock,
+  Plus,
+  Search,
+  Pencil,
+  Trash2,
+  X,
+  ArrowUpDown,
+} from "lucide-react";
+
 import AdminTable from "./components/AdminTable";
 import { useAdmin } from "./context/AdminProvider";
 import type { Task, TaskPriority, TaskStatus } from "./context/AdminTypes";
 import { notifyError, notifySuccess } from "./utils/toast";
 
+// ✅ CONNECT TO accounts.json (src/pages/data/accounts.json)
+import accounts from "../data/accounts.json";
+
+type Account = {
+  id: number;
+  email: string;
+  password: string;
+  name: string;
+};
+
 type AdminTask = Task & {
-  // Optional admin-side metadata (frontend-only; backward compatible)
   dueDate?: string; // YYYY-MM-DD
-  tags?: string[]; // ["UI", "Bug", ...]
+  tags?: string[];
 };
 
 type TaskForm = Omit<AdminTask, "id">;
@@ -18,7 +37,15 @@ const createId = (): number => Date.now() + Math.floor(Math.random() * 1000);
 const STATUS: TaskStatus[] = ["Pending", "In Progress", "Completed"];
 const PRIORITY: TaskPriority[] = ["Low", "Medium", "High"];
 
-type SortKey = "newest" | "oldest" | "priority" | "status";
+type SortKey =
+  | "newest"
+  | "oldest"
+  | "priority"
+  | "status"
+  | "dueDate"
+  | "title"
+  | "assignedTo";
+type SortDir = "asc" | "desc";
 
 function formatFullDate(now: Date) {
   return now.toLocaleDateString("en-US", {
@@ -37,10 +64,16 @@ function statusRank(s: TaskStatus) {
   return s === "Completed" ? 3 : s === "In Progress" ? 2 : 1;
 }
 
-/**
- * UI-only change:
- * - tones now map to your theme, not orange palette
- */
+function safeDateValue(yyyyMMdd?: string) {
+  if (!yyyyMMdd) return Number.POSITIVE_INFINITY;
+  const t = new Date(yyyyMMdd).getTime();
+  return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+}
+
+function cn(...classes: Array<string | false | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
 function Pill({
   children,
   tone,
@@ -60,9 +93,91 @@ function Pill({
   return <span className={`${base} ${map[tone]}`}>{children}</span>;
 }
 
+function Modal({
+  open,
+  title,
+  children,
+  onClose,
+}: {
+  open: boolean;
+  title: string;
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-3 sm:p-6"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          aria-modal="true"
+          role="dialog"
+        >
+          {/* Backdrop */}
+          <motion.button
+            type="button"
+            className="absolute inset-0 bg-black/30"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            aria-label="Close modal backdrop"
+          />
+
+          {/* Panel */}
+          <motion.div
+            initial={{ y: 18, opacity: 0, scale: 0.98 }}
+            animate={{ y: 0, opacity: 1, scale: 1 }}
+            exit={{ y: 18, opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.18 }}
+            className={cn(
+              "relative w-full max-w-3xl",
+              "bg-card border border-slate-200 rounded-2xl shadow-lg",
+              "max-h-[85vh] overflow-hidden"
+            )}
+          >
+            <div className="flex items-center justify-between gap-3 p-4 sm:p-5 border-b border-slate-100">
+              <div className="font-semibold text-text-heading">{title}</div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-2 rounded-xl hover:bg-soft border border-transparent hover:border-slate-200 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30"
+                aria-label="Close modal"
+              >
+                <X className="h-5 w-5 text-text-primary/70" />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-6 overflow-y-auto">{children}</div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 export default function Tasks() {
   const { tasks, setTasks } = useAdmin();
-  const typedTasks = tasks as AdminTask[]; // safe: we only read optional fields
+  const typedTasks = tasks as AdminTask[];
+
+  // ✅ assignees from accounts.json
+  const assignees = useMemo(() => {
+    const list = (accounts as Account[])
+      .map((a) => a.name?.trim())
+      .filter(Boolean) as string[];
+    return Array.from(new Set(list));
+  }, []);
 
   const [now, setNow] = useState<Date>(new Date());
   useEffect(() => {
@@ -70,21 +185,27 @@ export default function Tasks() {
     return () => clearInterval(t);
   }, []);
 
-  // --- Admin UX state ---
+  // Filters / sorting
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "All">("All");
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "All">(
     "All"
   );
-  const [sort, setSort] = useState<SortKey>("newest");
+  const [sortKey, setSortKey] = useState<SortKey>("newest");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
+  // Selection
   const [selected, setSelected] = useState<Record<number, boolean>>({});
   const selectedIds = useMemo(
     () => Object.entries(selected).filter(([, v]) => v).map(([k]) => Number(k)),
     [selected]
   );
 
-  // --- Form state ---
+  // Modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+
+  // Form
   const [form, setForm] = useState<TaskForm>({
     title: "",
     description: "",
@@ -96,18 +217,8 @@ export default function Tasks() {
   });
 
   const [tagInput, setTagInput] = useState("");
-  const [editingId, setEditingId] = useState<number | null>(null);
 
-  const onChange = (
-    e: React.ChangeEvent<
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >
-  ) => {
-    const { name, value } = e.target;
-    setForm((p) => ({ ...p, [name]: value }));
-  };
-
-  const reset = () => {
+  const resetForm = () => {
     setForm({
       title: "",
       description: "",
@@ -119,6 +230,54 @@ export default function Tasks() {
     });
     setTagInput("");
     setEditingId(null);
+  };
+
+  const openCreate = () => {
+    resetForm();
+    setModalOpen(true);
+  };
+
+  const openEdit = (t: AdminTask) => {
+    setEditingId(t.id);
+    setForm({
+      title: t.title,
+      description: t.description,
+      assignedTo: t.assignedTo,
+      priority: t.priority,
+      status: t.status,
+      dueDate: t.dueDate ?? "",
+      tags: t.tags ?? [],
+    });
+    setTagInput("");
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    resetForm();
+  };
+
+  const onChange = (
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >
+  ) => {
+    const { name, value } = e.target;
+    setForm((p) => ({ ...p, [name]: value }));
+  };
+
+  const addTag = () => {
+    const clean = tagInput.trim();
+    if (!clean) return;
+    setForm((p) => ({
+      ...p,
+      tags: Array.from(new Set([...(p.tags ?? []), clean])),
+    }));
+    setTagInput("");
+  };
+
+  const removeTag = (tag: string) => {
+    setForm((p) => ({ ...p, tags: (p.tags ?? []).filter((t) => t !== tag) }));
   };
 
   const save = () => {
@@ -133,28 +292,14 @@ export default function Tasks() {
         )
       );
       notifySuccess("Task updated.");
-      reset();
+      closeModal();
       return;
     }
 
     const newTask: AdminTask = { id: createId(), ...form };
     setTasks((prev) => [newTask as Task, ...prev]);
     notifySuccess("Task added.");
-    reset();
-  };
-
-  const edit = (t: AdminTask) => {
-    setEditingId(t.id);
-    setForm({
-      title: t.title,
-      description: t.description,
-      assignedTo: t.assignedTo,
-      priority: t.priority,
-      status: t.status,
-      dueDate: t.dueDate ?? "",
-      tags: t.tags ?? [],
-    });
-    setTagInput("");
+    closeModal();
   };
 
   const remove = (id: number) => {
@@ -199,21 +344,7 @@ export default function Tasks() {
     setSelected((prev) => ({ ...prev, [id]: checked }));
   };
 
-  const addTag = () => {
-    const clean = tagInput.trim();
-    if (!clean) return;
-    setForm((p) => ({
-      ...p,
-      tags: Array.from(new Set([...(p.tags ?? []), clean])),
-    }));
-    setTagInput("");
-  };
-
-  const removeTag = (tag: string) => {
-    setForm((p) => ({ ...p, tags: (p.tags ?? []).filter((t) => t !== tag) }));
-  };
-
-  // --- Derived lists ---
+  // Derived: filtered + sorted
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = [...typedTasks];
@@ -230,18 +361,25 @@ export default function Tasks() {
     if (priorityFilter !== "All")
       list = list.filter((t) => t.priority === priorityFilter);
 
+    const dir = sortDir === "asc" ? 1 : -1;
+
     list.sort((a, b) => {
-      if (sort === "newest") return b.id - a.id;
-      if (sort === "oldest") return a.id - b.id;
-      if (sort === "priority")
-        return priorityRank(b.priority) - priorityRank(a.priority);
-      if (sort === "status")
-        return statusRank(b.status) - statusRank(a.status);
+      if (sortKey === "newest") return (b.id - a.id) * dir;
+      if (sortKey === "oldest") return (a.id - b.id) * dir;
+      if (sortKey === "priority")
+        return (priorityRank(b.priority) - priorityRank(a.priority)) * dir;
+      if (sortKey === "status")
+        return (statusRank(b.status) - statusRank(a.status)) * dir;
+      if (sortKey === "dueDate")
+        return (safeDateValue(a.dueDate) - safeDateValue(b.dueDate)) * dir;
+      if (sortKey === "title") return a.title.localeCompare(b.title) * dir;
+      if (sortKey === "assignedTo")
+        return a.assignedTo.localeCompare(b.assignedTo) * dir;
       return 0;
     });
 
     return list;
-  }, [typedTasks, query, statusFilter, priorityFilter, sort]);
+  }, [typedTasks, query, statusFilter, priorityFilter, sortKey, sortDir]);
 
   const visibleIds = useMemo(() => filtered.map((t) => t.id), [filtered]);
 
@@ -278,7 +416,7 @@ export default function Tasks() {
 
         {/* Clock badge */}
         <div className="bg-primary text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
-          <span>🕒</span>
+          <Clock className="h-4 w-4" />
           <span>
             {now.toLocaleTimeString("en-US", {
               hour: "2-digit",
@@ -302,150 +440,181 @@ export default function Tasks() {
         <StatCard label="Completed" value={stats.completed} tone="success" />
       </motion.div>
 
-      {/* Create/Edit Form */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25 }}
-        className="bg-card rounded-2xl shadow-sm border border-slate-200 p-6 space-y-4"
+      {/* ✅ MODAL: Create/Edit Task */}
+      <Modal
+        open={modalOpen}
+        title={editingId ? `Edit Task #${editingId}` : "Create New Task"}
+        onClose={closeModal}
       >
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-semibold text-text-heading">
-            Task Details
-          </div>
-          <div className="text-xs text-text-primary/70">
-            {editingId ? `Editing #${editingId}` : "Create a new task"}
-          </div>
-        </div>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="space-y-1">
+              <div className="text-xs font-semibold text-text-heading">
+                Task title
+              </div>
+              <input
+                name="title"
+                value={form.title}
+                onChange={onChange}
+                placeholder="Task title"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </label>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <input
-            name="title"
-            value={form.title}
-            onChange={onChange}
-            placeholder="Task title"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
-          />
-          <input
-            name="assignedTo"
-            value={form.assignedTo}
-            onChange={onChange}
-            placeholder="Assigned to (name)"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
-          />
-        </div>
+            <label className="space-y-1">
+              <div className="text-xs font-semibold text-text-heading">
+                Assigned to
+              </div>
 
-        <textarea
-          name="description"
-          value={form.description}
-          onChange={onChange}
-          placeholder="Description"
-          className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white min-h-[90px] outline-none focus:ring-2 focus:ring-primary/30"
-        />
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <select
-            name="priority"
-            value={form.priority}
-            onChange={onChange}
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
-          >
-            {PRIORITY.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-
-          <select
-            name="status"
-            value={form.status}
-            onChange={onChange}
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
-          >
-            {STATUS.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-
-          <input
-            name="dueDate"
-            type="date"
-            value={form.dueDate ?? ""}
-            onChange={onChange}
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
-          />
-        </div>
-
-        {/* Tags */}
-        <div className="space-y-2">
-          <div className="text-xs font-semibold text-text-heading">
-            Tags (optional)
+              {/* ✅ CONNECTED DROPDOWN */}
+              <select
+                name="assignedTo"
+                value={form.assignedTo}
+                onChange={onChange}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="" disabled>
+                  Select employee...
+                </option>
+                {assignees.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
 
-          <div className="flex gap-2">
-            <input
-              value={tagInput}
-              onChange={(e) => setTagInput(e.target.value)}
-              placeholder="e.g., UI, Bug, Backend"
-              className="flex-1 border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addTag();
-                }
-              }}
+          <label className="space-y-1">
+            <div className="text-xs font-semibold text-text-heading">
+              Description
+            </div>
+            <textarea
+              name="description"
+              value={form.description}
+              onChange={onChange}
+              placeholder="Description"
+              className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white min-h-[100px] outline-none focus:ring-2 focus:ring-primary/30"
             />
+          </label>
 
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label className="space-y-1">
+              <div className="text-xs font-semibold text-text-heading">
+                Priority
+              </div>
+              <select
+                name="priority"
+                value={form.priority}
+                onChange={onChange}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                {PRIORITY.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="space-y-1">
+              <div className="text-xs font-semibold text-text-heading">Status</div>
+              <select
+                name="status"
+                value={form.status}
+                onChange={onChange}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                {STATUS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="space-y-1">
+              <div className="text-xs font-semibold text-text-heading">
+                Due date
+              </div>
+              <input
+                name="dueDate"
+                type="date"
+                value={form.dueDate ?? ""}
+                onChange={onChange}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </label>
+          </div>
+
+          {/* Tags */}
+          <div className="space-y-2">
+            <div className="text-xs font-semibold text-text-heading">
+              Tags (optional)
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                placeholder="e.g., UI, Bug, Backend"
+                className="flex-1 border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addTag();
+                  }
+                }}
+              />
+
+              <button
+                onClick={addTag}
+                className="bg-soft hover:bg-slate-200 text-text-primary px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200"
+                type="button"
+              >
+                Add
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {(form.tags ?? []).map((tag) => (
+                <span
+                  key={tag}
+                  className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-slate-200 bg-white text-xs font-semibold text-text-primary"
+                >
+                  {tag}
+                  <button
+                    type="button"
+                    className="text-text-primary/50 hover:text-text-primary"
+                    onClick={() => removeTag(tag)}
+                    aria-label={`Remove tag ${tag}`}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2">
             <button
-              onClick={addTag}
+              onClick={closeModal}
               className="bg-soft hover:bg-slate-200 text-text-primary px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200"
               type="button"
             >
-              Add
+              Cancel
             </button>
-          </div>
 
-          <div className="flex flex-wrap gap-2">
-            {(form.tags ?? []).map((tag) => (
-              <span
-                key={tag}
-                className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-slate-200 bg-white text-xs font-semibold text-text-primary"
-              >
-                {tag}
-                <button
-                  type="button"
-                  className="text-text-primary/50 hover:text-text-primary"
-                  onClick={() => removeTag(tag)}
-                  aria-label={`Remove tag ${tag}`}
-                >
-                  ✕
-                </button>
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex gap-2">
-          <button
-            onClick={save}
-            className="bg-primary hover:opacity-95 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow-sm"
-          >
-            {editingId ? "Update Task" : "Add Task"}
-          </button>
-
-          {editingId && (
             <button
-              onClick={reset}
-              className="bg-soft hover:bg-slate-200 text-text-primary px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200"
+              onClick={save}
+              className="bg-primary hover:opacity-95 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow-sm"
+              type="button"
             >
-              Cancel Edit
+              {editingId ? "Update Task" : "Create Task"}
             </button>
-          )}
+          </div>
         </div>
-      </motion.div>
+      </Modal>
 
       {/* Table wrapper card */}
       <motion.div
@@ -465,12 +634,24 @@ export default function Tasks() {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search tasks..."
-                className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
-              />
+              <button
+                onClick={openCreate}
+                className="inline-flex items-center gap-2 bg-primary text-white rounded-xl px-3 py-2 text-sm font-semibold hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                type="button"
+              >
+                <Plus className="h-4 w-4" />
+                Add Task
+              </button>
+
+              <div className="flex items-center gap-2 border border-slate-200 rounded-xl px-3 py-2 bg-white focus-within:ring-2 focus-within:ring-primary/30">
+                <Search className="h-4 w-4 text-text-primary/50" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search tasks..."
+                  className="outline-none text-sm w-44"
+                />
+              </div>
 
               <select
                 value={statusFilter}
@@ -503,15 +684,28 @@ export default function Tasks() {
               </select>
 
               <select
-                value={sort}
-                onChange={(e) => setSort(e.target.value as SortKey)}
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as SortKey)}
                 className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
               >
                 <option value="newest">Sort: Newest</option>
                 <option value="oldest">Sort: Oldest</option>
+                <option value="dueDate">Sort: Due Date</option>
                 <option value="priority">Sort: Priority</option>
                 <option value="status">Sort: Status</option>
+                <option value="title">Sort: Title</option>
+                <option value="assignedTo">Sort: Assigned To</option>
               </select>
+
+              <button
+                type="button"
+                onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                className="inline-flex items-center gap-2 border border-slate-200 bg-white hover:bg-soft rounded-xl px-3 py-2 text-sm font-semibold text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+                title="Toggle sort direction"
+              >
+                <ArrowUpDown className="h-4 w-4 text-text-primary/70" />
+                {sortDir === "asc" ? "Asc" : "Desc"}
+              </button>
             </div>
           </div>
 
@@ -533,6 +727,7 @@ export default function Tasks() {
                   <button
                     onClick={() => bulkSetStatus("Pending")}
                     className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-white hover:bg-soft"
+                    type="button"
                   >
                     Mark Pending
                   </button>
@@ -540,6 +735,7 @@ export default function Tasks() {
                   <button
                     onClick={() => bulkSetStatus("In Progress")}
                     className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-white hover:bg-soft"
+                    type="button"
                   >
                     Mark In Progress
                   </button>
@@ -547,6 +743,7 @@ export default function Tasks() {
                   <button
                     onClick={() => bulkSetStatus("Completed")}
                     className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-white hover:bg-soft"
+                    type="button"
                   >
                     Mark Completed
                   </button>
@@ -554,6 +751,7 @@ export default function Tasks() {
                   <button
                     onClick={bulkDelete}
                     className="px-3 py-2 rounded-xl text-xs font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                    type="button"
                   >
                     Delete Selected
                   </button>
@@ -563,120 +761,148 @@ export default function Tasks() {
           </AnimatePresence>
         </div>
 
-        <AdminTable headers={["", "Title", "Assigned To", "Priority", "Status", "Due", "Actions"]}>
-          {/* Select-all row */}
-          <tr className="bg-soft border-b border-slate-200">
-            <td className="px-4 py-3">
-              <input
-                type="checkbox"
-                checked={allVisibleSelected}
-                onChange={(e) => toggleAllVisible(visibleIds, e.target.checked)}
-              />
-            </td>
-            <td className="px-4 py-3 font-medium text-text-primary" colSpan={6}>
-              Select all visible
-            </td>
-          </tr>
-
-          {filtered.map((t) => (
-            <motion.tr
-              key={t.id}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.15 }}
-            >
+        <div className="w-full overflow-x-auto">
+          <AdminTable
+            headers={[
+              "",
+              "Title",
+              "Assigned To",
+              "Priority",
+              "Status",
+              "Due",
+              "Actions",
+            ]}
+          >
+            {/* Select-all row */}
+            <tr className="bg-soft border-b border-slate-200">
               <td className="px-4 py-3">
                 <input
                   type="checkbox"
-                  checked={!!selected[t.id]}
-                  onChange={(e) => toggleOne(t.id, e.target.checked)}
+                  checked={allVisibleSelected}
+                  onChange={(e) => toggleAllVisible(visibleIds, e.target.checked)}
                 />
               </td>
-
-              <td className="px-4 py-3">
-                <div className="font-semibold text-text-heading">{t.title}</div>
-                <div className="text-xs text-text-primary/70">{t.description}</div>
-
-                {(t.tags?.length ?? 0) > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {t.tags!.slice(0, 4).map((tag) => (
-                      <span
-                        key={tag}
-                        className="px-2 py-0.5 rounded-full border border-slate-200 bg-white text-[10px] font-semibold text-text-primary"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                    {t.tags!.length > 4 && (
-                      <span className="text-[10px] text-text-primary/60">
-                        +{t.tags!.length - 4}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </td>
-
-              <td className="px-4 py-3">{t.assignedTo}</td>
-
-              <td className="px-4 py-3">
-                <Pill
-                  tone={
-                    t.priority === "High"
-                      ? "secondary"
-                      : t.priority === "Medium"
-                      ? "primary"
-                      : "slate"
-                  }
-                >
-                  {t.priority}
-                </Pill>
-              </td>
-
-              <td className="px-4 py-3">
-                <select
-                  value={t.status}
-                  onChange={(e) =>
-                    setTaskStatus(t.id, e.target.value as TaskStatus)
-                  }
-                  className="border border-slate-200 rounded-xl px-2 py-1 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
-                >
-                  {STATUS.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </td>
-
-              <td className="px-4 py-3 text-sm text-text-primary">
-                {t.dueDate ? t.dueDate : <span className="text-text-primary/50">—</span>}
-              </td>
-
-              <td className="px-4 py-3 space-x-3">
-                <button
-                  onClick={() => edit(t)}
-                  className="text-sm text-primary hover:underline font-semibold"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => remove(t.id)}
-                  className="text-sm text-red-700 hover:underline font-semibold"
-                >
-                  Delete
-                </button>
-              </td>
-            </motion.tr>
-          ))}
-
-          {filtered.length === 0 && (
-            <tr>
-              <td colSpan={7} className="px-4 py-10 text-center text-text-primary/60">
-                No tasks found.
+              <td className="px-4 py-3 font-medium text-text-primary" colSpan={6}>
+                Select all visible
               </td>
             </tr>
-          )}
-        </AdminTable>
+
+            {filtered.map((t) => (
+              <motion.tr
+                key={t.id}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.15 }}
+                className="align-top"
+              >
+                <td className="px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={!!selected[t.id]}
+                    onChange={(e) => toggleOne(t.id, e.target.checked)}
+                  />
+                </td>
+
+                <td className="px-4 py-3 min-w-[320px]">
+                  <div className="font-semibold text-text-heading">{t.title}</div>
+                  <div className="text-xs text-text-primary/70 line-clamp-2">
+                    {t.description}
+                  </div>
+
+                  {(t.tags?.length ?? 0) > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {t.tags!.slice(0, 4).map((tag) => (
+                        <span
+                          key={tag}
+                          className="px-2 py-0.5 rounded-full border border-slate-200 bg-white text-[10px] font-semibold text-text-primary"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                      {t.tags!.length > 4 && (
+                        <span className="text-[10px] text-text-primary/60">
+                          +{t.tags!.length - 4}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </td>
+
+                <td className="px-4 py-3 min-w-[160px]">{t.assignedTo}</td>
+
+                <td className="px-4 py-3">
+                  <Pill
+                    tone={
+                      t.priority === "High"
+                        ? "secondary"
+                        : t.priority === "Medium"
+                        ? "primary"
+                        : "slate"
+                    }
+                  >
+                    {t.priority}
+                  </Pill>
+                </td>
+
+                <td className="px-4 py-3 min-w-[180px]">
+                  <select
+                    value={t.status}
+                    onChange={(e) =>
+                      setTaskStatus(t.id, e.target.value as TaskStatus)
+                    }
+                    className="border border-slate-200 rounded-xl px-2 py-1 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm w-full"
+                  >
+                    {STATUS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+
+                <td className="px-4 py-3 text-sm text-text-primary min-w-[130px]">
+                  {t.dueDate ? (
+                    t.dueDate
+                  ) : (
+                    <span className="text-text-primary/50">—</span>
+                  )}
+                </td>
+
+                <td className="px-4 py-3 min-w-[190px]">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => openEdit(t)}
+                      className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline font-semibold"
+                      type="button"
+                    >
+                      <Pencil className="h-4 w-4" />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => remove(t.id)}
+                      className="inline-flex items-center gap-1.5 text-sm text-red-700 hover:underline font-semibold"
+                      type="button"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete
+                    </button>
+                  </div>
+                </td>
+              </motion.tr>
+            ))}
+
+            {filtered.length === 0 && (
+              <tr>
+                <td
+                  colSpan={7}
+                  className="px-4 py-10 text-center text-text-primary/60"
+                >
+                  No tasks found.
+                </td>
+              </tr>
+            )}
+          </AdminTable>
+        </div>
       </motion.div>
     </motion.div>
   );
@@ -700,6 +926,7 @@ function StatCard({
       ? "bg-green-600"
       : "bg-slate-400";
 
+  // NOTE: keeping your original behavior (value * 10) to avoid changing other UI.
   const pct = Math.max(8, Math.min(100, value * 10));
 
   return (
@@ -719,8 +946,8 @@ function StatCard({
         <div className={`h-full ${bar}`} style={{ width: `${pct}%` }} />
       </div>
       <div className="mt-2 flex items-center justify-between text-[10px] text-text-primary/60">
-        <span>0</span>
-        <span>{value}</span>
+        <span>0%</span>
+        <span>{pct}%</span>
       </div>
     </motion.div>
   );

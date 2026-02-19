@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type {
   AdminContextType,
   Attendance,
@@ -7,71 +7,65 @@ import type {
   User,
 } from "./AdminTypes";
 
+// Single shared LS key for tasks (Admin + User reads/writes here)
+const TASKS_KEY = "worktime_tasks_v1";
+
+// Use accounts.json as the single source of truth for users
+import accounts from "../../data/accounts.json";
+
+type Account = {
+  id: number;
+  email: string;
+  password: string;
+  name: string;
+};
+
 const AdminContext = createContext<AdminContextType | undefined>(undefined);
 
+function readTasksFromStorage(): Task[] {
+  try {
+    const raw = localStorage.getItem(TASKS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as Task[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 export const AdminProvider = ({ children }: { children: React.ReactNode }) => {
-  const [tasks, setTasks] = useState<Task[]>([
-    {
-      id: 1001,
-      title: "Prepare weekly report",
-      description: "Summarize attendance + tasks for the week.",
-      assignedTo: "Juan Dela Cruz",
-      priority: "High",
-      status: "In Progress",
-    },
-    {
-      id: 1002,
-      title: "Update documentation",
-      description: "Update admin workflow notes for demo.",
-      assignedTo: "Maria Santos",
-      priority: "Medium",
-      status: "Pending",
-    },
-  ]);
+  // ✅ USERS: always sourced from accounts.json
+  const accountsUsers = useMemo(() => {
+    const list = (accounts as Account[]).map((a) => ({
+      id: a.id,
+      name: a.name,
+      email: a.email,
+      // If your User type has more fields, they can be optional in AdminTypes.
+      // We keep it minimal and cast for compatibility.
+    }));
+    return list as unknown as User[];
+  }, []);
 
-  const [leaves, setLeaves] = useState<LeaveRequest[]>([
-    {
-      id: 2001,
-      employee: "Juan Dela Cruz",
-      type: "Vacation",
-      date: "2026-02-12",
-      reason: "Family trip",
-      status: "Pending",
-    },
-    {
-      id: 2002,
-      employee: "Maria Santos",
-      type: "Sick",
-      date: "2026-02-11",
-      reason: "Flu symptoms",
-      status: "Approved",
-    },
-  ]);
+  // ✅ TASKS: load once from shared LS key
+  const [tasks, setTasks] = useState<Task[]>(() => readTasksFromStorage());
 
-  const [users, setUsers] = useState<User[]>([
-    { id: 3001, name: "Juan Dela Cruz", role: "Employee", status: "Active" },
-    { id: 3002, name: "Maria Santos", role: "Employee", status: "Active" },
-    { id: 3003, name: "Admin User", role: "Admin", status: "Active" },
-  ]);
+  const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
+  const [users, setUsers] = useState<User[]>(accountsUsers); // initialized from accounts.json
+  const [attendance, setAttendance] = useState<Attendance[]>([]);
 
-  const [attendance, setAttendance] = useState<Attendance[]>([
-    {
-      id: 4001,
-      employee: "Juan Dela Cruz",
-      date: "2026-02-12",
-      timeIn: "09:02",
-      timeOut: "18:01",
-      status: "Clocked Out",
-    },
-    {
-      id: 4002,
-      employee: "Maria Santos",
-      date: "2026-02-12",
-      timeIn: "08:55",
-      timeOut: "17:40",
-      status: "Clocked Out",
-    },
-  ]);
+  // ✅ Keep users synced to accounts.json (prevents drifting if someone calls setUsers)
+  useEffect(() => {
+    setUsers(accountsUsers);
+  }, [accountsUsers]);
+
+  // ✅ Persist tasks to LocalStorage whenever tasks change (this is the sync bridge)
+  useEffect(() => {
+    try {
+      localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+    } catch {
+      // ignore storage failures
+    }
+  }, [tasks]);
 
   const value: AdminContextType = {
     tasks,

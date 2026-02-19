@@ -28,19 +28,29 @@ export default function AdminSidebar({ close }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const go = (path: string) => {
+    close?.();
+    navigate(path);
+  };
+
   const logout = () => {
     localStorage.removeItem("admin_token");
     localStorage.removeItem("admin_email");
-
     notifySuccess("Logged out successfully.");
     close?.();
     navigate("/admin/login", { replace: true });
   };
 
+  const isActive = (itemPath: string) => {
+    const current = location.pathname;
+    if (itemPath === "/admin") return current === "/admin";
+    return current === itemPath || current.startsWith(itemPath + "/");
+  };
+
   return (
-    <aside className="h-full min-h-screen w-72 bg-card border-r border-slate-200">
+    <aside className="w-72 bg-card border-r border-slate-200 min-h-dvh">
       <div className="flex flex-col h-full p-6">
-        {/* Logo (same as user sidebar) */}
+        {/* Logo */}
         <div className="flex items-center justify-center mb-10 relative">
           <motion.img
             initial={{ scale: 0 }}
@@ -52,7 +62,6 @@ export default function AdminSidebar({ close }: Props) {
             draggable={false}
           />
 
-          {/* Close button (same behavior as user sidebar) */}
           {close && (
             <motion.button
               whileHover={{ rotate: 90 }}
@@ -68,13 +77,9 @@ export default function AdminSidebar({ close }: Props) {
         </div>
 
         {/* Nav */}
-        <nav className="flex flex-col gap-2">
+        <nav className="flex flex-col gap-2 flex-1">
           {navItems.map((item, index) => {
-            const isActive =
-              item.path === "/admin"
-                ? location.pathname === "/admin"
-                : location.pathname === item.path;
-
+            const active = isActive(item.path);
             const Icon = item.icon;
 
             return (
@@ -83,26 +88,23 @@ export default function AdminSidebar({ close }: Props) {
                 initial={{ x: -20, opacity: 0 }}
                 animate={{ x: 0, opacity: 1 }}
                 transition={{ delay: index * 0.05 }}
-                whileHover={{ x: 4, backgroundColor: "#F2F2F2" }}
-                onClick={() => {
-                  navigate(item.path);
-                  close?.();
-                }}
+                whileHover={{ x: 4 }} // <- IMPORTANT: no inline backgroundColor
+                onClick={() => go(item.path)}
                 className={`flex items-center gap-3 px-4 py-3 rounded-xl text-[#1E293B] font-medium transition-all group
-                border-b-2 ${isActive ? "border-secondary" : "border-transparent"}
-                ${isActive ? "bg-secondary/10" : ""}`}
+                  hover:bg-slate-100
+                  border-b-2 ${active ? "border-secondary bg-secondary/10" : "border-transparent"}`}
                 type="button"
-                aria-current={isActive ? "page" : undefined}
+                aria-current={active ? "page" : undefined}
               >
                 <Icon
                   size={20}
                   className={`text-slate-500 transition-colors ${
-                    isActive ? "text-primary" : "group-hover:text-primary"
+                    active ? "text-primary" : "group-hover:text-primary"
                   }`}
                 />
                 <span
                   className={`transition-colors ${
-                    isActive ? "text-primary" : "group-hover:text-primary"
+                    active ? "text-primary" : "group-hover:text-primary"
                   }`}
                 >
                   {item.label}
