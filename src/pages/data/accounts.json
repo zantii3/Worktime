@@ -21,5 +21,20 @@
     "password": "mina123",
     "name": "Therese Mina"
 
+},
+
+{
+    "id": 4,
+    "email": "ajcalugs25@gmail.com",
+    "password": "calugs123",
+    "name": "Aiary Calugtong"
+
+},
+{
+    "id": 5,
+    "email": "clarenceponce@gmail.com",
+    "password": "ponce123",
+    "name": "Clarence Ponce"
+
 }
 ]

@@ -1,17 +1,30 @@
-import { AnimatePresence, motion } from "framer-motion";
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
+import {
+  LayoutDashboard,
+  CalendarDays,
+  FileUser,
+  ListTodo,
+  Users,
+  LogOut,
+  X,
+} from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { notifySuccess } from "../utils/toast";
-import picture from "/logo.png"; // adjust path if needed
+import picture from "/logo.png";
 
-const nav = [
-  { label: "Dashboard", to: "/admin" },
-  { label: "Attendance", to: "/admin/attendance" },
-  { label: "Leave", to: "/admin/leave" },
-  { label: "Task", to: "/admin/tasks" },
-  { label: "Users", to: "/admin/users" },
-];
+type Props = {
+  close?: () => void;
+};
 
-export default function AdminSidebar() {
+const navItems = [
+  { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
+  { icon: CalendarDays, label: "Attendance", path: "/admin/attendance" },
+  { icon: FileUser, label: "Leave", path: "/admin/leave" },
+  { icon: ListTodo, label: "Task", path: "/admin/tasks" },
+  { icon: Users, label: "Users", path: "/admin/users" },
+] as const;
+
+export default function AdminSidebar({ close }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -20,107 +33,98 @@ export default function AdminSidebar() {
     localStorage.removeItem("admin_email");
 
     notifySuccess("Logged out successfully.");
+    close?.();
     navigate("/admin/login", { replace: true });
   };
 
   return (
-    <motion.aside
-      initial={{ opacity: 0, x: -12 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.25 }}
-      className="w-64 min-h-screen px-5 py-6 flex flex-col bg-card border-r border-slate-200"
-    >
-      {/* Brand */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3">
-          <img
+    <aside className="h-full min-h-screen w-72 bg-card border-r border-slate-200">
+      <div className="flex flex-col h-full p-6">
+        {/* Logo (same as user sidebar) */}
+        <div className="flex items-center justify-center mb-10 relative">
+          <motion.img
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: "spring", stiffness: 200 }}
             src={picture}
-            alt="Worktime+ Logo"
-            className="h-12 w-auto object-contain"
+            alt="Logo"
+            className="w-20 md:w-20 lg:w-28 h-auto object-contain select-none"
+            draggable={false}
           />
-          <div>
-            <div className="text-lg font-extrabold text-text-heading leading-none">
-              Worktime+
-            </div>
-            <div className="text-xs text-text-primary/70">Admin Panel</div>
-          </div>
+
+          {/* Close button (same behavior as user sidebar) */}
+          {close && (
+            <motion.button
+              whileHover={{ rotate: 90 }}
+              whileTap={{ scale: 0.9 }}
+              onClick={close}
+              className="absolute top-0 right-0 mt-2 mr-2 p-2 hover:bg-slate-100 rounded-lg transition-colors"
+              type="button"
+              aria-label="Close sidebar"
+            >
+              <X className="text-slate-600" />
+            </motion.button>
+          )}
         </div>
-      </div>
 
-      {/* Nav */}
-      <nav className="space-y-2 flex-1">
-        {nav.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === "/admin"}
-            className={({ isActive }) =>
-              [
-                "relative block rounded-xl overflow-hidden",
-                "focus:outline-none focus:ring-2 focus:ring-primary/30",
-                isActive
-                  ? "text-white"
-                  : "text-text-primary hover:bg-soft",
-              ].join(" ")
-            }
-          >
-            {({ isActive }) => (
-              <>
-                {/* Active background fills the whole link */}
-                <AnimatePresence>
-                  {isActive && (
-                    <motion.span
-                      layoutId="admin-nav-active"
-                      className="absolute inset-0 rounded-xl bg-primary"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.18 }}
-                    />
-                  )}
-                </AnimatePresence>
+        {/* Nav */}
+        <nav className="flex flex-col gap-2">
+          {navItems.map((item, index) => {
+            const isActive =
+              item.path === "/admin"
+                ? location.pathname === "/admin"
+                : location.pathname === item.path;
 
-                {/* Content stays above the background */}
-                <span className="relative z-10 flex items-center justify-between px-4 py-2 text-sm font-semibold">
+            const Icon = item.icon;
+
+            return (
+              <motion.button
+                key={item.path}
+                initial={{ x: -20, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                transition={{ delay: index * 0.05 }}
+                whileHover={{ x: 4, backgroundColor: "#F2F2F2" }}
+                onClick={() => {
+                  navigate(item.path);
+                  close?.();
+                }}
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl text-[#1E293B] font-medium transition-all group
+                border-b-2 ${isActive ? "border-secondary" : "border-transparent"}
+                ${isActive ? "bg-secondary/10" : ""}`}
+                type="button"
+                aria-current={isActive ? "page" : undefined}
+              >
+                <Icon
+                  size={20}
+                  className={`text-slate-500 transition-colors ${
+                    isActive ? "text-primary" : "group-hover:text-primary"
+                  }`}
+                />
+                <span
+                  className={`transition-colors ${
+                    isActive ? "text-primary" : "group-hover:text-primary"
+                  }`}
+                >
                   {item.label}
-                  <AnimatePresence>
-                    {isActive && (
-                      <motion.span
-                        initial={{ opacity: 0, x: -6 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, x: -6 }}
-                        transition={{ duration: 0.18 }}
-                        className="text-xs font-extrabold text-white/90"
-                      >
-                        •
-                      </motion.span>
-                    )}
-                  </AnimatePresence>
                 </span>
-              </>
-            )}
-          </NavLink>
-        ))}
-      </nav>
+              </motion.button>
+            );
+          })}
+        </nav>
 
-      {/* Footer */}
-      <div className="pt-6 border-t border-slate-200 space-y-3">
-        <div className="text-xs text-text-primary/60 px-1">
-          Current:{" "}
-          <span className="font-semibold text-text-heading">
-            {location.pathname}
-          </span>
-        </div>
-
+        {/* Logout pinned bottom */}
         <motion.button
-          whileHover={{ y: -1 }}
-          whileTap={{ scale: 0.99 }}
+          whileHover={{ x: 4 }}
+          whileTap={{ scale: 0.95 }}
           onClick={logout}
-          className="w-full text-left px-4 py-2 rounded-xl text-sm font-semibold text-red-600 bg-soft hover:bg-red-50 transition border border-slate-200"
+          className="mt-auto flex items-center gap-3 px-4 py-3 rounded-xl text-red-500 font-medium hover:bg-red-50 transition-all"
+          type="button"
+          aria-label="Logout"
         >
-          Logout
+          <LogOut size={20} />
+          <span>Logout</span>
         </motion.button>
       </div>
-    </motion.aside>
+    </aside>
   );
 }
