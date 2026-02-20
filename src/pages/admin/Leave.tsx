@@ -63,7 +63,7 @@ function statusPillClass(status: LeaveStatus) {
     Approved: "bg-green-50 text-green-700 border-green-200",
     Rejected: "bg-red-50 text-red-700 border-red-200",
   };
-  return `${base} ${map[status] ?? "bg-slate-50 text-slate-700 border-slate-200"}`;
+  return `${base} ${map[status] ?? "bg-soft text-text-primary border-slate-200"}`;
 }
 
 export default function Leave() {
@@ -105,10 +105,8 @@ export default function Leave() {
 
   const filteredLeaves = useMemo(() => {
     let list = normalizedLeaves;
-
     if (filter !== "All") list = list.filter((l) => l.status === filter);
     if (typeFilter !== "All") list = list.filter((l) => l.type === typeFilter);
-
     return list;
   }, [normalizedLeaves, filter, typeFilter]);
 
@@ -253,7 +251,7 @@ export default function Leave() {
           <div className="text-sm text-text-primary/70">{formatFullDate(now)}</div>
         </div>
 
-        <div className="bg-gradient-to-r from-slate-800 to-blue-700 text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
+        <div className="bg-primary text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
           <span>🕒</span>
           <span>
             {now.toLocaleTimeString("en-US", {
@@ -271,7 +269,6 @@ export default function Leave() {
           title="VACATION LEAVE"
           value={cardStats.Vacation.total}
           breakdown={cardStats.Vacation}
-          color="navy"
           active={typeFilter === "Vacation"}
           onClick={() => openType("Vacation")}
         />
@@ -279,7 +276,6 @@ export default function Leave() {
           title="SICK LEAVE"
           value={cardStats.Sick.total}
           breakdown={cardStats.Sick}
-          color="steel"
           active={typeFilter === "Sick"}
           onClick={() => openType("Sick")}
         />
@@ -287,7 +283,6 @@ export default function Leave() {
           title="EMERGENCY LEAVE"
           value={cardStats.Emergency.total}
           breakdown={cardStats.Emergency}
-          color="slate"
           active={typeFilter === "Emergency"}
           onClick={() => openType("Emergency")}
         />
@@ -295,13 +290,12 @@ export default function Leave() {
           title="MATERNITY/PATERNITY LEAVE"
           value={cardStats["Maternity/Paternity"].total}
           breakdown={cardStats["Maternity/Paternity"]}
-          color="steel"
           active={typeFilter === "Maternity/Paternity"}
           onClick={() => openType("Maternity/Paternity")}
         />
       </div>
 
-      {/* Filter bar (navy/steel) */}
+      {/* Filter bar */}
       <motion.div
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
@@ -309,7 +303,7 @@ export default function Leave() {
         className="flex items-center justify-between gap-3"
       >
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="text-xs font-semibold text-slate-500">Filters</div>
+          <div className="text-xs font-semibold text-text-primary/70">Filters</div>
 
           <AnimatePresence>
             {typeFilter !== "All" && (
@@ -317,13 +311,13 @@ export default function Leave() {
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 4 }}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-blue-200 bg-blue-50 text-blue-800 text-xs font-semibold"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-primary/30 bg-soft text-text-heading text-xs font-semibold"
               >
-                <span>Type:</span>
+                <span className="text-text-primary/70">Type:</span>
                 <span className="font-extrabold">{LEAVE_TYPE_LABEL[typeFilter]}</span>
                 <button
                   onClick={clearType}
-                  className="ml-1 h-5 w-5 rounded-full bg-white border border-blue-200 hover:bg-blue-100 flex items-center justify-center"
+                  className="ml-1 h-5 w-5 rounded-full bg-card border border-primary/30 hover:bg-soft flex items-center justify-center"
                   aria-label="Clear leave type filter"
                   title="Clear type"
                   type="button"
@@ -340,13 +334,13 @@ export default function Leave() {
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 4 }}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-slate-700 text-xs font-semibold"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-card text-text-heading text-xs font-semibold"
               >
-                <span>Status:</span>
+                <span className="text-text-primary/70">Status:</span>
                 <span className="font-extrabold">{filter}</span>
                 <button
                   onClick={() => setFilter("All")}
-                  className="ml-1 h-5 w-5 rounded-full bg-slate-50 border border-slate-200 hover:bg-slate-100 flex items-center justify-center"
+                  className="ml-1 h-5 w-5 rounded-full bg-soft border border-slate-200 hover:bg-background flex items-center justify-center"
                   aria-label="Clear status filter"
                   title="Clear status"
                   type="button"
@@ -358,7 +352,7 @@ export default function Leave() {
           </AnimatePresence>
 
           {!hasAnyFilter && (
-            <div className="text-xs text-slate-400">No filters applied</div>
+            <div className="text-xs text-text-primary/60">No filters applied</div>
           )}
         </div>
 
@@ -369,8 +363,8 @@ export default function Leave() {
             className={[
               "px-3 py-1.5 rounded-xl text-xs font-bold border transition",
               hasAnyFilter
-                ? "bg-slate-900 text-white border-slate-900 hover:bg-slate-800"
-                : "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed",
+                ? "bg-primary text-white border-primary hover:opacity-90"
+                : "bg-soft text-text-primary/50 border-slate-200 cursor-not-allowed",
             ].join(" ")}
             type="button"
           >
@@ -379,7 +373,7 @@ export default function Leave() {
         </div>
       </motion.div>
 
-      {/* Leave History (above form) */}
+      {/* Leave History */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -388,7 +382,7 @@ export default function Leave() {
       >
         <div className="p-5 border-b border-slate-100 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center">
+            <div className="h-10 w-10 rounded-xl bg-soft flex items-center justify-center">
               📚
             </div>
             <div>
@@ -411,8 +405,8 @@ export default function Leave() {
                 className={[
                   "px-3 py-1.5 rounded-lg text-xs font-semibold border transition",
                   f === filter
-                    ? "bg-blue-700 text-white border-blue-700"
-                    : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
+                    ? "bg-primary text-white border-primary"
+                    : "bg-card text-text-heading border-slate-200 hover:bg-soft",
                 ].join(" ")}
                 type="button"
               >
@@ -437,7 +431,7 @@ export default function Leave() {
           <AnimatePresence>
             {filteredLeaves.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
+                <td colSpan={8} className="px-4 py-10 text-center text-text-primary/70">
                   No leave requests found.
                 </td>
               </tr>
@@ -459,7 +453,7 @@ export default function Leave() {
                   >
                     <td className="px-4 py-3">{l.employee}</td>
                     <td className="px-4 py-3">{LEAVE_TYPE_LABEL[l.type]}</td>
-                    <td className="px-4 py-3 text-xs text-slate-600">{duration}</td>
+                    <td className="px-4 py-3 text-xs text-text-primary/70">{duration}</td>
                     <td className="px-4 py-3 font-semibold">{days || "—"}</td>
                     <td className="px-4 py-3">{l.reason}</td>
                     <td className="px-4 py-3">{l.appliedOn ?? "—"}</td>
@@ -469,7 +463,7 @@ export default function Leave() {
                     <td className="px-4 py-3 space-x-3">
                       <button
                         onClick={() => edit(l)}
-                        className="text-sm text-blue-700 hover:underline font-semibold"
+                        className="text-sm text-primary hover:underline font-semibold"
                         type="button"
                       >
                         Edit
@@ -502,14 +496,14 @@ export default function Leave() {
         </AdminTable>
       </motion.div>
 
-      {/* File a Leave Request (below history) */}
+      {/* File a Leave Request */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, delay: 0.08 }}
-        className="rounded-3xl overflow-hidden border border-blue-200 shadow-sm bg-card"
+        className="rounded-3xl overflow-hidden border border-primary/30 shadow-sm bg-card"
       >
-        <div className="bg-gradient-to-r from-slate-800 to-blue-700 px-6 py-6">
+        <div className="bg-primary px-6 py-6">
           <div className="flex items-start gap-4 text-white">
             <div className="h-12 w-12 rounded-2xl bg-white/15 flex items-center justify-center text-2xl">
               🧾
@@ -532,7 +526,7 @@ export default function Leave() {
                 name="type"
                 value={form.type}
                 onChange={onChange}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-blue-300"
+                className="w-full rounded-2xl border border-slate-200 bg-card px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-primary/30"
               >
                 {LEAVE_TYPES.map((t) => (
                   <option key={t} value={t}>
@@ -546,16 +540,16 @@ export default function Leave() {
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-left flex items-center gap-3 outline-none focus:ring-2 focus:ring-blue-300"
+                className="w-full rounded-2xl border border-slate-200 bg-card px-5 py-4 text-left flex items-center gap-3 outline-none focus:ring-2 focus:ring-primary/30"
               >
                 <span className="text-xl">📎</span>
-                <span className="text-slate-600">
+                <span className="text-text-primary/70">
                   {form.attachmentName ? form.attachmentName : "No file chosen"}
                 </span>
 
                 {form.attachmentName ? (
                   <span
-                    className="ml-auto text-xs font-semibold text-slate-500 underline"
+                    className="ml-auto text-xs font-semibold text-text-primary/70 underline"
                     onClick={(e) => {
                       e.stopPropagation();
                       clearFile();
@@ -577,7 +571,7 @@ export default function Leave() {
                 type="date"
                 value={form.dateFrom}
                 onChange={onChange}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-blue-300"
+                className="w-full rounded-2xl border border-slate-200 bg-card px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-primary/30"
               />
             </Field>
 
@@ -587,7 +581,7 @@ export default function Leave() {
                 type="date"
                 value={form.dateTo}
                 onChange={onChange}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-blue-300"
+                className="w-full rounded-2xl border border-slate-200 bg-card px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-primary/30"
               />
             </Field>
           </div>
@@ -598,7 +592,7 @@ export default function Leave() {
               value={form.reason}
               onChange={onChange}
               placeholder="Provide a reason for your leave..."
-              className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-4 text-base outline-none focus:ring-2 focus:ring-blue-300 min-h-[160px]"
+              className="w-full rounded-2xl border border-slate-200 bg-card px-5 py-4 text-base outline-none focus:ring-2 focus:ring-primary/30 min-h-[160px]"
             />
           </Field>
 
@@ -609,7 +603,7 @@ export default function Leave() {
                 value={form.employee}
                 onChange={onChange}
                 placeholder="Employee name"
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-blue-300"
+                className="w-full rounded-2xl border border-slate-200 bg-card px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-primary/30"
               />
             </Field>
 
@@ -618,7 +612,7 @@ export default function Leave() {
                 name="status"
                 value={form.status}
                 onChange={onChange}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-blue-300"
+                className="w-full rounded-2xl border border-slate-200 bg-card px-5 py-4 text-base font-semibold text-text-heading outline-none focus:ring-2 focus:ring-primary/30"
               >
                 {(["Pending", "Approved", "Rejected"] as LeaveStatus[]).map((s) => (
                   <option key={s} value={s}>
@@ -634,7 +628,7 @@ export default function Leave() {
               whileHover={{ y: -1 }}
               whileTap={{ scale: 0.99 }}
               onClick={save}
-              className="inline-flex items-center gap-2 bg-gradient-to-r from-slate-800 to-blue-700 hover:from-slate-900 hover:to-blue-800 text-white px-7 py-3 rounded-2xl text-base font-extrabold shadow-sm"
+              className="inline-flex items-center gap-2 bg-primary hover:opacity-90 text-white px-7 py-3 rounded-2xl text-base font-extrabold shadow-sm"
               type="button"
             >
               <span>✈️</span>
@@ -646,7 +640,7 @@ export default function Leave() {
                 whileHover={{ y: -1 }}
                 whileTap={{ scale: 0.99 }}
                 onClick={reset}
-                className="ml-3 inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-7 py-3 rounded-2xl text-base font-extrabold"
+                className="ml-3 inline-flex items-center gap-2 bg-soft hover:bg-background text-text-primary px-7 py-3 rounded-2xl text-base font-extrabold"
                 type="button"
               >
                 Cancel
@@ -670,9 +664,11 @@ function Field({
 }) {
   return (
     <div className="space-y-2">
-      <div className="text-[11px] font-extrabold tracking-wide text-slate-600">
+      <div className="text-[11px] font-extrabold tracking-wide text-text-primary/70">
         {label}{" "}
-        {optional ? <span className="font-semibold text-slate-400">(Optional)</span> : null}
+        {optional ? (
+          <span className="font-semibold text-text-primary/60">(Optional)</span>
+        ) : null}
       </div>
       {children}
     </div>
@@ -683,24 +679,15 @@ function LeaveSummaryCard({
   title,
   value,
   breakdown,
-  color,
   active,
   onClick,
 }: {
   title: string;
   value: number;
   breakdown: { total: number; pending: number; approved: number; rejected: number };
-  color: "navy" | "steel" | "slate";
   active?: boolean;
   onClick?: () => void;
 }) {
-  const bar =
-    color === "navy"
-      ? "bg-slate-800"
-      : color === "steel"
-      ? "bg-blue-600"
-      : "bg-slate-500";
-
   const pct = breakdown.total
     ? Math.round((breakdown.approved / breakdown.total) * 100)
     : 0;
@@ -714,33 +701,33 @@ function LeaveSummaryCard({
       transition={{ duration: 0.15 }}
       className={[
         "text-left bg-card rounded-2xl shadow-sm border p-5 w-full",
-        "focus:outline-none focus:ring-2 focus:ring-blue-300",
-        active ? "border-blue-300 ring-2 ring-blue-200" : "border-slate-200",
+        "focus:outline-none focus:ring-2 focus:ring-primary/30",
+        active ? "border-primary/40 ring-2 ring-primary/20" : "border-slate-200",
       ].join(" ")}
     >
-      <div className="text-[10px] font-bold text-slate-500">{title}</div>
+      <div className="text-[10px] font-bold text-text-primary/70">{title}</div>
 
       <div className="mt-2 flex items-baseline gap-2">
         <div className="text-3xl font-extrabold text-text-heading">{value}</div>
         <div className="text-xs text-text-primary/70">requests</div>
       </div>
 
-      <div className="mt-3 h-1.5 rounded-full bg-slate-200 overflow-hidden">
-        <div className={`h-full ${bar}`} style={{ width: `${pct}%` }} />
+      <div className="mt-3 h-1.5 rounded-full bg-soft overflow-hidden">
+        <div className="h-full bg-primary" style={{ width: `${pct}%` }} />
       </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] text-slate-500">
+      <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] text-text-primary/70">
         <div className="flex items-center justify-between">
           <span>Pending</span>
-          <span className="font-semibold text-slate-700">{breakdown.pending}</span>
+          <span className="font-semibold text-text-heading">{breakdown.pending}</span>
         </div>
         <div className="flex items-center justify-between">
           <span>Approved</span>
-          <span className="font-semibold text-slate-700">{breakdown.approved}</span>
+          <span className="font-semibold text-text-heading">{breakdown.approved}</span>
         </div>
         <div className="flex items-center justify-between">
           <span>Rejected</span>
-          <span className="font-semibold text-slate-700">{breakdown.rejected}</span>
+          <span className="font-semibold text-text-heading">{breakdown.rejected}</span>
         </div>
       </div>
     </motion.button>

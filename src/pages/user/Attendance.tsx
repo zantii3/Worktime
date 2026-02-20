@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Menu, Clock, ChevronLeft, ChevronRight, Calendar, History, Timer } from "lucide-react";
@@ -6,6 +6,39 @@ import { useClock } from "./hooks/useClock";
 import Usersidebar from "./components/Usersidebar.tsx";
 import { useAttendance } from "./hooks/useAttendance";
 import { daysInMonth, firstDayOfMonth } from "./utils/attendanceUtils.ts";
+
+// Shared key that Admin Attendance will read
+const ATTENDANCE_KEY = "worktime_attendance_v1";
+
+type AdminAttendanceRecord = {
+  id: string;
+  employeeId: string; // string to match Admin side expectation
+  source: "Desktop" | "Mobile";
+  dateISO: string; // YYYY-MM-DD
+  timeIn: string | null;
+  lunchOut: string | null;
+  lunchIn: string | null;
+  timeOut: string | null;
+};
+
+function readAdminAttendance(): AdminAttendanceRecord[] {
+  try {
+    const raw = localStorage.getItem(ATTENDANCE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as AdminAttendanceRecord[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeAdminAttendance(records: AdminAttendanceRecord[]) {
+  try {
+    localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(records));
+  } catch {
+    // ignore
+  }
+}
+
 
 function AttendanceApp() {
   const location = useLocation();
@@ -15,6 +48,42 @@ function AttendanceApp() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const { attendanceData } = useAttendance(user?.id);
+
+  useEffect(() => {
+  if (!user?.id) return;
+
+  const employeeId = String(user.id);
+  const existing = readAdminAttendance();
+
+  // Build a map to upsert by (employeeId + dateISO)
+  const byKey = new Map<string, AdminAttendanceRecord>();
+  for (const r of existing) {
+    byKey.set(`${r.employeeId}__${r.dateISO}`, r);
+  }
+
+  for (const r of attendanceData) {
+    const dateISO = r.date; // already YYYY-MM-DD in your code
+    const device = String(r.device ?? "");
+
+    const source: "Desktop" | "Mobile" =
+      device.toLowerCase().includes("mobile") ? "Mobile" : "Desktop";
+
+    const adminRec: AdminAttendanceRecord = {
+      id: `${employeeId}_${dateISO}`, // stable id per user/day
+      employeeId,
+      source,
+      dateISO,
+      timeIn: r.timeIn ?? null,
+      lunchOut: r.lunchOut ?? null,
+      lunchIn: r.lunchIn ?? null,
+      timeOut: r.timeOut ?? null,
+    };
+
+    byKey.set(`${employeeId}__${dateISO}`, adminRec);
+  }
+
+  writeAdminAttendance(Array.from(byKey.values()));
+}, [attendanceData, user?.id]);
 
   const prevMonth = () => {
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));

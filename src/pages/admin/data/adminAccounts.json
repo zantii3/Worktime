@@ -1,0 +1,14 @@
+[
+  {
+    "id": 101,
+    "email": "admin1@worktime.com",
+    "password": "admin123",
+    "name": "Admin One"
+  },
+  {
+    "id": 102,
+    "email": "admin2@worktime.com",
+    "password": "admin123",
+    "name": "Admin Two"
+  }
+]

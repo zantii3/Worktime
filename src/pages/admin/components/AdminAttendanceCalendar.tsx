@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useMemo } from "react";
+import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 
 export type AttendanceRecord = {
   id: string;
@@ -117,11 +118,11 @@ export default function AdminAttendanceCalendar({
 
   return (
     <div className="rounded-2xl bg-card border border-slate-200 shadow-sm overflow-hidden">
-      {/* Orange header like screenshot */}
-      <div className="bg-gradient-to-r from-orange-500 to-orange-600 px-5 py-4 flex items-center justify-between">
+      {/* Header */}
+      <div className="bg-primary px-5 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3 text-white">
-          <div className="h-10 w-10 rounded-xl bg-white/20 flex items-center justify-center text-lg">
-            📅
+          <div className="h-10 w-10 rounded-xl bg-white/20 flex items-center justify-center">
+            <CalendarDays className="h-5 w-5" />
           </div>
           <div className="font-bold text-lg">{monthLabel(viewMonth)}</div>
         </div>
@@ -129,17 +130,19 @@ export default function AdminAttendanceCalendar({
         <div className="flex items-center gap-2">
           <button
             onClick={onPrevMonth}
-            className="h-9 w-9 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold"
+            className="h-9 w-9 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold inline-flex items-center justify-center"
             aria-label="Previous month"
+            type="button"
           >
-            ‹
+            <ChevronLeft className="h-5 w-5" />
           </button>
           <button
             onClick={onNextMonth}
-            className="h-9 w-9 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold"
+            className="h-9 w-9 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold inline-flex items-center justify-center"
             aria-label="Next month"
+            type="button"
           >
-            ›
+            <ChevronRight className="h-5 w-5" />
           </button>
         </div>
       </div>
@@ -147,7 +150,10 @@ export default function AdminAttendanceCalendar({
       <div className="p-5">
         <div className="grid grid-cols-7 gap-2 mb-2">
           {weekday.map((w) => (
-            <div key={w} className="text-[11px] font-bold text-slate-500 text-center">
+            <div
+              key={w}
+              className="text-[11px] font-bold text-slate-500 text-center"
+            >
               {w}
             </div>
           ))}
@@ -182,23 +188,37 @@ export default function AdminAttendanceCalendar({
                   onClick={() => onSelectDateISO(iso)}
                   className={[
                     "min-h-[92px] rounded-xl border text-left p-2 transition",
-                    inMonth ? "bg-white border-slate-200" : "bg-slate-50 border-slate-100 opacity-60",
-                    isSelected ? "ring-2 ring-orange-400" : "hover:bg-slate-50",
+                    inMonth
+                      ? "bg-white border-slate-200"
+                      : "bg-slate-50 border-slate-100 opacity-60",
+                    isSelected ? "ring-2 ring-primary/40" : "hover:bg-slate-50",
                   ].join(" ")}
+                  type="button"
+                  aria-current={isSelected ? "date" : undefined}
                 >
                   <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold text-slate-700">{d.getDate()}</div>
+                    <div className="text-xs font-semibold text-slate-700">
+                      {d.getDate()}
+                    </div>
                     {rec ? (
-                      <span className="text-[10px] font-bold text-orange-600">•</span>
+                      <span className="text-[10px] font-bold text-secondary">
+                        •
+                      </span>
                     ) : null}
                   </div>
 
-                  {/* Pills like screenshot */}
+                  {/* Pills */}
                   <div className="mt-2 space-y-1">
                     {tIn ? <DayPill label="IN" time={tIn} variant="in" /> : null}
-                    {tLO ? <DayPill label="LO" time={tLO} variant="lo" /> : null}
-                    {tLI ? <DayPill label="LI" time={tLI} variant="li" /> : null}
-                    {tOut ? <DayPill label="OUT" time={tOut} variant="out" /> : null}
+                    {tLO ? (
+                      <DayPill label="LO" time={tLO} variant="lo" />
+                    ) : null}
+                    {tLI ? (
+                      <DayPill label="LI" time={tLI} variant="li" />
+                    ) : null}
+                    {tOut ? (
+                      <DayPill label="OUT" time={tOut} variant="out" />
+                    ) : null}
                   </div>
                 </motion.button>
               );

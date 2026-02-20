@@ -27,6 +27,9 @@ interface Task {
   createdAt: string;
 }
 
+const TASKS_KEY = "worktime_tasks_v1";
+
+
 const priorityConfig: Record<
   TaskPriority,
   { color: string; dot: string; bg: string }
@@ -128,17 +131,29 @@ function TaskPage() {
     useState<"All" | TaskPriority>("All");
 
   const [tasks, setTasks] = useState<Task[]>(() => {
-    const stored = localStorage.getItem(`tasks_${user?.id || "user"}`);
-    return stored ? JSON.parse(stored) : [];
-  });
+  const raw = localStorage.getItem(TASKS_KEY);
+  const all: any[] = raw ? JSON.parse(raw) : [];
+  // show only tasks assigned to this logged-in user (by name)
+  return Array.isArray(all)
+    ? all.filter((t) => t?.assignedTo === user?.name)
+    : [];
+});
+
 
   const saveTasks = (updated: Task[]) => {
-    setTasks(updated);
-    localStorage.setItem(
-      `tasks_${user?.id || "user"}`,
-      JSON.stringify(updated)
-    );
-  };
+  setTasks(updated);
+
+  const raw = localStorage.getItem(TASKS_KEY);
+  const all: any[] = raw ? JSON.parse(raw) : [];
+  const safeAll = Array.isArray(all) ? all : [];
+
+  // remove old tasks for this user, then add updated tasks for this user
+  const others = safeAll.filter((t) => t?.assignedTo !== user?.name);
+  const merged = [...updated, ...others];
+
+  localStorage.setItem(TASKS_KEY, JSON.stringify(merged));
+};
+
 
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
