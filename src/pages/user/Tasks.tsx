@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Menu,
   Clock,
-  Plus,
   CheckCircle2,
   ListTodo,
   TrendingUp,
@@ -364,11 +363,6 @@ function TaskPage() {
                 <option value="Medium">Medium</option>
                 <option value="High">High</option>
               </select>
-
-              <button className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-[#F28C28] to-[#E97638] text-white text-xs font-bold shadow-sm hover:shadow-md hover:scale-[1.02] active:scale-[0.98] transition-all">
-                <Plus className="w-3.5 h-3.5" />
-                Add Task
-              </button>
             </div>
           </div>
 

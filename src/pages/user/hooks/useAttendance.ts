@@ -100,13 +100,18 @@ export function useAttendance(userId?: string) {
   };
 
   const calculateElapsedTime = () => {
-    if (!todayRecord?.timeIn) return "0h 0m";
-    const timeInDate = new Date(todayRecord.timeIn as string);
-    const now = todayRecord.timeOut ? new Date(todayRecord.timeOut) : new Date();
-    const diff = now.getTime() - timeInDate.getTime();
-    const hours = Math.floor(diff / 1000 / 60 / 60);
-    const minutes = Math.floor((diff / 1000 / 60) % 60);
-    return `${hours}h ${minutes}m`;
+    if (!todayRecord?.timeIn) return "00:00:00";
+    const start = new Date(todayRecord.timeIn as string).getTime();
+    const end = todayRecord.timeOut
+      ? new Date(todayRecord.timeOut as string).getTime()
+      : Date.now();
+
+    const diff = end - start;
+    const hrs = Math.floor(diff / 1000 / 60 / 60);
+    const mins = Math.floor((diff / 1000 / 60) % 60);
+    const secs = Math.floor((diff / 1000) % 60);
+
+    return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
 
   useEffect(() => {
@@ -141,6 +146,52 @@ export function useAttendance(userId?: string) {
   }, [userId, todayRecord, isClient]);
 
 
+  // add standard shift constant inside module scope
+  const STANDARD_SHIFT_MINUTES = 9 * 60; // 9 hours including lunch
+
+  const calculateWorkDetails = () => {
+    if (!todayRecord?.timeIn) {
+      return {
+        totalMinutes: 0,
+        regularMinutes: 0,
+        overtimeMinutes: 0,
+        progressPct: 0,
+      };
+    }
+
+    const start = new Date(todayRecord.timeIn as string);
+    const end = todayRecord.timeOut
+      ? new Date(todayRecord.timeOut as string)
+      : new Date();
+
+    // TOTAL shift time (NO lunch deduction)
+    const totalMinutes = Math.floor(
+      (end.getTime() - start.getTime()) / 60000
+    );
+
+    const regularMinutes = Math.min(
+      totalMinutes,
+      STANDARD_SHIFT_MINUTES
+    );
+
+    const overtimeMinutes =
+      totalMinutes > STANDARD_SHIFT_MINUTES
+        ? totalMinutes - STANDARD_SHIFT_MINUTES
+        : 0;
+
+    const progressPct = Math.min(
+      (regularMinutes / STANDARD_SHIFT_MINUTES) * 100,
+      100
+    );
+
+    return {
+      totalMinutes,
+      regularMinutes,
+      overtimeMinutes,
+      progressPct,
+    };
+  };
+
   return {
     todayRecord,
     attendanceData,
@@ -152,5 +203,6 @@ export function useAttendance(userId?: string) {
     handleTimeOut,
     getStatus,
     calculateElapsedTime,
+    calculateWorkDetails,
   } as const;
 }

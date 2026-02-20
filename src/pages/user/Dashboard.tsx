@@ -68,16 +68,53 @@ function Dashboard() {
     : 0;
 
   const {
-    todayRecord,
-    setTodayRecord,
-    isAnimating,
-    handleTimeIn,
-    handleLunchOut,
-    handleLunchIn,
-    handleTimeOut,
-    getStatus,
-    calculateElapsedTime,
-  } = useAttendance(user?.id || "user");
+  todayRecord,
+  setTodayRecord,
+  isAnimating,
+  handleTimeIn,
+  handleLunchOut,
+  handleLunchIn,
+  handleTimeOut,
+  getStatus,
+  calculateElapsedTime,
+  calculateWorkDetails,
+} = useAttendance(user?.id || "user");
+
+const workDetails = calculateWorkDetails();
+
+  const STANDARD_SHIFT_MINUTES = 9 * 60;
+
+  const formatMinutes = (minutes: number) => {
+    const hrs = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${String(hrs).padStart(2, "0")}:
+${String(mins).padStart(2, "0")}`;
+  };
+
+  const formatMs = (ms: number) => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const hrs = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+    return `${String(hrs).padStart(2, "0")}:
+${String(mins).padStart(2, "0")}:
+${String(secs).padStart(2, "0")}`;
+  };
+
+  const getRemainingTime = () => {
+    if (!todayRecord?.timeIn) return formatMs(STANDARD_SHIFT_MINUTES * 60000);
+    const start = new Date(todayRecord.timeIn).getTime();
+    const target = start + STANDARD_SHIFT_MINUTES * 60000;
+    const now = todayRecord.timeOut
+      ? new Date(todayRecord.timeOut).getTime()
+      : currentTime.getTime();
+    const diff = target - now;
+    if (diff >= 0) {
+      return formatMs(diff);
+    }
+    return `+${formatMs(-diff)}`;
+  };
+
 
   useEffect(() => {
     const handleResize = () => {
@@ -129,6 +166,29 @@ function Dashboard() {
     { label: "End Break",     value: todayRecord?.lunchIn,   isTime: true,    textColor: "#F28C28", bgClass: "from-blue-50 to-blue-100/50",    borderClass: "border-blue-200"   },
     { label: "Time Out",     value: todayRecord?.timeOut,   isTime: true,    textColor: "#e91f1f", bgClass: "from-red-50 to-red-100/50",      borderClass: "border-red-200"    },
     { label: "Elapsed Time", value: calculateElapsedTime(), isElapsed: true, textColor: "#F28C28", bgClass: "from-yellow-50 to-yellow-100/50", borderClass: "border-yellow-200" },
+    {
+  label: "Regular Hours",
+  value: formatMinutes(workDetails.regularMinutes),
+  isTime: false,
+  textColor: "#16a34a",
+  bgClass: "from-green-50 to-green-100/50",
+  borderClass: "border-green-200",
+},
+{
+  label: "Overtime",
+  value: formatMinutes(workDetails.overtimeMinutes),
+  isTime: false,
+  textColor:
+    workDetails.overtimeMinutes > 0 ? "#e91f1f" : "#94a3b8",
+  bgClass:
+    workDetails.overtimeMinutes > 0
+      ? "from-red-50 to-red-100/50"
+      : "from-slate-50 to-slate-100/50",
+  borderClass:
+    workDetails.overtimeMinutes > 0
+      ? "border-red-200"
+      : "border-slate-200",
+},
     { label: "Device",       value: todayRecord?.device || "---", isTime: false, textColor: "#1F3C68", bgClass: "from-blue-50 to-blue-100/50", borderClass: "border-blue-200" },
   ];
 
@@ -141,6 +201,7 @@ function Dashboard() {
     localStorage.removeItem("currentUser");
     navigate("/");
   };
+
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex">
@@ -225,6 +286,9 @@ function Dashboard() {
             transition={{ delay: 0.1 }}
             className="col-span-1 lg:col-span-2 bg-white rounded-2xl md:rounded-2.5xl lg:rounded-3xl shadow-xl border-2 border-[#F28C28]/20 overflow-hidden"
           >
+
+            {/* 9 Hour Daily Progress */}
+
             <div className="bg-primary p-3 md:p-4 lg:p-6 text-white">
               <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-3 lg:gap-4">
                 <div className="flex items-start md:items-center gap-2 md:gap-2.5 lg:gap-3 min-w-0">
@@ -247,7 +311,110 @@ function Dashboard() {
                 </div>
               </div>
             </div>
+            {/* ===== Enhanced 9 Hour Timer ===== */}
+<div className="mb-6 flex flex-col lg:flex-row items-center justify-center gap-6">
 
+  {/* LEFT: Circular Progress */}
+  <div className={`relative w-36 h-36 flex items-center justify-center transition-all ${
+  workDetails.overtimeMinutes > 0
+    ? "drop-shadow-[0_0_20px_rgba(239,68,68,0.6)]"
+    : "drop-shadow-[0_0_20px_rgba(242,140,40,0.4)]"
+}`}>
+
+    <svg className="absolute w-full h-full rotate-[-90deg]">
+      <circle
+        cx="72"
+        cy="72"
+        r="60"
+        stroke="#E2E8F0"
+        strokeWidth="10"
+        fill="transparent"
+      />
+
+      <motion.circle
+        cx="72"
+        cy="72"
+        r="60"
+        stroke={
+          workDetails.overtimeMinutes > 0 ? "#ef4444" : "#F28C28"
+        }
+        strokeWidth="10"
+        fill="transparent"
+        strokeLinecap="round"
+        strokeDasharray={2 * Math.PI * 60}
+        strokeDashoffset={
+          2 * Math.PI * 60 *
+          (1 - workDetails.progressPct / 100)
+        }
+        initial={{ strokeDashoffset: 2 * Math.PI * 60 }}
+        animate={{
+          strokeDashoffset:
+            2 * Math.PI * 60 *
+            (1 - workDetails.progressPct / 100),
+        }}
+        transition={{ duration: 0.6 }}
+      />
+    </svg>
+
+    {/* Center Text */}
+    <div className="text-center">
+      <p className="text-xs text-slate-500">Progress</p>
+      <p
+        className={`text-xl font-bold ${
+          workDetails.overtimeMinutes > 0
+            ? "text-red-500"
+            : "text-[#1F3C68]"
+        }`}
+      >
+        {Math.round(workDetails.progressPct)}%
+      </p>
+    </div>
+  </div>
+
+  {/* RIGHT: Big Timer Info */}
+ <div className="flex flex-col items-center lg:items-start text-center lg:text-left">
+
+    <p className="text-xs text-slate-500 mb-1">
+      {workDetails.overtimeMinutes > 0
+        ? "Overtime"
+        : "Remaining Time"}
+    </p>
+
+    <motion.p
+      key={getRemainingTime()}
+      initial={{ scale: 0.95, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      className={`text-3xl lg:text-4xl font-bold tabular-nums tracking-wide ${
+        workDetails.overtimeMinutes > 0
+          ? "text-red-500"
+          : "text-[#1F3C68]"
+      }`}
+    >
+      {getRemainingTime()}
+    </motion.p>
+
+    <div className="flex justify-center lg:justify-start gap-4 mt-3 text-sm">
+      <div>
+        <span className="text-slate-400 text-xs">Regular</span>
+        <p className="font-bold text-green-600">
+          {formatMinutes(workDetails.regularMinutes)}
+        </p>
+      </div>
+      <div>
+        <span className="text-slate-400 text-xs">Overtime</span>
+        <p
+          className={`font-bold ${
+            workDetails.overtimeMinutes > 0
+              ? "text-red-500"
+              : "text-slate-400"
+          }`}
+        >
+          {formatMinutes(workDetails.overtimeMinutes)}
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
             <div className="p-3 md:p-4 lg:p-8">
               {/* Action Buttons */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-4 md:mb-6">
@@ -267,7 +434,7 @@ function Dashboard() {
                 <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={handleLunchOut}
                   disabled={!todayRecord?.timeIn || !!todayRecord?.lunchOut || !!todayRecord?.timeOut}
                   className={`p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
-                    !todayRecord?.timeIn || todayRecord?.lunchOut || todayRecord?.timeOut ? "bg-slate-300 cursor-not-allowed" : "bg-gradient-to-br from-yellow-500 to-secondary"
+                    !todayRecord?.timeIn || todayRecord?.lunchOut || todayRecord?.timeOut ? "bg-slate-300 cursor-not-allowed" : "bg-gradient-to-br from-yellow-500 to-secondary "
                   }`}>
                   <div className="flex flex-col items-center justify-center gap-0.5 md:gap-1">
                     <Clock className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
