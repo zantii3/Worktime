@@ -1,21 +1,20 @@
-import React from "react";
 import { motion } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
-import { useAdmin } from "./context/AdminProvider";
+import React, { useEffect, useMemo, useState } from "react";
 import accounts from "../data/accounts.json";
+import { useAdmin } from "./context/AdminProvider";
 
 import {
-  Clock as ClockIcon,
-  Users as UsersIcon,
-  FileText,
+  CalendarDays,
   CheckCircle2,
   ClipboardList,
-  CalendarDays,
-  Timer as TimerIcon,
-  LogIn,
+  Clock as ClockIcon,
   Coffee,
-  Play,
+  FileText,
+  LogIn,
   LogOut,
+  Play,
+  Timer as TimerIcon,
+  Users as UsersIcon,
 } from "lucide-react";
 
 type Status = "Active" | "Inactive";
@@ -39,6 +38,10 @@ const ATTENDANCE_KEY = "worktime_attendance_v1";
 
 function cx(...classes: Array<string | false | undefined | null>) {
   return classes.filter(Boolean).join(" ");
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
 }
 
 function toISODate(d: Date) {
@@ -76,15 +79,6 @@ function writeAttendance(list: AttendanceRecord[]) {
   }
 }
 
-function msToHMS(ms: number) {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
-  return `${m}m ${String(s).padStart(2, "0")}s`;
-}
-
 function getStatusLabel(r: AttendanceRecord | null) {
   if (!r?.timeIn) return "Not Started";
   if (r.timeOut) return "Clocked Out";
@@ -102,7 +96,6 @@ function computeBreakMsLive(r: AttendanceRecord | null, nowMs: number) {
 /**
  * Work elapsed:
  * (timeOut or now) - timeIn - (break duration)
- * - If break is ongoing, subtract break from lunchOut -> now (or timeOut if ended)
  */
 function computeWorkMsLive(r: AttendanceRecord | null, nowMs: number) {
   if (!r?.timeIn) return 0;
@@ -112,7 +105,6 @@ function computeWorkMsLive(r: AttendanceRecord | null, nowMs: number) {
 
   if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
 
-  // break subtraction
   let breakMs = 0;
   if (r.lunchOut && r.lunchIn) {
     const bo = new Date(r.lunchOut).getTime();
@@ -146,6 +138,66 @@ function getDeviceLabel() {
     : isTabletUA || isTabletViewport
     ? "Tablet"
     : "Desktop";
+}
+
+function msToClockText(ms: number) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function msToHM(ms: number) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+/** Smaller ring + % centered inside */
+function ProgressRing({ pct }: { pct: number }) {
+  const size = 132; // smaller
+  const radius = 44;
+  const stroke = 10;
+  const cxp = size / 2;
+  const cyp = size / 2;
+  const c = 2 * Math.PI * radius;
+  const safePct = clamp(pct, 0, 100);
+  const dash = (safePct / 100) * c;
+
+  return (
+    <div className="relative w-[132px] h-[132px] grid place-items-center">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="block">
+        <circle
+          cx={cxp}
+          cy={cyp}
+          r={radius}
+          fill="none"
+          stroke="rgba(148, 163, 184, 0.25)"
+          strokeWidth={stroke}
+        />
+        <circle
+          cx={cxp}
+          cy={cyp}
+          r={radius}
+          fill="none"
+          stroke="rgba(245, 158, 11, 0.95)"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={`${dash} ${c - dash}`}
+          transform={`rotate(-90 ${cxp} ${cyp})`}
+        />
+      </svg>
+
+      <div className="absolute inset-0 grid place-items-center text-center">
+        <div className="text-[11px] text-text-primary/70 font-semibold leading-none">Progress</div>
+        <div className="mt-1 text-2xl font-extrabold text-[#1F3C68] tabular-nums leading-none">
+          {Math.round(safePct)}%
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -293,7 +345,7 @@ export default function Dashboard() {
     return () => clearInterval(t);
   }, []);
 
-  // tick to force live elapsed timers even if now isn't referenced somewhere else
+  // tick for live timers
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setTick((x) => x + 1), 1000);
@@ -334,7 +386,6 @@ export default function Dashboard() {
   }, []);
 
   const adminEmployeeId = currentAdmin ? String(currentAdmin.id) : "";
-
   const todayISO = useMemo(() => toISODate(now), [now]);
 
   // KPI: Active Users (employees only)
@@ -375,13 +426,18 @@ export default function Dashboard() {
     return statusMap[key] ?? "Active";
   }, [currentAdmin, statusMap]);
 
-  // Live timers
   const statusLabel = getStatusLabel(adminTodayRecord);
   const workMs = useMemo(() => computeWorkMsLive(adminTodayRecord, nowMs), [adminTodayRecord, nowMs, tick]);
   const breakMs = useMemo(() => computeBreakMsLive(adminTodayRecord, nowMs), [adminTodayRecord, nowMs, tick]);
 
-  const isClockedIn = !!adminTodayRecord?.timeIn && !adminTodayRecord?.timeOut;
   const isOnBreak = !!adminTodayRecord?.lunchOut && !adminTodayRecord?.lunchIn && !adminTodayRecord?.timeOut;
+
+  // Remaining time / regular / overtime / progress
+  const SHIFT_MS = 8 * 60 * 60 * 1000; // 8h target
+  const remainingMs = clamp(SHIFT_MS - workMs, 0, SHIFT_MS);
+  const regularMs = clamp(workMs, 0, SHIFT_MS);
+  const overtimeMs = Math.max(0, workMs - SHIFT_MS);
+  const progressPct = SHIFT_MS ? Math.round((regularMs / SHIFT_MS) * 100) : 0;
 
   const upsertAttendance = (patch: Partial<AttendanceRecord>) => {
     if (!adminEmployeeId) return;
@@ -432,7 +488,6 @@ export default function Dashboard() {
     if (!adminTodayRecord?.timeIn || adminTodayRecord?.timeOut) return;
     const nowISO = new Date().toISOString();
     const patch: Partial<AttendanceRecord> = { timeOut: nowISO };
-    // if break ongoing, auto-end it
     if (adminTodayRecord.lunchOut && !adminTodayRecord.lunchIn) patch.lunchIn = nowISO;
     upsertAttendance(patch);
   };
@@ -483,7 +538,7 @@ export default function Dashboard() {
         <KpiCard title="Attendance Today" value={todayAttendanceCount} subtitle={todayISO} icon={CalendarDays} />
       </motion.div>
 
-      {/* ✅ Admin Time Tracking (matches user-side look) */}
+      {/* ✅ Admin Time Tracking */}
       <motion.div
         initial={{ scale: 0.97, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
@@ -518,21 +573,75 @@ export default function Dashboard() {
                 <span className="w-2 h-2 rounded-full bg-current animate-pulse" />
                 <span className="text-lg">{statusLabel}</span>
               </div>
+            </div>
+          </div>
+        </div>
 
-              {/* ✅ Live timers */}
-              <div className="mt-2 text-xs text-white/90 tabular-nums">
-                Work Elapsed: <span className="font-extrabold">{adminTodayRecord?.timeIn ? msToHMS(workMs) : "0m 00s"}</span>
+        {/* Upper aligned section (smaller circle + right cards lower) */}
+        <div className="px-6 sm:px-8 pt-7">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-center">
+            {/* LEFT: Progress Ring */}
+            <div className="flex justify-center lg:justify-start">
+              <div className="relative">
+                <div className="absolute inset-0 -z-10 rounded-full blur-2xl opacity-35 bg-orange-200" />
+                <ProgressRing pct={progressPct} />
               </div>
-              <div className="mt-1 text-[11px] text-white/80 tabular-nums">
-                Break Elapsed: <span className="font-bold">{adminTodayRecord?.lunchOut ? msToHMS(breakMs) : "0m 00s"}</span>
+            </div>
+
+            {/* CENTER: Remaining + Regular/Overtime */}
+            <div className="flex flex-col items-center">
+              <div className="text-center">
+                <div className="text-sm text-text-primary/70 font-semibold">Remaining Time</div>
+                <div className="mt-2 text-5xl font-extrabold tabular-nums tracking-[0.10em] text-[#1F3C68]">
+                  {msToClockText(remainingMs)}
+                </div>
+              </div>
+
+              <div className="mt-5 flex items-center justify-center gap-10">
+                <div className="text-center">
+                  <div className="text-sm text-text-primary/60 font-semibold">Regular</div>
+                  <div className="mt-1 text-xl font-extrabold tabular-nums text-green-600">
+                    {msToHM(regularMs)}
+                  </div>
+                </div>
+
+                <div className="text-center">
+                  <div className="text-sm text-text-primary/60 font-semibold">Overtime</div>
+                  <div className="mt-1 text-xl font-extrabold tabular-nums text-slate-400">
+                    {msToHM(overtimeMs)}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* RIGHT: Elapsed + Break cards (slightly lower) */}
+            <div className="flex justify-center lg:justify-end">
+              <div className="w-full max-w-[520px] grid grid-cols-1 sm:grid-cols-2 gap-4 lg:mt-8">
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 text-center">
+                  <div className="text-sm text-text-primary/70 font-semibold">Elapsed Time</div>
+                  <div className="mt-2 text-3xl font-extrabold tabular-nums tracking-[0.08em] text-[#1F3C68]">
+                    {adminTodayRecord?.timeIn ? msToClockText(workMs) : "00:00:00"}
+                  </div>
+                  <div className="mt-1 text-xs text-text-primary/60">(work, break excluded)</div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 text-center">
+                  <div className="text-sm text-text-primary/70 font-semibold">Break Time</div>
+                  <div className="mt-2 text-3xl font-extrabold tabular-nums tracking-[0.08em] text-secondary">
+                    {adminTodayRecord?.lunchOut ? msToClockText(breakMs) : "00:00:00"}
+                  </div>
+                  <div className="mt-1 text-xs text-text-primary/60">{isOnBreak ? "(running)" : "(stopped)"}</div>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
+        {/* Buttons + details */}
         <div className="p-8">
-          {/* Buttons row (4 big buttons like screenshot) */}
+          {/* Buttons row (with requested colors) */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            {/* Time In - GREEN */}
             <motion.button
               whileHover={{ scale: adminStatus === "Active" && !adminTodayRecord?.timeIn ? 1.02 : 1 }}
               whileTap={{ scale: adminStatus === "Active" && !adminTodayRecord?.timeIn ? 0.98 : 1 }}
@@ -542,7 +651,7 @@ export default function Dashboard() {
                 "h-24 rounded-2xl font-bold shadow-sm transition-all border",
                 adminStatus !== "Active" || adminTodayRecord?.timeIn
                   ? "bg-slate-200/40 border-slate-200 text-slate-400 cursor-not-allowed"
-                  : "bg-slate-200/70 border-slate-200 hover:bg-slate-200 text-white"
+                  : "bg-emerald-600 border-emerald-600 hover:bg-emerald-700 text-white"
               )}
               type="button"
             >
@@ -554,9 +663,26 @@ export default function Dashboard() {
               </div>
             </motion.button>
 
+            {/* Start Break - SECONDARY */}
             <motion.button
-              whileHover={{ scale: adminStatus === "Active" && !!adminTodayRecord?.timeIn && !adminTodayRecord?.lunchOut && !adminTodayRecord?.timeOut ? 1.02 : 1 }}
-              whileTap={{ scale: adminStatus === "Active" && !!adminTodayRecord?.timeIn && !adminTodayRecord?.lunchOut && !adminTodayRecord?.timeOut ? 0.98 : 1 }}
+              whileHover={{
+                scale:
+                  adminStatus === "Active" &&
+                  !!adminTodayRecord?.timeIn &&
+                  !adminTodayRecord?.lunchOut &&
+                  !adminTodayRecord?.timeOut
+                    ? 1.02
+                    : 1,
+              }}
+              whileTap={{
+                scale:
+                  adminStatus === "Active" &&
+                  !!adminTodayRecord?.timeIn &&
+                  !adminTodayRecord?.lunchOut &&
+                  !adminTodayRecord?.timeOut
+                    ? 0.98
+                    : 1,
+              }}
               onClick={doStartBreak}
               disabled={
                 adminStatus !== "Active" ||
@@ -571,18 +697,39 @@ export default function Dashboard() {
                   !!adminTodayRecord?.lunchOut ||
                   !!adminTodayRecord?.timeOut
                   ? "bg-slate-200/40 border-slate-200 text-slate-400 cursor-not-allowed"
-                  : "bg-slate-200/70 border-slate-200 hover:bg-slate-200 text-white"
+                  : "bg-secondary border-secondary hover:opacity-95 text-white"
               )}
               type="button"
             >
               <div className="flex flex-col items-center justify-center gap-2">
-                <Coffee className={cx("w-6 h-6", adminStatus !== "Active" || !adminTodayRecord?.timeIn || !!adminTodayRecord?.lunchOut || !!adminTodayRecord?.timeOut ? "text-slate-400" : "text-white")} />
-                <span className={cx("text-lg", adminStatus !== "Active" || !adminTodayRecord?.timeIn || !!adminTodayRecord?.lunchOut || !!adminTodayRecord?.timeOut ? "text-slate-400" : "text-white")}>
+                <Coffee
+                  className={cx(
+                    "w-6 h-6",
+                    adminStatus !== "Active" ||
+                      !adminTodayRecord?.timeIn ||
+                      !!adminTodayRecord?.lunchOut ||
+                      !!adminTodayRecord?.timeOut
+                      ? "text-slate-400"
+                      : "text-white"
+                  )}
+                />
+                <span
+                  className={cx(
+                    "text-lg",
+                    adminStatus !== "Active" ||
+                      !adminTodayRecord?.timeIn ||
+                      !!adminTodayRecord?.lunchOut ||
+                      !!adminTodayRecord?.timeOut
+                      ? "text-slate-400"
+                      : "text-white"
+                  )}
+                >
                   Start Break
                 </span>
               </div>
             </motion.button>
 
+            {/* End Break - PRIMARY */}
             <motion.button
               whileHover={{ scale: adminStatus === "Active" && isOnBreak ? 1.02 : 1 }}
               whileTap={{ scale: adminStatus === "Active" && isOnBreak ? 0.98 : 1 }}
@@ -592,7 +739,7 @@ export default function Dashboard() {
                 "h-24 rounded-2xl font-bold shadow-sm transition-all border",
                 adminStatus !== "Active" || !isOnBreak
                   ? "bg-slate-200/40 border-slate-200 text-slate-400 cursor-not-allowed"
-                  : "bg-slate-200/70 border-slate-200 hover:bg-slate-200 text-white"
+                  : "bg-primary border-primary hover:opacity-95 text-white"
               )}
               type="button"
             >
@@ -604,9 +751,14 @@ export default function Dashboard() {
               </div>
             </motion.button>
 
+            {/* Time Out - RED */}
             <motion.button
-              whileHover={{ scale: adminStatus === "Active" && !!adminTodayRecord?.timeIn && !adminTodayRecord?.timeOut ? 1.02 : 1 }}
-              whileTap={{ scale: adminStatus === "Active" && !!adminTodayRecord?.timeIn && !adminTodayRecord?.timeOut ? 0.98 : 1 }}
+              whileHover={{
+                scale: adminStatus === "Active" && !!adminTodayRecord?.timeIn && !adminTodayRecord?.timeOut ? 1.02 : 1,
+              }}
+              whileTap={{
+                scale: adminStatus === "Active" && !!adminTodayRecord?.timeIn && !adminTodayRecord?.timeOut ? 0.98 : 1,
+              }}
               onClick={doTimeOut}
               disabled={adminStatus !== "Active" || !adminTodayRecord?.timeIn || !!adminTodayRecord?.timeOut}
               className={cx(
@@ -618,8 +770,22 @@ export default function Dashboard() {
               type="button"
             >
               <div className="flex flex-col items-center justify-center gap-2">
-                <LogOut className={cx("w-6 h-6", adminStatus !== "Active" || !adminTodayRecord?.timeIn || !!adminTodayRecord?.timeOut ? "text-slate-400" : "text-white")} />
-                <span className={cx("text-lg", adminStatus !== "Active" || !adminTodayRecord?.timeIn || !!adminTodayRecord?.timeOut ? "text-slate-400" : "text-white")}>
+                <LogOut
+                  className={cx(
+                    "w-6 h-6",
+                    adminStatus !== "Active" || !adminTodayRecord?.timeIn || !!adminTodayRecord?.timeOut
+                      ? "text-slate-400"
+                      : "text-white"
+                  )}
+                />
+                <span
+                  className={cx(
+                    "text-lg",
+                    adminStatus !== "Active" || !adminTodayRecord?.timeIn || !!adminTodayRecord?.timeOut
+                      ? "text-slate-400"
+                      : "text-white"
+                  )}
+                >
                   Time Out
                 </span>
               </div>
@@ -632,33 +798,14 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Details tiles row (6 tiles like user dashboard) */}
+          {/* Details tiles row */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             <TimeDetailTile label="Time In" value={formatTimeLocal(adminTodayRecord?.timeIn ?? null)} tone="blue" />
             <TimeDetailTile label="Start Break" value={formatTimeLocal(adminTodayRecord?.lunchOut ?? null)} tone="orange" />
             <TimeDetailTile label="End Break" value={formatTimeLocal(adminTodayRecord?.lunchIn ?? null)} tone="orange" />
             <TimeDetailTile label="Time Out" value={formatTimeLocal(adminTodayRecord?.timeOut ?? null)} tone="red" />
-            <TimeDetailTile
-              label="Elapsed Time"
-              value={adminTodayRecord?.timeIn ? msToHMS(workMs) : "--:--"}
-              tone="yellow"
-              sub="(Work time, break excluded)"
-            />
-            <TimeDetailTile
-              label="Device"
-              value={adminTodayRecord?.source ?? getDeviceLabel()}
-              tone="slate"
-              sub={currentAdmin?.name ? `Admin: ${currentAdmin.name}` : undefined}
-            />
-          </div>
-
-          {/* Small break timer helper (requested “under first timer”) */}
-          <div className="mt-4 text-xs text-slate-600 tabular-nums">
-            Break timer:{" "}
-            <span className="font-bold text-slate-800">
-              {adminTodayRecord?.lunchOut ? msToHMS(breakMs) : "0m 00s"}
-            </span>{" "}
-            {isOnBreak ? <span className="ml-2 font-semibold text-amber-700">(running)</span> : null}
+            <TimeDetailTile label="Elapsed Time" value={adminTodayRecord?.timeIn ? msToClockText(workMs) : "--:--"} tone="yellow" sub="(Work time, break excluded)" />
+            <TimeDetailTile label="Device" value={adminTodayRecord?.source ?? getDeviceLabel()} tone="slate" sub={currentAdmin?.name ? `Admin: ${currentAdmin.name}` : undefined} />
           </div>
         </div>
       </motion.div>
