@@ -25,6 +25,7 @@ interface Task {
   status: TaskStatus;
   dueDate: string;
   createdAt: string;
+  assignedTo: string; 
 }
 
 const TASKS_KEY = "worktime_tasks_v1";
@@ -132,10 +133,10 @@ function TaskPage() {
 
   const [tasks, setTasks] = useState<Task[]>(() => {
   const raw = localStorage.getItem(TASKS_KEY);
-  const all: any[] = raw ? JSON.parse(raw) : [];
+  const all: Task[] = raw ? JSON.parse(raw) : [];
   // show only tasks assigned to this logged-in user (by name)
   return Array.isArray(all)
-    ? all.filter((t) => t?.assignedTo === user?.name)
+    ? all.filter((t) => t.assignedTo === user?.name)
     : [];
 });
 
@@ -144,7 +145,7 @@ function TaskPage() {
   setTasks(updated);
 
   const raw = localStorage.getItem(TASKS_KEY);
-  const all: any[] = raw ? JSON.parse(raw) : [];
+  const all: Task[] = raw ? JSON.parse(raw) : [];
   const safeAll = Array.isArray(all) ? all : [];
 
   // remove old tasks for this user, then add updated tasks for this user
@@ -156,13 +157,19 @@ function TaskPage() {
 
 
   const filteredTasks = useMemo(() => {
-    return tasks.filter((t) => {
-      const matchStatus =
-        activeStatus === "All" || t.status === activeStatus;
+    const filtered = tasks.filter((t) => {
+      const matchStatus = activeStatus === "All" || t.status === activeStatus;
       const matchPriority =
         priorityFilter === "All" || t.priority === priorityFilter;
       return matchStatus && matchPriority;
     });
+  
+    const statusOrder: Record<TaskStatus, number> = {
+      Pending: 0,
+      "In Progress": 1,
+      Completed: 2,
+    };
+    return filtered.sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
   }, [tasks, activeStatus, priorityFilter]);
 
   const total = tasks.length;
@@ -175,6 +182,13 @@ function TaskPage() {
     const updated = tasks.map((t) => (t.id === id ? { ...t, status } : t));
     saveTasks(updated);
   };
+
+  // Add this inside TaskPage, above the return
+const advanceStatus = (task: Task): TaskStatus => {
+  if (task.status === "Pending") return "In Progress";
+  if (task.status === "In Progress") return "Completed";
+  return "Completed"; // already completed
+};
 
   const handleLogout = () => {
     localStorage.removeItem("currentUser");
@@ -457,12 +471,17 @@ function TaskPage() {
                         {/* Complete button */}
                         {task.status !== "Completed" ? (
                           <button
-                            onClick={() => updateStatus(task.id, "Completed")}
-                            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-green-50 text-green-500 transition-all"
-                            title="Mark complete"
-                          >
-                            <CheckCircle2 className="w-4.5 h-4.5" />
-                          </button>
+  onClick={() => updateStatus(task.id, advanceStatus(task))}
+  className={`p-1.5 rounded-lg transition-all ${
+    task.status === "Pending"
+      ? "bg-yellow-50 text-yellow-500 hover:bg-yellow-100"
+      : task.status === "In Progress"
+      ? "bg-blue-50 text-blue-500 hover:bg-blue-100"
+      : "bg-green-50 text-green-500"
+  }`}
+>
+  <CheckCircle2 className="w-4.5 h-4.5" />
+</button>
                         ) : (
                           <CheckCircle2 className="w-4.5 h-4.5 text-green-400" />
                         )}

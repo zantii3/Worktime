@@ -1,53 +1,95 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, Clock, CheckCircle2, XCircle, Clock3, ChevronDown, Paperclip, Send, FileUser, FileClock} from "lucide-react";
+import {
+  Menu,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  Clock3,
+  ChevronDown,
+  Paperclip,
+  Send,
+  FileUser,
+  FileClock,
+} from "lucide-react";
 import { useClock } from "./hooks/useClock";
 import Usersidebar from "./components/Usersidebar.tsx";
-import type { LeaveRequest, LeaveType, LeaveStatus, LeavePolicy } from "./types/leavetypes";
+import type {
+  LeaveRequest,
+  LeaveType,
+  LeaveStatus,
+  LeavePolicy,
+} from "./types/leavetypes";
 import { STORAGE_KEY, POLICY_STORAGE_KEY, defaultLeavePolicy } from "./types/leaveconstants";
 import { showError, showSuccess } from "./utils/toast";
+
+interface LeaveForm {
+  type: LeaveType;
+  dateFrom: string;
+  dateTo: string;
+  reason: string;
+}
+
+const ALL_LEAVES_KEY = STORAGE_KEY; // Shared key for admin and user
 
 function Leave() {
   const location = useLocation();
   const navigate = useNavigate();
-  const user = location.state?.user || JSON.parse(localStorage.getItem("currentUser") || "null");
+  const user =
+    location.state?.user ||
+    JSON.parse(localStorage.getItem("currentUser") || "null");
+
   const currentTime = useClock();
   const [menuOpen, setMenuOpen] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
   const [formError, setFormError] = useState("");
   const [fileName, setFileName] = useState("");
   const [activeTab, setActiveTab] = useState<"All" | LeaveStatus>("All");
-  const [form, setForm] = useState({
-    type: "Vacation Leave" as LeaveType,
-    startDate: "",
-    endDate: "",
+
+  const [form, setForm] = useState<LeaveForm>({
+    type: "Vacation Leave",
+    dateFrom: "",
+    dateTo: "",
     reason: "",
   });
 
-  // Lazy init from localStorage
+  // Lazy init from shared localStorage - filter to current user
   const [leaves, setLeaves] = useState<LeaveRequest[]>(() => {
-    if (typeof window === "undefined") return [];
-    const stored = localStorage.getItem(`${STORAGE_KEY}_${user?.id || "user"}`);
-    if (stored) return JSON.parse(stored);
-    return [];
+    const stored = localStorage.getItem(ALL_LEAVES_KEY);
+    if (!stored) return [];
+    try {
+      const parsed: LeaveRequest[] = JSON.parse(stored);
+      return parsed.filter((l) => l.employee === user?.name);
+    } catch {
+      return [];
+    }
   });
+
+  // Listen for admin updates (works across tabs/windows)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key !== ALL_LEAVES_KEY) return;
+      try {
+        const updated: LeaveRequest[] = e.newValue ? JSON.parse(e.newValue) : [];
+        setLeaves(updated.filter((l) => l.employee === user?.name));
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, [user?.name]);
 
   // Load leave policy from localStorage
   const [leavePolicy] = useState<LeavePolicy[]>(() => {
-    if (typeof window === "undefined") return defaultLeavePolicy;
-    const stored = localStorage.getItem(`${POLICY_STORAGE_KEY}_${user?.id || "user"}`);
+    const stored = localStorage.getItem(
+      `${POLICY_STORAGE_KEY}_${user?.id || "user"}`
+    );
     if (stored) return JSON.parse(stored);
     return defaultLeavePolicy;
   });
-
-  const saveLeaves = (updated: LeaveRequest[]) => {
-    setLeaves(updated);
-    localStorage.setItem(
-      `${STORAGE_KEY}_${user?.id || "user"}`,
-      JSON.stringify(updated)
-    );
-  };
 
   const leaveTypes: LeaveType[] = [
     "Vacation Leave",
@@ -55,13 +97,6 @@ function Leave() {
     "Emergency Leave",
     "Maternity/Paternity Leave",
   ];
-
-  // Calculate used days from approved leaves only
-  const getUsedDays = (leaveType: LeaveType) => {
-    return leaves
-      .filter((l) => l.status === "Approved" && l.type === leaveType)
-      .reduce((sum, l) => sum + l.days, 0);
-  };
 
   const calculateDays = (start: string, end: string) => {
     if (!start || !end) return 0;
@@ -73,18 +108,25 @@ function Leave() {
     return diff > 0 ? diff : 0;
   };
 
+  // Calculate used days from approved leaves only
+  const getUsedDays = (leaveType: LeaveType) => {
+    return leaves
+      .filter((l) => l.status === "Approved" && l.type === leaveType)
+      .reduce((sum, l) => sum + l.days, 0);
+  };
+
   const handleSubmit = () => {
-    if (!form.startDate || !form.endDate || !form.reason.trim()) {
+    if (!form.dateFrom || !form.dateTo || !form.reason.trim()) {
       showError("Please fill in all fields.");
       return;
     }
 
-    if (new Date(form.endDate) < new Date(form.startDate)) {
+    if (new Date(form.dateTo) < new Date(form.dateFrom)) {
       showError("End date cannot be before start date.");
       return;
     }
 
-    const days = calculateDays(form.startDate, form.endDate);
+    const days = calculateDays(form.dateFrom, form.dateTo);
 
     const approvedDays = getUsedDays(form.type);
     const policy = leavePolicy.find((p) => p.type === form.type);
@@ -92,7 +134,9 @@ function Leave() {
     if (policy) {
       const remaining = policy.total - approvedDays;
       if (days > remaining) {
-        showError(`Insufficient leave balance. You only have ${remaining} days remaining for ${form.type}.`);
+        showError(
+          `Insufficient leave balance. You only have ${remaining} days remaining for ${form.type}.`
+        );
         return;
       }
     }
@@ -102,9 +146,10 @@ function Leave() {
 
     const newLeave: LeaveRequest = {
       id: Date.now(),
+      employee: user?.name ?? "Unknown",
       type: form.type,
-      startDate: form.startDate,
-      endDate: form.endDate,
+      startDate: form.dateFrom,
+      endDate: form.dateTo,
       reason: form.reason,
       status: "Pending",
       appliedOn: new Date().toISOString().split("T")[0],
@@ -112,10 +157,16 @@ function Leave() {
       fileName: fileName || undefined,
     };
 
-    // Save locally; approval flow will deduct balances later
-    saveLeaves([newLeave, ...leaves]);
+    // Read ALL leaves, append new one, write back to shared key
+    const storedAll = localStorage.getItem(ALL_LEAVES_KEY);
+    const allLeaves: LeaveRequest[] = storedAll ? JSON.parse(storedAll) : [];
+    const updatedAllLeaves = [newLeave, ...allLeaves];
+    localStorage.setItem(ALL_LEAVES_KEY, JSON.stringify(updatedAllLeaves));
 
-    setForm({ type: "Vacation Leave", startDate: "", endDate: "", reason: "" });
+    // Update local UI (user-only filtered)
+    setLeaves((prev) => [newLeave, ...prev]);
+
+    setForm({ type: "Vacation Leave", dateFrom: "", dateTo: "", reason: "" });
     setFileName("");
     setFormError("");
 
@@ -170,7 +221,7 @@ function Leave() {
               onClick={() => setMenuOpen(false)}
               className="fixed inset-0 bg-black/30 z-40 md:hidden"
             />
-              <motion.aside
+            <motion.aside
               initial={{ x: -280 }}
               animate={{ x: 0 }}
               exit={{ x: -280 }}
@@ -199,6 +250,7 @@ function Leave() {
             <button
               className="md:hidden p-2 hover:bg-slate-100 rounded-lg transition-colors"
               onClick={() => setMenuOpen(true)}
+              type="button"
             >
               <Menu className="text-[#1F3C68]" />
             </button>
@@ -216,6 +268,7 @@ function Leave() {
               </p>
             </div>
           </div>
+
           <div className="hidden md:flex lg:hidden items-center gap-2 bg-primary text-white px-3 py-2 rounded-lg shadow-lg md:w-[92px]">
             <Clock className="w-4 h-4" />
             <p className="font-bold text-xs tabular-nums">
@@ -238,7 +291,7 @@ function Leave() {
           </div>
         </motion.div>
 
-        {/* ── SECTION 1: Leave Balance Cards (top row like the screenshot) ── */}
+        {/* Leave Balance Cards */}
         <motion.div
           initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
@@ -291,7 +344,7 @@ function Leave() {
           })}
         </motion.div>
 
-        {/* ── SECTION 2: File a Leave Request (inline form like screenshot) ── */}
+        {/* File a Leave Request */}
         <motion.div
           initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
@@ -313,7 +366,6 @@ function Leave() {
           </div>
 
           <div className="p-6 md:p-8">
-            {/* Row 1: Leave Type + Supporting Document */}
             <div className="grid md:grid-cols-2 gap-5 mb-5">
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
@@ -352,15 +404,12 @@ function Leave() {
                   <input
                     type="file"
                     className="hidden"
-                    onChange={(e) =>
-                      setFileName(e.target.files?.[0]?.name || "")
-                    }
+                    onChange={(e) => setFileName(e.target.files?.[0]?.name || "")}
                   />
                 </label>
               </div>
             </div>
 
-            {/* Row 2: Date From + Date To */}
             <div className="grid md:grid-cols-2 gap-5 mb-5">
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
@@ -368,10 +417,8 @@ function Leave() {
                 </label>
                 <input
                   type="date"
-                  value={form.startDate}
-                  onChange={(e) =>
-                    setForm({ ...form, startDate: e.target.value })
-                  }
+                  value={form.dateFrom}
+                  onChange={(e) => setForm({ ...form, dateFrom: e.target.value })}
                   className="w-full bg-slate-50 border border-slate-200 text-slate-800 px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F28C28]/40 focus:border-[#F28C28] transition-all"
                 />
               </div>
@@ -381,30 +428,23 @@ function Leave() {
                 </label>
                 <input
                   type="date"
-                  value={form.endDate}
-                  onChange={(e) =>
-                    setForm({ ...form, endDate: e.target.value })
-                  }
+                  value={form.dateTo}
+                  onChange={(e) => setForm({ ...form, dateTo: e.target.value })}
                   className="w-full bg-slate-50 border border-slate-200 text-slate-800 px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F28C28]/40 focus:border-[#F28C28] transition-all"
                 />
               </div>
             </div>
 
-            {/* Day count preview */}
-            {form.startDate &&
-              form.endDate &&
-              calculateDays(form.startDate, form.endDate) > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="mb-5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-primary font-medium"
-                >
-                  📅 {calculateDays(form.startDate, form.endDate)} day(s) of
-                  leave
-                </motion.div>
-              )}
+            {form.dateFrom && form.dateTo && calculateDays(form.dateFrom, form.dateTo) > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-primary font-medium"
+              >
+                📅 {calculateDays(form.dateFrom, form.dateTo)} day(s) of leave
+              </motion.div>
+            )}
 
-            {/* Row 3: Reason */}
             <div className="mb-5">
               <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
                 Reason
@@ -418,7 +458,6 @@ function Leave() {
               />
             </div>
 
-            {/* Error */}
             {formError && (
               <motion.p
                 initial={{ opacity: 0, y: -4 }}
@@ -429,12 +468,12 @@ function Leave() {
               </motion.p>
             )}
 
-            {/* Submit */}
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleSubmit}
               className="relative overflow-hidden flex items-center gap-2 px-8 py-3 rounded-xl bg-primary text-white font-bold shadow-lg hover:shadow-xl hover:shadow-orange-500/30 transition-all"
+              type="button"
             >
               {isAnimating && (
                 <motion.div
@@ -450,7 +489,7 @@ function Leave() {
           </div>
         </motion.div>
 
-        {/* ── SECTION 3: Pending Requests List ── */}
+        {/* Pending Requests */}
         {pendingLeaves.length > 0 && (
           <motion.div
             initial={{ scale: 0.95, opacity: 0 }}
@@ -464,9 +503,7 @@ function Leave() {
                   <Clock3 className="w-5 h-5 text-primary" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-[#1F3C68]">
-                    Pending Requests
-                  </h2>
+                  <h2 className="text-lg font-bold text-[#1F3C68]">Pending Requests</h2>
                   <p className="text-xs text-slate-500">Awaiting approval</p>
                 </div>
               </div>
@@ -474,6 +511,7 @@ function Leave() {
                 {pendingLeaves.length}
               </span>
             </div>
+
             <div className="divide-y divide-slate-50">
               {pendingLeaves.map((leave, index) => (
                 <motion.div
@@ -485,23 +523,20 @@ function Leave() {
                 >
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="font-semibold text-[#1F3C68]">
-                        {leave.type}
-                      </span>
+                      <span className="font-semibold text-[#1F3C68]">{leave.type}</span>
                       <span className="text-xs bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full font-medium">
                         {leave.days}d
                       </span>
                     </div>
                     <p className="text-sm text-slate-500">
                       {formatDate(leave.startDate)}
-                      {leave.startDate !== leave.endDate &&
-                        ` — ${formatDate(leave.endDate)}`}
+                      {leave.startDate !== leave.endDate && ` — ${formatDate(leave.endDate)}`}
                     </p>
                     <p className="text-xs text-slate-400 mt-0.5 truncate max-w-xs">
                       {leave.reason}
                     </p>
                   </div>
-                  {/* Status indicator only - no action buttons */}
+
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-100 text-primary border border-amber-200 text-sm font-semibold">
                       <Clock3 className="w-4 h-4" />
@@ -514,7 +549,7 @@ function Leave() {
           </motion.div>
         )}
 
-        {/* ── SECTION 4: All Leave History ── */}
+        {/* Leave History */}
         <motion.div
           initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
@@ -527,28 +562,26 @@ function Leave() {
                 <FileClock className="w-6 h-6 text-[#1F3C68]" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-[#1F3C68]">
-                  Leave History
-                </h2>
+                <h2 className="text-xl font-bold text-[#1F3C68]">Leave History</h2>
                 <p className="text-sm text-slate-500">All your leave requests</p>
               </div>
             </div>
+
             <div className="flex gap-2 flex-wrap justify-end">
-              {(["All", "Pending", "Approved", "Rejected"] as const).map(
-                (s) => (
-                  <button
-                    key={s}
-                    onClick={() => setActiveTab(s)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                      activeTab === s
-                        ? "bg-[#E97638] text-white shadow"
-                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                    }`}
-                  >
-                    {s}
-                  </button>
-                )
-              )}
+              {(["All", "Pending", "Approved", "Rejected"] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setActiveTab(s)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === s
+                      ? "bg-[#E97638] text-white shadow"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                  type="button"
+                >
+                  {s}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -589,23 +622,16 @@ function Leave() {
                         className="hover:bg-slate-50/80 transition-colors"
                       >
                         <td className="py-4 pr-4">
-                          <span className="font-semibold text-[#1F3C68]">
-                            {leave.type}
-                          </span>
+                          <span className="font-semibold text-[#1F3C68]">{leave.type}</span>
                         </td>
                         <td className="py-4 pr-4 text-slate-600 whitespace-nowrap">
                           {formatDate(leave.startDate)}
                           {leave.startDate !== leave.endDate && (
-                            <span className="text-slate-400">
-                              {" "}
-                              — {formatDate(leave.endDate)}
-                            </span>
+                            <span className="text-slate-400"> — {formatDate(leave.endDate)}</span>
                           )}
                         </td>
                         <td className="py-4 pr-4 hidden md:table-cell">
-                          <span className="font-bold text-[#e97638]">
-                            {leave.days}d
-                          </span>
+                          <span className="font-bold text-[#e97638]">{leave.days}d</span>
                         </td>
                         <td className="py-4 pr-4 text-slate-500 hidden md:table-cell max-w-[180px] truncate">
                           {leave.reason}

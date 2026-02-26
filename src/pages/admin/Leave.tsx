@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import AdminTable from "./components/AdminTable";
-import { useAdmin } from "./context/AdminProvider";
 import type { LeaveRequest, LeaveStatus, LeaveType } from "./context/AdminTypes";
 import { notifyError, notifySuccess } from "./utils/toast";
+import { STORAGE_KEY } from "../user/types/leaveconstants";
 
 type LeaveForm = Omit<LeaveRequest, "id">;
 
@@ -12,6 +12,7 @@ const createId = (): number => Date.now() + Math.floor(Math.random() * 1000);
 const FILTERS = ["All", "Pending", "Approved", "Rejected"] as const;
 type Filter = (typeof FILTERS)[number];
 
+// Keep types aligned with user side values
 const LEAVE_TYPES: LeaveType[] = [
   "Vacation",
   "Sick",
@@ -20,10 +21,10 @@ const LEAVE_TYPES: LeaveType[] = [
 ];
 
 const LEAVE_TYPE_LABEL: Record<LeaveType, string> = {
-  Vacation: "Vacation Leave",
-  Sick: "Sick Leave",
-  Emergency: "Emergency Leave",
-  "Maternity/Paternity": "Maternity/Paternity Leave",
+  "Vacation Leave": "Vacation Leave",
+  "Sick Leave": "Sick Leave",
+  "Emergency Leave": "Emergency Leave",
+  "Maternity/Paternity Leave": "Maternity/Paternity Leave",
 };
 
 function formatFullDate(now: Date) {
@@ -63,11 +64,44 @@ function statusPillClass(status: LeaveStatus) {
     Approved: "bg-green-50 text-green-700 border-green-200",
     Rejected: "bg-red-50 text-red-700 border-red-200",
   };
-  return `${base} ${map[status] ?? "bg-soft text-text-primary border-slate-200"}`;
+  return `${base} ${map[status] ?? map.Pending}`;
 }
 
+// Use same key as user side
+const ALL_LEAVES_KEY = STORAGE_KEY;
+
 export default function Leave() {
-  const { leaves, setLeaves } = useAdmin();
+  // Load leaves from shared localStorage
+  const [leaves, setLeaves] = useState<LeaveRequest[]>(() => {
+    const stored = localStorage.getItem(ALL_LEAVES_KEY);
+    if (!stored) return [];
+    try {
+      return JSON.parse(stored);
+    } catch {
+      return [];
+    }
+  });
+
+  // Persist leaves to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem(ALL_LEAVES_KEY, JSON.stringify(leaves));
+  }, [leaves]);
+
+  // Listen for storage changes from user/other tabs
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key !== ALL_LEAVES_KEY) return;
+      try {
+        const updated: LeaveRequest[] = e.newValue ? JSON.parse(e.newValue) : [];
+        setLeaves(updated);
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
 
   const [now, setNow] = useState<Date>(new Date());
   useEffect(() => {
@@ -80,7 +114,7 @@ export default function Leave() {
 
   const [form, setForm] = useState<LeaveForm>({
     employee: "",
-    type: "Vacation",
+    type: "Vacation Leave",
     dateFrom: "",
     dateTo: "",
     reason: "",
@@ -113,14 +147,15 @@ export default function Leave() {
   const cardStats = useMemo(() => {
     const init = () => ({ total: 0, pending: 0, approved: 0, rejected: 0 });
     const byType: Record<LeaveType, ReturnType<typeof init>> = {
-      Vacation: init(),
-      Sick: init(),
-      Emergency: init(),
-      "Maternity/Paternity": init(),
+      "Vacation Leave": init(),
+      "Sick Leave": init(),
+      "Emergency Leave": init(),
+      "Maternity/Paternity Leave": init(),
     };
 
     for (const l of normalizedLeaves) {
       const bucket = byType[l.type];
+      if (!bucket) continue;
       bucket.total += 1;
       if (l.status === "Pending") bucket.pending += 1;
       if (l.status === "Approved") bucket.approved += 1;
@@ -131,7 +166,9 @@ export default function Leave() {
   }, [normalizedLeaves]);
 
   const onChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+    >
   ) => {
     const { name, value } = e.target;
     setForm((p) => ({ ...p, [name]: value }));
@@ -150,7 +187,7 @@ export default function Leave() {
   const reset = () => {
     setForm({
       employee: "",
-      type: "Vacation",
+      type: "Vacation Leave",
       dateFrom: "",
       dateTo: "",
       reason: "",
@@ -267,31 +304,31 @@ export default function Leave() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <LeaveSummaryCard
           title="VACATION LEAVE"
-          value={cardStats.Vacation.total}
-          breakdown={cardStats.Vacation}
-          active={typeFilter === "Vacation"}
-          onClick={() => openType("Vacation")}
+          value={cardStats["Vacation Leave"].total}
+          breakdown={cardStats["Vacation Leave"]}
+          active={typeFilter === "Vacation Leave"}
+          onClick={() => openType("Vacation Leave")}
         />
         <LeaveSummaryCard
           title="SICK LEAVE"
-          value={cardStats.Sick.total}
-          breakdown={cardStats.Sick}
-          active={typeFilter === "Sick"}
-          onClick={() => openType("Sick")}
+          value={cardStats["Sick Leave"].total}
+          breakdown={cardStats["Sick Leave"]}
+          active={typeFilter === "Sick Leave"}
+          onClick={() => openType("Sick Leave")}
         />
         <LeaveSummaryCard
           title="EMERGENCY LEAVE"
-          value={cardStats.Emergency.total}
-          breakdown={cardStats.Emergency}
-          active={typeFilter === "Emergency"}
-          onClick={() => openType("Emergency")}
+          value={cardStats["Emergency Leave"].total}
+          breakdown={cardStats["Emergency Leave"]}
+          active={typeFilter === "Emergency Leave"}
+          onClick={() => openType("Emergency Leave")}
         />
         <LeaveSummaryCard
           title="MATERNITY/PATERNITY LEAVE"
-          value={cardStats["Maternity/Paternity"].total}
-          breakdown={cardStats["Maternity/Paternity"]}
-          active={typeFilter === "Maternity/Paternity"}
-          onClick={() => openType("Maternity/Paternity")}
+          value={cardStats["Maternity/Paternity Leave"].total}
+          breakdown={cardStats["Maternity/Paternity Leave"]}
+          active={typeFilter === "Maternity/Paternity Leave"}
+          onClick={() => openType("Maternity/Paternity Leave")}
         />
       </div>
 
@@ -512,9 +549,7 @@ export default function Leave() {
               <div className="text-2xl font-extrabold leading-tight">
                 {editingId ? "Update a Leave Request" : "File a Leave Request"}
               </div>
-              <div className="text-sm opacity-90">
-                Complete the form below to submit
-              </div>
+              <div className="text-sm opacity-90">Complete the form below to submit</div>
             </div>
           </div>
         </div>

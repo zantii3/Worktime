@@ -1,18 +1,18 @@
 import type { LeavePolicy } from "./leavetypes";
 
-export const STORAGE_KEY = "leave_requests";
+export const STORAGE_KEY = "all_leaves_v1";
 export const POLICY_STORAGE_KEY = "leave_policy";
 
 export const defaultLeavePolicy: LeavePolicy[] = [
   {
     type: "Vacation Leave",
-    total: 15,
+    total: 10,
     color: "bg-[#F28C28]",
     textColor: "text-[#F28C28]",
   },
   {
     type: "Sick Leave",
-    total: 15,
+    total: 10,
     color: "bg-green-500",
     textColor: "text-green-500",
   },
