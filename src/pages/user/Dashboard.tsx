@@ -6,6 +6,7 @@ import { useClock } from "./hooks/useClock";
 import { useAttendance } from "./hooks/useAttendance";
 import type { TimeRecord } from "./hooks/useAttendance";
 import Usersidebar from "./components/Usersidebar.tsx";
+import { STORAGE_KEY } from "./types/leaveconstants";
 
 type TaskStatus = "Pending" | "In Progress" | "Completed";
 
@@ -27,7 +28,6 @@ function Dashboard() {
   const currentTime = useClock();
 
   const [menuOpen, setMenuOpen] = useState(false);
-  const [pendingLeavesCount, setPendingLeavesCount] = useState(0);
 
   // ── Real task counts from localStorage (same key as TaskPage) ──
   const [taskCounts, setTaskCounts] = useState({
@@ -37,17 +37,24 @@ function Dashboard() {
     total: 0,
   });
 
+  // Task storage key - same as Tasks.tsx
+  const TASKS_KEY = "worktime_tasks_v1";
+
   useEffect(() => {
     const loadTaskCounts = () => {
-      const stored = localStorage.getItem(`tasks_${user?.id || "user"}`);
+      const stored = localStorage.getItem(TASKS_KEY);
       if (stored) {
         try {
-          const tasks: Task[] = JSON.parse(stored);
+          const allTasks: Task[] = JSON.parse(stored);
+          // Filter tasks assigned to this user (same logic as Tasks.tsx)
+          const userTasks = Array.isArray(allTasks)
+            ? allTasks.filter((t) => t.assignedTo === user?.name)
+            : [];
           setTaskCounts({
-            pending: tasks.filter((t) => t.status === "Pending").length,
-            inProgress: tasks.filter((t) => t.status === "In Progress").length,
-            completed: tasks.filter((t) => t.status === "Completed").length,
-            total: tasks.length,
+            pending: userTasks.filter((t) => t.status === "Pending").length,
+            inProgress: userTasks.filter((t) => t.status === "In Progress").length,
+            completed: userTasks.filter((t) => t.status === "Completed").length,
+            total: userTasks.length,
           });
         } catch {
           // skip invalid data
@@ -61,7 +68,7 @@ function Dashboard() {
     // Poll every 2s so changes from TaskPage reflect immediately
     const interval = setInterval(loadTaskCounts, 2000);
     return () => clearInterval(interval);
-  }, [user?.id]);
+  }, [user?.name]);
 
   const completionPct = taskCounts.total
     ? Math.round((taskCounts.completed / taskCounts.total) * 100)
@@ -87,8 +94,7 @@ const workDetails = calculateWorkDetails();
   const formatMinutes = (minutes: number) => {
     const hrs = Math.floor(minutes / 60);
     const mins = minutes % 60;
-    return `${String(hrs).padStart(2, "0")}:
-${String(mins).padStart(2, "0")}`;
+    return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
   };
 
   const formatMs = (ms: number) => {
@@ -96,9 +102,7 @@ ${String(mins).padStart(2, "0")}`;
     const hrs = Math.floor(totalSeconds / 3600);
     const mins = Math.floor((totalSeconds % 3600) / 60);
     const secs = totalSeconds % 60;
-    return `${String(hrs).padStart(2, "0")}:
-${String(mins).padStart(2, "0")}:
-${String(secs).padStart(2, "0")}`;
+    return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
 
   const getRemainingTime = () => {
@@ -140,25 +144,52 @@ ${String(secs).padStart(2, "0")}`;
     return () => window.removeEventListener("resize", handleResize);
   }, [setTodayRecord]);
 
+  // ── Pending Leave Count by Type ──
+  const [pendingLeavesByType, setPendingLeavesByType] = useState<Record<string, number>>({
+    "Vacation Leave": 0,
+    "Sick Leave": 0,
+    "Emergency Leave": 0,
+    "Maternity/Paternity Leave": 0,
+  });
+  const totalPendingLeaves = Object.values(pendingLeavesByType).reduce((a, b) => a + b, 0);
+
   useEffect(() => {
     const loadPendingLeaves = () => {
-      const leaveRequests = localStorage.getItem(`leave_requests_${user?.id || "user"}`);
+      // Use same storage key as Leave.tsx
+      const leaveRequests = localStorage.getItem(STORAGE_KEY);
       if (leaveRequests) {
         try {
-          const leaves = JSON.parse(leaveRequests);
-          const pending = leaves.filter((l: { status: string }) => l.status === "Pending").length;
-          setPendingLeavesCount(pending);
+          const allLeaves = JSON.parse(leaveRequests);
+          // Filter by current user name (same logic as Leave.tsx)
+          const userLeaves = Array.isArray(allLeaves)
+            ? allLeaves.filter((l: { employee: string }) => l.employee === user?.name)
+            : [];
+          const pending = userLeaves.filter((l: { status: string }) => l.status === "Pending");
+          
+          // Count by leave type
+          const byType: Record<string, number> = {
+            "Vacation Leave": 0,
+            "Sick Leave": 0,
+            "Emergency Leave": 0,
+            "Maternity/Paternity Leave": 0,
+          };
+          pending.forEach((l: { type: string }) => {
+            if (Object.prototype.hasOwnProperty.call(byType, l.type)) {
+              byType[l.type]++;
+            }
+          });
+          setPendingLeavesByType(byType);
         } catch {
           // skip invalid data
         }
       }
     };
-    if (user?.id) {
+    if (user?.name) {
       loadPendingLeaves();
       const interval = setInterval(loadPendingLeaves, 2000);
       return () => clearInterval(interval);
     }
-  }, [user?.id]);
+  }, [user?.name]);
 
   const detailItems = [
     { label: "Time In",      value: todayRecord?.timeIn,    isTime: true,    textColor: "#1F3C68", bgClass: "from-blue-50 to-blue-100/50",    borderClass: "border-blue-200"   },
@@ -202,6 +233,13 @@ ${String(secs).padStart(2, "0")}`;
     navigate("/");
   };
 
+  // Leave type display config
+  const leaveTypeConfig: Record<string, {short: string }> = {
+    "Vacation Leave":           { short: "Vacation Leave" },
+    "Sick Leave":               { short: "Sick Leave" },
+    "Emergency Leave":          { short: "Emergency Leave" },
+    "Maternity/Paternity Leave":{ short: "Maternity / Paternity Leave" },
+  };
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex">
@@ -312,110 +350,110 @@ ${String(secs).padStart(2, "0")}`;
               </div>
             </div>
             {/* ===== Enhanced 9 Hour Timer ===== */}
-<div className="mb-6 flex flex-col lg:flex-row items-center justify-center gap-6">
+            <div className="mb-6 flex flex-col lg:flex-row items-center justify-center gap-6">
 
-  {/* LEFT: Circular Progress */}
-  <div className={`relative w-36 h-36 flex items-center justify-center transition-all ${
-  workDetails.overtimeMinutes > 0
-    ? "drop-shadow-[0_0_20px_rgba(239,68,68,0.6)]"
-    : "drop-shadow-[0_0_20px_rgba(242,140,40,0.4)]"
-}`}>
+              {/* LEFT: Circular Progress */}
+              <div className={`relative w-36 h-36 flex items-center justify-center transition-all ${
+              workDetails.overtimeMinutes > 0
+                ? "drop-shadow-[0_0_20px_rgba(239,68,68,0.6)]"
+                : "drop-shadow-[0_0_20px_rgba(242,140,40,0.4)]"
+            }`}>
 
-    <svg className="absolute w-full h-full rotate-[-90deg]">
-      <circle
-        cx="72"
-        cy="72"
-        r="60"
-        stroke="#E2E8F0"
-        strokeWidth="10"
-        fill="transparent"
-      />
+                <svg className="absolute w-full h-full rotate-[-90deg]">
+                  <circle
+                    cx="72"
+                    cy="72"
+                    r="60"
+                    stroke="#E2E8F0"
+                    strokeWidth="10"
+                    fill="transparent"
+                  />
 
-      <motion.circle
-        cx="72"
-        cy="72"
-        r="60"
-        stroke={
-          workDetails.overtimeMinutes > 0 ? "#ef4444" : "#F28C28"
-        }
-        strokeWidth="10"
-        fill="transparent"
-        strokeLinecap="round"
-        strokeDasharray={2 * Math.PI * 60}
-        strokeDashoffset={
-          2 * Math.PI * 60 *
-          (1 - workDetails.progressPct / 100)
-        }
-        initial={{ strokeDashoffset: 2 * Math.PI * 60 }}
-        animate={{
-          strokeDashoffset:
-            2 * Math.PI * 60 *
-            (1 - workDetails.progressPct / 100),
-        }}
-        transition={{ duration: 0.6 }}
-      />
-    </svg>
+                  <motion.circle
+                    cx="72"
+                    cy="72"
+                    r="60"
+                    stroke={
+                      workDetails.overtimeMinutes > 0 ? "#ef4444" : "#F28C28"
+                    }
+                    strokeWidth="10"
+                    fill="transparent"
+                    strokeLinecap="round"
+                    strokeDasharray={2 * Math.PI * 60}
+                    strokeDashoffset={
+                      2 * Math.PI * 60 *
+                      (1 - workDetails.progressPct / 100)
+                    }
+                    initial={{ strokeDashoffset: 2 * Math.PI * 60 }}
+                    animate={{
+                      strokeDashoffset:
+                        2 * Math.PI * 60 *
+                        (1 - workDetails.progressPct / 100),
+                    }}
+                    transition={{ duration: 0.6 }}
+                  />
+                </svg>
 
-    {/* Center Text */}
-    <div className="text-center">
-      <p className="text-xs text-slate-500">Progress</p>
-      <p
-        className={`text-xl font-bold ${
-          workDetails.overtimeMinutes > 0
-            ? "text-red-500"
-            : "text-[#1F3C68]"
-        }`}
-      >
-        {Math.round(workDetails.progressPct)}%
-      </p>
-    </div>
-  </div>
+                {/* Center Text */}
+                <div className="text-center">
+                  <p className="text-xs text-slate-500">Progress</p>
+                  <p
+                    className={`text-xl font-bold ${
+                      workDetails.overtimeMinutes > 0
+                        ? "text-red-500"
+                        : "text-[#1F3C68]"
+                    }`}
+                  >
+                    {Math.round(workDetails.progressPct)}%
+                  </p>
+                </div>
+              </div>
 
-  {/* RIGHT: Big Timer Info */}
- <div className="flex flex-col items-center lg:items-start text-center lg:text-left">
+              {/* RIGHT: Big Timer Info */}
+            <div className="flex flex-col items-center lg:items-start text-center lg:text-left">
 
-    <p className="text-xs text-slate-500 mb-1">
-      {workDetails.overtimeMinutes > 0
-        ? "Overtime"
-        : "Remaining Time"}
-    </p>
+                <p className="text-xs text-slate-500 mb-1">
+                  {workDetails.overtimeMinutes > 0
+                    ? "Overtime"
+                    : "Remaining Time"} 
+                </p>
 
-    <motion.p
-      key={getRemainingTime()}
-      initial={{ scale: 0.95, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1 }}
-      className={`text-3xl lg:text-4xl font-bold tabular-nums tracking-wide ${
-        workDetails.overtimeMinutes > 0
-          ? "text-red-500"
-          : "text-[#1F3C68]"
-      }`}
-    >
-      {getRemainingTime()}
-    </motion.p>
+                <motion.p
+                  key={getRemainingTime()}
+                  initial={{ scale: 0.95, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className={`text-3xl lg:text-4xl font-bold tabular-nums tracking-wide ${
+                    workDetails.overtimeMinutes > 0
+                      ? "text-red-500"
+                      : "text-[#1F3C68]"
+                  }`}
+                >
+                  {getRemainingTime()}
+                </motion.p>
 
-    <div className="flex justify-center lg:justify-start gap-4 mt-3 text-sm">
-      <div>
-        <span className="text-slate-400 text-xs">Regular</span>
-        <p className="font-bold text-green-600">
-          {formatMinutes(workDetails.regularMinutes)}
-        </p>
-      </div>
-      <div>
-        <span className="text-slate-400 text-xs">Overtime</span>
-        <p
-          className={`font-bold ${
-            workDetails.overtimeMinutes > 0
-              ? "text-red-500"
-              : "text-slate-400"
-          }`}
-        >
-          {formatMinutes(workDetails.overtimeMinutes)}
-        </p>
-      </div>
-    </div>
-  </div>
-</div>
-            <div className="p-3 md:p-4 lg:p-8">
+                <div className="flex justify-center lg:justify-start gap-4 mt-3 text-sm">
+                  <div>
+                    <span className="text-slate-400 text-xs">Regular</span>
+                    <p className="font-bold text-green-600">
+                      {formatMinutes(workDetails.regularMinutes)}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 text-xs">Overtime</span>
+                    <p
+                      className={`font-bold ${
+                        workDetails.overtimeMinutes > 0
+                          ? "text-red-500"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      {formatMinutes(workDetails.overtimeMinutes)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+                        <div className="p-3 md:p-4 lg:p-8">
               {/* Action Buttons */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-4 md:mb-6">
                 <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={handleTimeIn} disabled={!!todayRecord?.timeIn}
@@ -487,28 +525,90 @@ ${String(secs).padStart(2, "0")}`;
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ delay: 0.2 }}
-            className="bg-white p-4 md:p-5 lg:p-6 rounded-2xl md:rounded-2.5xl lg:rounded-3xl shadow-lg border border-slate-100 hover:shadow-xl hover:border-[#F28C28]/30 transition-all"
+            className="bg-white rounded-2xl md:rounded-2.5xl lg:rounded-3xl shadow-lg border border-slate-100 hover:shadow-xl hover:border-[#F28C28]/30 transition-all overflow-hidden flex flex-col"
           >
-            <div className="flex flex-col gap-3 md:gap-3">
-              <div className="flex items-start md:items-center gap-2 md:gap-2.5 lg:gap-3">
-                <div className="p-2 md:p-2 lg:p-3 bg-amber-100 rounded-lg md:rounded-lg lg:rounded-xl flex-shrink-0">
-                  <Clock className="w-4 md:w-4 lg:w-5 h-4 md:h-4 lg:h-5 text-ambe r-600" />
+            {/* Card Header */}
+            <div className="bg-primary p-4 md:p-4 lg:p-5 text-white flex-shrink-0">
+              <div className="flex items-center gap-2 md:gap-2.5 lg:gap-3">
+                <div className="p-1.5 md:p-2 bg-white/20 backdrop-blur-sm rounded-lg flex-shrink-0">
+                  <Clock className="w-4 md:w-4 lg:w-5 h-4 md:h-4 lg:h-5 text-white" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h3 className="text-xs md:text-sm lg:text-base font-bold text-amber-900">Pending Leave Requests</h3>
-                  <p className="text-[9px] md:text-[10px] lg:text-sm text-amber-700">
-                    You have {pendingLeavesCount} leave request(s) awaiting approval
-                  </p>
+                  <h3 className="text-xs md:text-sm lg:text-base font-bold text-white leading-tight">
+                    Pending Leave Requests
+                  </h3>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="inline-flex items-center justify-center w-4 h-4 md:w-5 md:h-5 rounded-full bg-white/30 text-white font-bold text-[9px] md:text-[10px]">
+                      {totalPendingLeaves}
+                    </span>
+                    <p className="text-[9px] md:text-[10px] lg:text-xs text-white/90">
+                      request{totalPendingLeaves !== 1 ? "s" : ""} awaiting approval
+                    </p>
+                  </div>
                 </div>
               </div>
+            </div>
+
+            {/* Leave Type List */}
+            <div className="flex-1 p-3 md:p-3.5 lg:p-4 space-y-1.5 md:space-y-2">
+              {Object.entries(pendingLeavesByType).map(([type, count]) => {
+                const hasPending = count > 0;
+                const config = leaveTypeConfig[type] ?? { icon: "📋", short: type };
+                return (
+                  <motion.div
+                    key={type}
+                    initial={false}
+                    animate={hasPending ? { scale: [1, 1.02, 1] } : {}}
+                    transition={{ duration: 0.3 }}
+                    className={`flex items-center justify-between px-2.5 md:px-3 py-2 md:py-2.5 rounded-lg border transition-all ${
+                      hasPending
+                        ? "bg-slate-100 border-slate-300"
+                        : "bg-slate-50 border-slate-100"
+                    }`}
+                  >
+                    {/* Left: icon + label */}
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-sm md:text-base flex-shrink-0 leading-none">
+                      </span>
+                      <span
+                        className={`text-[10px] md:text-xs font-medium truncate ${
+                          hasPending ? "text-amber-800" : "text-slate-400"
+                        }`}
+                      >
+                        {config.short}
+                      </span>
+                    </div>
+
+                    {/* Right: counter badge */}
+                    <motion.span
+                      key={count}
+                      initial={{ scale: 1.4, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                      className={`flex-shrink-0 min-w-[20px] md:min-w-[22px] h-[20px] md:h-[22px] flex items-center justify-center rounded-full text-[9px] md:text-[10px] font-bold ${
+                        hasPending
+                          ? "bg-primary text-white shadow-sm shadow-primary"
+                          : "bg-slate-200 text-slate-400"
+                      }`}
+                    >
+                      {count}
+                    </motion.span>
+                  </motion.div>
+                );
+              })}
+            </div>
+
+            {/* Footer: View Button */}
+            <div className="px-3 md:px-3.5 lg:px-4 pb-3 md:pb-3.5 lg:pb-4 flex-shrink-0">
               <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.97 }}
                 onClick={() => navigate("/leave", { state: { user } })}
-                className="w-full md:w-auto px-3 md:px-3 lg:px-4 py-1.5 md:py-1.5 lg:py-2 bg-primary hover:bg-primary text-white font-medium rounded-lg transition-colors text-xs md:text-xs lg:text-sm"
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 md:py-2 bg-primary hover:bg-[#16305a] text-white font-semibold rounded-lg transition-colors text-[10px] md:text-xs lg:text-sm shadow-sm"
               >
-                View
-              </motion.button>  
+                <Clock className="w-3 h-3 md:w-3.5 md:h-3.5" />
+                View All Leave Requests
+              </motion.button>
             </div>
           </motion.div>
 

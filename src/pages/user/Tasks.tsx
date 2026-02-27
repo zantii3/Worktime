@@ -10,6 +10,7 @@ import {
   Layers,
   Zap,
   Circle,
+  Tag,
 } from "lucide-react";
 import { useClock } from "./hooks/useClock";
 import Usersidebar from "./components/Usersidebar";
@@ -25,11 +26,11 @@ interface Task {
   status: TaskStatus;
   dueDate: string;
   createdAt: string;
-  assignedTo: string; 
+  assignedTo: string;
+  tags?: string[]; // admin-assigned tags
 }
 
 const TASKS_KEY = "worktime_tasks_v1";
-
 
 const priorityConfig: Record<
   TaskPriority,
@@ -73,6 +74,36 @@ const statusConfig: Record<
   },
 };
 
+// Deterministic color palette for tags — cycles by tag string
+const TAG_PALETTES = [
+  { bg: "bg-violet-100", text: "text-violet-700", border: "border-violet-200" },
+  { bg: "bg-cyan-100",   text: "text-cyan-700",   border: "border-cyan-200"   },
+  { bg: "bg-emerald-100",text: "text-emerald-700",border: "border-emerald-200"},
+  { bg: "bg-pink-100",   text: "text-pink-700",   border: "border-pink-200"   },
+  { bg: "bg-amber-100",  text: "text-amber-700",  border: "border-amber-200"  },
+  { bg: "bg-sky-100",    text: "text-sky-700",    border: "border-sky-200"    },
+  { bg: "bg-rose-100",   text: "text-rose-700",   border: "border-rose-200"   },
+  { bg: "bg-teal-100",   text: "text-teal-700",   border: "border-teal-200"   },
+];
+
+function getTagPalette(tag: string) {
+  let hash = 0;
+  for (let i = 0; i < tag.length; i++) hash = (hash * 31 + tag.charCodeAt(i)) >>> 0;
+  return TAG_PALETTES[hash % TAG_PALETTES.length];
+}
+
+function TagBadge({ tag }: { tag: string }) {
+  const p = getTagPalette(tag);
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-bold border ${p.bg} ${p.text} ${p.border} whitespace-nowrap`}
+    >
+      <Tag className="w-2.5 h-2.5 flex-shrink-0" />
+      {tag}
+    </span>
+  );
+}
+
 function StatCard({
   label,
   value,
@@ -93,9 +124,7 @@ function StatCard({
       transition={{ delay, type: "spring", stiffness: 200, damping: 20 }}
       className="relative overflow-hidden bg-white rounded-2xl border border-slate-100 p-5 shadow-sm group hover:shadow-md transition-shadow duration-300"
     >
-      {/* Subtle top accent line */}
       <div className={`absolute top-0 left-0 right-0 h-[3px] ${accent}`} />
-
       <div className="flex items-start justify-between">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-3">
@@ -105,11 +134,7 @@ function StatCard({
             {value}
           </p>
         </div>
-        <div
-          className={`p-2.5 rounded-xl ${accent
-            .replace("bg-", "bg-opacity-10 bg-")
-            .replace("gradient", "")} bg-slate-50`}
-        >
+        <div className="p-2.5 rounded-xl bg-slate-50">
           <Icon className="w-5 h-5 text-slate-400 group-hover:text-[#1F3C68] transition-colors" />
         </div>
       </div>
@@ -126,51 +151,48 @@ function TaskPage() {
 
   const currentTime = useClock();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeStatus, setActiveStatus] =
-    useState<"All" | TaskStatus>("All");
-  const [priorityFilter, setPriorityFilter] =
-    useState<"All" | TaskPriority>("All");
+  const [activeStatus, setActiveStatus] = useState<"All" | TaskStatus>("All");
+  const [priorityFilter, setPriorityFilter] = useState<"All" | TaskPriority>("All");
+  const [activeTag, setActiveTag] = useState<string | null>(null);
 
   const [tasks, setTasks] = useState<Task[]>(() => {
-  const raw = localStorage.getItem(TASKS_KEY);
-  const all: Task[] = raw ? JSON.parse(raw) : [];
-  // show only tasks assigned to this logged-in user (by name)
-  return Array.isArray(all)
-    ? all.filter((t) => t.assignedTo === user?.name)
-    : [];
-});
-
+    const raw = localStorage.getItem(TASKS_KEY);
+    const all: Task[] = raw ? JSON.parse(raw) : [];
+    return Array.isArray(all)
+      ? all.filter((t) => t.assignedTo === user?.name)
+      : [];
+  });
 
   const saveTasks = (updated: Task[]) => {
-  setTasks(updated);
+    setTasks(updated);
+    const raw = localStorage.getItem(TASKS_KEY);
+    const all: Task[] = raw ? JSON.parse(raw) : [];
+    const safeAll = Array.isArray(all) ? all : [];
+    const others = safeAll.filter((t) => t?.assignedTo !== user?.name);
+    localStorage.setItem(TASKS_KEY, JSON.stringify([...updated, ...others]));
+  };
 
-  const raw = localStorage.getItem(TASKS_KEY);
-  const all: Task[] = raw ? JSON.parse(raw) : [];
-  const safeAll = Array.isArray(all) ? all : [];
-
-  // remove old tasks for this user, then add updated tasks for this user
-  const others = safeAll.filter((t) => t?.assignedTo !== user?.name);
-  const merged = [...updated, ...others];
-
-  localStorage.setItem(TASKS_KEY, JSON.stringify(merged));
-};
-
+  // Collect all unique tags across this user's tasks
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    tasks.forEach((t) => t.tags?.forEach((tag) => set.add(tag)));
+    return Array.from(set).sort();
+  }, [tasks]);
 
   const filteredTasks = useMemo(() => {
     const filtered = tasks.filter((t) => {
       const matchStatus = activeStatus === "All" || t.status === activeStatus;
-      const matchPriority =
-        priorityFilter === "All" || t.priority === priorityFilter;
-      return matchStatus && matchPriority;
+      const matchPriority = priorityFilter === "All" || t.priority === priorityFilter;
+      const matchTag = !activeTag || (t.tags ?? []).includes(activeTag);
+      return matchStatus && matchPriority && matchTag;
     });
-  
     const statusOrder: Record<TaskStatus, number> = {
       Pending: 0,
       "In Progress": 1,
       Completed: 2,
     };
     return filtered.sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
-  }, [tasks, activeStatus, priorityFilter]);
+  }, [tasks, activeStatus, priorityFilter, activeTag]);
 
   const total = tasks.length;
   const completed = tasks.filter((t) => t.status === "Completed").length;
@@ -179,16 +201,14 @@ function TaskPage() {
   const progress = total ? Math.round((completed / total) * 100) : 0;
 
   const updateStatus = (id: number, status: TaskStatus) => {
-    const updated = tasks.map((t) => (t.id === id ? { ...t, status } : t));
-    saveTasks(updated);
+    saveTasks(tasks.map((t) => (t.id === id ? { ...t, status } : t)));
   };
 
-  // Add this inside TaskPage, above the return
-const advanceStatus = (task: Task): TaskStatus => {
-  if (task.status === "Pending") return "In Progress";
-  if (task.status === "In Progress") return "Completed";
-  return "Completed"; // already completed
-};
+  const advanceStatus = (task: Task): TaskStatus => {
+    if (task.status === "Pending") return "In Progress";
+    if (task.status === "In Progress") return "Completed";
+    return "Completed";
+  };
 
   const handleLogout = () => {
     localStorage.removeItem("currentUser");
@@ -247,7 +267,6 @@ const advanceStatus = (task: Task): TaskStatus => {
             >
               <Menu className="text-[#1F3C68]" />
             </button>
-            
             <div className="min-w-0">
               <h1 className="text-lg sm:text-2xl md:text-3xl font-bold text-[#1F3C68] truncate">
                 My Tasks
@@ -263,34 +282,26 @@ const advanceStatus = (task: Task): TaskStatus => {
             </div>
           </div>
 
-          {/* Live Clock pill */}
-         <div className="hidden md:flex lg:hidden items-center gap-2 bg-primary text-white px-3 py-2 rounded-lg shadow-lg md:w-[92px]">
+          <div className="hidden md:flex lg:hidden items-center gap-2 bg-primary text-white px-3 py-2 rounded-lg shadow-lg md:w-[92px]">
             <Clock className="w-4 h-4" />
             <p className="font-bold text-xs tabular-nums">
-              {currentTime.toLocaleTimeString("en-US", {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
+              {currentTime.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
             </p>
           </div>
-            <div className="hidden lg:flex items-center gap-3 bg-primary text-white px-6 py-3 rounded-xl shadow-lg">
+          <div className="hidden lg:flex items-center gap-3 bg-primary text-white px-6 py-3 rounded-xl shadow-lg">
             <Clock className="w-5 h-5" />
             <p className="font-bold text-lg tabular-nums">
-              {currentTime.toLocaleTimeString("en-US", {
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              })}
+              {currentTime.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
             </p>
           </div>
         </motion.div>
 
         {/* ── Stat Cards ── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <StatCard label="Total" value={total} icon={Layers} accent="bg-primary" delay={0.05} />
-          <StatCard label="Completed" value={completed} icon={CheckCircle2} accent="bg-secondary" delay={0.1} />
-          <StatCard label="In Progress" value={inProgress} icon={Zap} accent="bg-primary" delay={0.15} />
-          <StatCard label="Pending" value={pending} icon={Circle} accent="bg-secondary" delay={0.2} />
+          <StatCard label="Total"       value={total}      icon={Layers}       accent="bg-primary"   delay={0.05} />
+          <StatCard label="Completed"   value={completed}  icon={CheckCircle2} accent="bg-secondary" delay={0.1}  />
+          <StatCard label="In Progress" value={inProgress} icon={Zap}          accent="bg-primary"   delay={0.15} />
+          <StatCard label="Pending"     value={pending}    icon={Circle}       accent="bg-secondary" delay={0.2}  />
         </div>
 
         {/* ── Progress Banner ── */}
@@ -300,14 +311,12 @@ const advanceStatus = (task: Task): TaskStatus => {
           transition={{ delay: 0.22 }}
           className="bg-primary text-white rounded-2xl px-6 py-5 mb-6 shadow-md relative overflow-hidden"
         >
-          {/* decorative blobs */}
           <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full bg-white/5" />
           <div className="absolute -bottom-6 right-24 w-24 h-24 rounded-full bg-[#F28C28]/20" />
-
           <div className="relative z-10 flex flex-col sm:flex-row sm:items-center gap-4">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-soft rounded-lg">
-                <TrendingUp className="w-5 h-5 text-primary " />
+                <TrendingUp className="w-5 h-5 text-primary" />
               </div>
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-widest text-white/80">
@@ -315,13 +324,10 @@ const advanceStatus = (task: Task): TaskStatus => {
                 </p>
                 <p className="text-3xl font-black tabular-nums leading-tight">
                   {progress}
-                  <span className="text-lg font-semibold text-white/60 ml-0.5">
-                    %
-                  </span>
+                  <span className="text-lg font-semibold text-white/60 ml-0.5">%</span>
                 </p>
               </div>
             </div>
-
             <div className="flex-1">
               <div className="w-full bg-white/50 h-2.5 rounded-full overflow-hidden">
                 <motion.div
@@ -352,39 +358,32 @@ const advanceStatus = (task: Task): TaskStatus => {
                 <ListTodo className="w-6 h-6 text-[#1F3C68]" />
               </div>
               <div>
-                <h2 className="text-xl font-black text-[#1F3C68] leading-tight">
-                  Task List
-                </h2>
+                <h2 className="text-xl font-black text-[#1F3C68] leading-tight">Task List</h2>
                 <p className="text-xs text-slate-400">
-                  {filteredTasks.length} task
-                  {filteredTasks.length !== 1 ? "s" : ""} shown
+                  {filteredTasks.length} task{filteredTasks.length !== 1 ? "s" : ""} shown
                 </p>
               </div>
             </div>
 
             {/* Filters */}
             <div className="flex gap-2 flex-wrap items-center">
-              {(["All", "Pending", "In Progress", "Completed"] as const).map(
-                (s) => (
-                  <button
-                    key={s}
-                    onClick={() => setActiveStatus(s)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 ${
-                      activeStatus === s
-                        ? "bg-[#E97638] text-white shadow-sm"
-                        : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-                    }`}
-                  >
-                    {s}
-                  </button>
-                )
-              )}
+              {(["All", "Pending", "In Progress", "Completed"] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setActiveStatus(s)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 ${
+                    activeStatus === s
+                      ? "bg-[#E97638] text-white shadow-sm"
+                      : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
 
               <select
                 value={priorityFilter}
-                onChange={(e) =>
-                  setPriorityFilter(e.target.value as "All" | TaskPriority)
-                }
+                onChange={(e) => setPriorityFilter(e.target.value as "All" | TaskPriority)}
                 className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-[#1F3C68]/30"
               >
                 <option value="All">All Priority</option>
@@ -394,6 +393,47 @@ const advanceStatus = (task: Task): TaskStatus => {
               </select>
             </div>
           </div>
+
+          {/* ── Tag Filter Strip (only when tags exist) ── */}
+          {allTags.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 px-6 py-3 border-b border-slate-50 bg-slate-50/60">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                <Tag className="w-3 h-3" /> Tags
+              </span>
+              <button
+                onClick={() => setActiveTag(null)}
+                className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
+                  activeTag === null
+                    ? "bg-[#1F3C68] text-white border-[#1F3C68]"
+                    : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+                }`}
+              >
+                All
+              </button>
+              {allTags.map((tag) => {
+                const p = getTagPalette(tag);
+                const isActive = activeTag === tag;
+                return (
+                  <button
+                    key={tag}
+                    onClick={() => setActiveTag(isActive ? null : tag)}
+                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
+                      isActive
+                        ? `${p.bg} ${p.text} ${p.border} ring-2 ring-offset-1 ${p.border}`
+                        : `bg-white ${p.text} ${p.border} hover:${p.bg}`
+                    }`}
+                  >
+                    <Tag className="w-2.5 h-2.5" />
+                    {tag}
+                    {/* count badge */}
+                    <span className={`ml-0.5 font-black tabular-nums ${isActive ? p.text : "text-slate-400"}`}>
+                      {tasks.filter((t) => (t.tags ?? []).includes(tag)).length}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {/* Task rows */}
           <div className="divide-y divide-slate-50 px-4 py-2">
@@ -413,6 +453,7 @@ const advanceStatus = (task: Task): TaskStatus => {
                 filteredTasks.map((task, index) => {
                   const pCfg = priorityConfig[task.priority];
                   const sCfg = statusConfig[task.status];
+                  const hasTags = (task.tags ?? []).length > 0;
                   return (
                     <motion.div
                       key={task.id}
@@ -421,23 +462,19 @@ const advanceStatus = (task: Task): TaskStatus => {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, x: -20 }}
                       transition={{ delay: index * 0.04 }}
-                      className={`group flex items-center justify-between gap-4 py-4 px-2 rounded-xl my-1 transition-all duration-200 hover:bg-slate-50 ${
+                      className={`group flex items-start justify-between gap-4 py-4 px-2 rounded-xl my-1 transition-all duration-200 hover:bg-slate-50 ${
                         task.status === "Completed" ? "opacity-60" : ""
                       }`}
                     >
-                      {/* Left: status indicator + text */}
-                      <div className="flex items-start gap-3 min-w-0">
+                      {/* Left: status indicator + text + tags */}
+                      <div className="flex items-start gap-3 min-w-0 flex-1">
                         {/* Colored status strip */}
-                        <div
-                          className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${sCfg.bar}`}
-                        />
+                        <div className={`mt-2 w-1.5 h-1.5 rounded-full flex-shrink-0 ${sCfg.bar}`} />
 
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <h3
                             className={`font-bold text-[#1F3C68] text-sm truncate ${
-                              task.status === "Completed"
-                                ? "line-through text-slate-400"
-                                : ""
+                              task.status === "Completed" ? "line-through text-slate-400" : ""
                             }`}
                           >
                             {task.title}
@@ -448,18 +485,25 @@ const advanceStatus = (task: Task): TaskStatus => {
                           <p className="text-[10px] text-slate-300 mt-1 font-medium">
                             Due&nbsp;{task.dueDate}
                           </p>
+
+                          {/* ── Tags row ── */}
+                          {hasTags && (
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {(task.tags ?? []).map((tag) => (
+                                <TagBadge key={tag} tag={tag} />
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       {/* Right: badges + action */}
-                      <div className="flex items-center gap-2 flex-shrink-0">
+                      <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
                         {/* Priority badge */}
                         <span
                           className={`hidden sm:inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-lg ${pCfg.bg} ${pCfg.color}`}
                         >
-                          <span
-                            className={`w-1.5 h-1.5 rounded-full ${pCfg.dot}`}
-                          />
+                          <span className={`w-1.5 h-1.5 rounded-full ${pCfg.dot}`} />
                           {task.priority}
                         </span>
 
@@ -468,20 +512,18 @@ const advanceStatus = (task: Task): TaskStatus => {
                           {sCfg.label}
                         </span>
 
-                        {/* Complete button */}
+                        {/* Advance / complete button */}
                         {task.status !== "Completed" ? (
                           <button
-  onClick={() => updateStatus(task.id, advanceStatus(task))}
-  className={`p-1.5 rounded-lg transition-all ${
-    task.status === "Pending"
-      ? "bg-yellow-50 text-yellow-500 hover:bg-yellow-100"
-      : task.status === "In Progress"
-      ? "bg-blue-50 text-blue-500 hover:bg-blue-100"
-      : "bg-green-50 text-green-500"
-  }`}
->
-  <CheckCircle2 className="w-4.5 h-4.5" />
-</button>
+                            onClick={() => updateStatus(task.id, advanceStatus(task))}
+                            className={`p-1.5 rounded-lg transition-all ${
+                              task.status === "Pending"
+                                ? "bg-yellow-50 text-yellow-500 hover:bg-yellow-100"
+                                : "bg-blue-50 text-blue-500 hover:bg-blue-100"
+                            }`}
+                          >
+                            <CheckCircle2 className="w-4.5 h-4.5" />
+                          </button>
                         ) : (
                           <CheckCircle2 className="w-4.5 h-4.5 text-green-400" />
                         )}
