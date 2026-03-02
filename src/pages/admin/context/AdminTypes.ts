@@ -10,6 +10,20 @@ export interface Task {
   status: TaskStatus;
 }
 
+// Projects (admin)
+export interface Project {
+  id: number;
+  name: string;
+  description: string;
+
+  // Canonical reference to a real account (accounts.json)
+  leaderId: number;
+
+  // Frontend-only metadata (optional)
+  dueDate?: string; // YYYY-MM-DD
+  tags?: string[];
+}
+
 export type LeaveStatus = "Pending" | "Approved" | "Rejected";
 export type LeaveType =
   | "Vacation"
@@ -37,8 +51,6 @@ export interface LeaveRequest {
   date?: string;
 }
 
-
-
 export type UserRole = "Employee" | "Admin";
 export type UserStatus = "Active" | "Inactive";
 
@@ -63,6 +75,9 @@ export interface Attendance {
 export interface AdminContextType {
   tasks: Task[];
   setTasks: React.Dispatch<React.SetStateAction<Task[]>>;
+
+  projects: Project[];
+  setProjects: React.Dispatch<React.SetStateAction<Project[]>>;
 
   leaves: LeaveRequest[];
   setLeaves: React.Dispatch<React.SetStateAction<LeaveRequest[]>>;

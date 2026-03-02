@@ -3,12 +3,16 @@ import type {
   AdminContextType,
   Attendance,
   LeaveRequest,
+  Project,
   Task,
   User,
 } from "./AdminTypes";
 
 // Single shared LS key for tasks (Admin + User reads/writes here)
 const TASKS_KEY = "worktime_tasks_v1";
+
+// Projects are admin-managed (frontend-only for now)
+const PROJECTS_KEY = "worktime_projects_v1";
 
 // Use accounts.json as the single source of truth for users
 import accounts from "../../data/accounts.json";
@@ -33,6 +37,17 @@ function readTasksFromStorage(): Task[] {
   }
 }
 
+function readProjectsFromStorage(): Project[] {
+  try {
+    const raw = localStorage.getItem(PROJECTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as Project[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 export const AdminProvider = ({ children }: { children: React.ReactNode }) => {
   // ✅ USERS: always sourced from accounts.json
   const accountsUsers = useMemo(() => {
@@ -40,8 +55,6 @@ export const AdminProvider = ({ children }: { children: React.ReactNode }) => {
       id: a.id,
       name: a.name,
       email: a.email,
-      // If your User type has more fields, they can be optional in AdminTypes.
-      // We keep it minimal and cast for compatibility.
     }));
     return list as unknown as User[];
   }, []);
@@ -49,16 +62,19 @@ export const AdminProvider = ({ children }: { children: React.ReactNode }) => {
   // ✅ TASKS: load once from shared LS key
   const [tasks, setTasks] = useState<Task[]>(() => readTasksFromStorage());
 
+  // ✅ PROJECTS: persisted to LS
+  const [projects, setProjects] = useState<Project[]>(() => readProjectsFromStorage());
+
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
-  const [users, setUsers] = useState<User[]>(accountsUsers); // initialized from accounts.json
+  const [users, setUsers] = useState<User[]>(accountsUsers);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
 
-  // ✅ Keep users synced to accounts.json (prevents drifting if someone calls setUsers)
+  // ✅ Keep users synced to accounts.json
   useEffect(() => {
     setUsers(accountsUsers);
   }, [accountsUsers]);
 
-  // ✅ Persist tasks to LocalStorage whenever tasks change (this is the sync bridge)
+  // ✅ Persist tasks to LocalStorage
   useEffect(() => {
     try {
       localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
@@ -67,9 +83,20 @@ export const AdminProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }, [tasks]);
 
+  // ✅ Persist projects to LocalStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
+    } catch {
+      // ignore storage failures
+    }
+  }, [projects]);
+
   const value: AdminContextType = {
     tasks,
     setTasks,
+    projects,
+    setProjects,
     leaves,
     setLeaves,
     users,

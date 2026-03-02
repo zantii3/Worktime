@@ -4,13 +4,14 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import Attendance from "./pages/user/Attendance";
 import UserDashboard from "./pages/user/Dashboard";
-import Leave from "./pages/user/Leave";
-import Login from "./pages/user/index";
 import ForgotPassword from "./pages/user/ForgotPassword";
-import Tasks from "./pages/user/Tasks";
+import Leave from "./pages/user/Leave";
 import Profile from "./pages/user/Profile";
+import Tasks from "./pages/user/Tasks";
+import Login from "./pages/user/index";
 
 // ADMIN PAGES
+import AdminProfile from "./pages/admin/AdminProfile";
 import AdminDashboard from "./pages/admin/Admindashboard";
 import AdminAttendance from "./pages/admin/Attendance";
 import AdminForgotPassword from "./pages/admin/ForgotPassword";
@@ -84,7 +85,17 @@ export default function App() {
         {/* ================= ADMIN ROUTES ================= */}
         <Route path="/admin/login" element={<AdminLogin />} />
         <Route path="/admin/forgot-password" element={<AdminForgotPassword />} />
+        
 
+        <Route
+          path="/admin/profile" 
+          element={
+          <AdminLayout>
+            <AdminProfile />
+          </AdminLayout>
+          }
+        
+        />
         <Route
           path="/admin"
           element={

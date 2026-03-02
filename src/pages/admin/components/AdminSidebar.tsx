@@ -1,11 +1,12 @@
 import { motion } from "framer-motion";
 import {
-  LayoutDashboard,
   CalendarDays,
   FileUser,
+  LayoutDashboard,
   ListTodo,
-  Users,
   LogOut,
+  UserCircle2,
+  Users,
   X,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -22,6 +23,7 @@ const navItems = [
   { icon: FileUser, label: "Leave", path: "/admin/leave" },
   { icon: ListTodo, label: "Task", path: "/admin/tasks" },
   { icon: Users, label: "Users", path: "/admin/users" },
+  { icon: UserCircle2, label: "Profile", path: "/admin/profile" },
 ] as const;
 
 export default function AdminSidebar({ close }: Props) {
@@ -34,14 +36,13 @@ export default function AdminSidebar({ close }: Props) {
   };
 
   const logout = () => {
-  localStorage.removeItem("admin_token");
-  localStorage.removeItem("admin_email");
-  localStorage.removeItem("currentAdmin"); // ✅ REQUIRED
-  notifySuccess("Logged out successfully.");
-  close?.();
-  navigate("/admin/login", { replace: true });
-};
-
+    localStorage.removeItem("admin_token");
+    localStorage.removeItem("admin_email");
+    localStorage.removeItem("currentAdmin"); // ✅ REQUIRED
+    notifySuccess("Logged out successfully.");
+    close?.();
+    navigate("/admin/login", { replace: true });
+  };
 
   const isActive = (itemPath: string) => {
     const current = location.pathname;
@@ -90,11 +91,13 @@ export default function AdminSidebar({ close }: Props) {
                 initial={{ x: -20, opacity: 0 }}
                 animate={{ x: 0, opacity: 1 }}
                 transition={{ delay: index * 0.05 }}
-                whileHover={{ x: 4 }} // <- IMPORTANT: no inline backgroundColor
+                whileHover={{ x: 4 }}
                 onClick={() => go(item.path)}
                 className={`flex items-center gap-3 px-4 py-3 rounded-xl text-[#1E293B] font-medium transition-all group
                   hover:bg-slate-100
-                  border-b-2 ${active ? "border-secondary bg-secondary/10" : "border-transparent"}`}
+                  border-b-2 ${
+                    active ? "border-secondary bg-secondary/10" : "border-transparent"
+                  }`}
                 type="button"
                 aria-current={active ? "page" : undefined}
               >
@@ -132,4 +135,3 @@ export default function AdminSidebar({ close }: Props) {
     </aside>
   );
 }
-

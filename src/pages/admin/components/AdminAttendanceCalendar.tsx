@@ -1,11 +1,12 @@
-import { AnimatePresence, motion } from "framer-motion";
-import { useMemo } from "react";
+import { motion } from "framer-motion";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { useMemo } from "react";
 
 export type AttendanceRecord = {
   id: string;
   employeeId: string;
-  source: "Desktop" | "Mobile";
+  // keep flexible: users may write "Desktop"/"Mobile", admins may write remarks
+  source?: string;
   dateISO: string; // YYYY-MM-DD
   timeIn: string | null;
   lunchOut: string | null;
@@ -25,9 +26,6 @@ type Props = {
 function startOfMonth(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
-function endOfMonth(d: Date) {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
-}
 function toISODate(d: Date) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -43,35 +41,17 @@ function formatTime(iso: string | null) {
   return dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 }
 
-function DayPill({
-  label,
-  time,
-  variant,
-}: {
-  label: string;
-  time: string;
-  variant: "in" | "lo" | "li" | "out";
-}) {
-  const styles =
-    variant === "in"
-      ? "bg-green-50 text-green-700"
-      : variant === "lo"
-      ? "bg-yellow-50 text-yellow-700"
-      : variant === "li"
-      ? "bg-blue-50 text-blue-700"
-      : "bg-red-50 text-red-700";
+function isWeekday(d: Date) {
+  const day = d.getDay();
+  return day !== 0 && day !== 6;
+}
 
-  return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={`w-full rounded-md px-2 py-1 text-[11px] font-semibold ${styles}`}
-      title={`${label} ${time}`}
-    >
-      {label} {time}
-    </motion.div>
-  );
+function isTodayISO(iso: string) {
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = String(today.getMonth() + 1).padStart(2, "0");
+  const d = String(today.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}` === iso;
 }
 
 export default function AdminAttendanceCalendar({
@@ -82,10 +62,8 @@ export default function AdminAttendanceCalendar({
   onNextMonth,
   recordsForMonth,
 }: Props) {
-  const { rows, monthKey } = useMemo(() => {
+  const { rows } = useMemo(() => {
     const first = startOfMonth(viewMonth);
-    const last = endOfMonth(viewMonth);
-
     // Sun-start grid, 6x7 = 42 cells
     const firstDow = first.getDay();
     const gridStart = new Date(first);
@@ -101,14 +79,8 @@ export default function AdminAttendanceCalendar({
     const r: Date[][] = [];
     for (let i = 0; i < 6; i++) r.push(cells.slice(i * 7, i * 7 + 7));
 
-    return {
-      rows: r,
-      monthKey: `${viewMonth.getFullYear()}-${viewMonth.getMonth() + 1}`,
-      last,
-    };
+    return { rows: r };
   }, [viewMonth]);
-
-  const weekday = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
   const recordByDate = useMemo(() => {
     const map = new Map<string, AttendanceRecord>();
@@ -117,114 +89,159 @@ export default function AdminAttendanceCalendar({
   }, [recordsForMonth]);
 
   return (
-    <div className="rounded-2xl bg-card border border-slate-200 shadow-sm overflow-hidden">
-      {/* Header */}
-      <div className="bg-primary px-5 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3 text-white">
-          <div className="h-10 w-10 rounded-xl bg-white/20 flex items-center justify-center">
-            <CalendarDays className="h-5 w-5" />
+    <div className="rounded-3xl bg-white border border-slate-100 shadow-md overflow-hidden">
+      <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-primary text-white">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-white/20 backdrop-blur-sm rounded-xl">
+            <CalendarDays className="w-6 h-6" />
           </div>
-          <div className="font-bold text-lg">{monthLabel(viewMonth)}</div>
+          <div>
+            <h2 className="text-xl font-bold">{monthLabel(viewMonth)}</h2>
+            <p className="text-xs text-white/70 mt-0.5">
+              Click any date to see full details
+            </p>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
+        <div className="flex gap-2">
+          <motion.button
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
             onClick={onPrevMonth}
-            className="h-9 w-9 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold inline-flex items-center justify-center"
+            className="p-2 hover:bg-white/20 rounded-lg transition-colors"
             aria-label="Previous month"
             type="button"
           >
-            <ChevronLeft className="h-5 w-5" />
-          </button>
-          <button
+            <ChevronLeft className="w-5 h-5" />
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
             onClick={onNextMonth}
-            className="h-9 w-9 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold inline-flex items-center justify-center"
+            className="p-2 hover:bg-white/20 rounded-lg transition-colors"
             aria-label="Next month"
             type="button"
           >
-            <ChevronRight className="h-5 w-5" />
-          </button>
+            <ChevronRight className="w-5 h-5" />
+          </motion.button>
         </div>
       </div>
 
-      <div className="p-5">
-        <div className="grid grid-cols-7 gap-2 mb-2">
-          {weekday.map((w) => (
+      <div className="p-4">
+        <div className="flex flex-wrap gap-3 mb-3 text-[10px] font-semibold text-slate-500">
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 rounded-full bg-green-500" /> Time In
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 rounded-full bg-red-500" /> Time Out
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 rounded-full bg-rose-500" /> Absent (Weekday)
+          </div>
+        </div>
+
+        <div className="grid grid-cols-7 mb-2">
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
             <div
-              key={w}
-              className="text-[11px] font-bold text-slate-500 text-center"
+              key={d}
+              className="text-center text-xs font-bold text-slate-500 uppercase tracking-wider py-2"
             >
-              {w}
+              {d}
             </div>
           ))}
         </div>
 
-        <AnimatePresence mode="popLayout">
-          <motion.div
-            key={monthKey}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.2 }}
-            className="grid grid-cols-7 gap-2"
-          >
-            {rows.flat().map((d) => {
-              const iso = toISODate(d);
-              const inMonth = d.getMonth() === viewMonth.getMonth();
-              const isSelected = iso === selectedDateISO;
+        <div className="grid grid-cols-7 rounded-xl overflow-hidden border border-slate-100">
+          {rows.flat().map((d) => {
+            const iso = toISODate(d);
+            const inMonth = d.getMonth() === viewMonth.getMonth();
+            const selected = iso === selectedDateISO;
+            const rec = recordByDate.get(iso);
 
-              const rec = recordByDate.get(iso);
+            const absent =
+              inMonth &&
+              isWeekday(d) &&
+              !rec &&
+              d.getTime() < new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
+              
+            const today = isTodayISO(iso);
 
-              const tIn = formatTime(rec?.timeIn ?? null);
-              const tLO = formatTime(rec?.lunchOut ?? null);
-              const tLI = formatTime(rec?.lunchIn ?? null);
-              const tOut = formatTime(rec?.timeOut ?? null);
+            const tIn = formatTime(rec?.timeIn ?? null);
+            const tOut = formatTime(rec?.timeOut ?? null);
 
-              return (
-                <motion.button
-                  key={iso}
-                  whileHover={{ scale: 1.01 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() => onSelectDateISO(iso)}
+            return (
+              <motion.div
+                key={iso}
+                whileHover={{ scale: 0.97 }}
+                whileTap={{ scale: 0.94 }}
+                onClick={() => onSelectDateISO(iso)}
+                className={[
+                  "h-16 sm:h-20 md:h-24 border p-1.5 sm:p-2 cursor-pointer transition-all relative overflow-hidden group",
+                  !inMonth
+                    ? "bg-slate-50/30 border-slate-100 opacity-60"
+                    : absent
+                    ? "bg-rose-50 border-rose-200 hover:bg-rose-100/60"
+                    : today
+                    ? "bg-orange-50 border-[#F28C28]/40 hover:bg-orange-100/50"
+                    : rec
+                    ? "bg-white border-slate-200 hover:border-[#1F3C68]/30 hover:bg-blue-50/20"
+                    : "bg-white border-slate-100 hover:bg-slate-50",
+                  selected ? "ring-2 ring-primary/40" : "",
+                ].join(" ")}
+                role="button"
+                aria-current={selected ? "date" : undefined}
+              >
+                <span
                   className={[
-                    "min-h-[92px] rounded-xl border text-left p-2 transition",
-                    inMonth
-                      ? "bg-white border-slate-200"
-                      : "bg-slate-50 border-slate-100 opacity-60",
-                    isSelected ? "ring-2 ring-primary/40" : "hover:bg-slate-50",
+                    "text-xs sm:text-sm font-bold",
+                    today
+                      ? "text-[#F28C28]"
+                      : absent
+                      ? "text-rose-700"
+                      : rec
+                      ? "text-[#1F3C68]"
+                      : "text-slate-400",
                   ].join(" ")}
-                  type="button"
-                  aria-current={isSelected ? "date" : undefined}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold text-slate-700">
-                      {d.getDate()}
-                    </div>
-                    {rec ? (
-                      <span className="text-[10px] font-bold text-secondary">
-                        •
-                      </span>
-                    ) : null}
-                  </div>
+                  {d.getDate()}
+                </span>
 
-                  {/* Pills */}
-                  <div className="mt-2 space-y-1">
-                    {tIn ? <DayPill label="IN" time={tIn} variant="in" /> : null}
-                    {tLO ? (
-                      <DayPill label="LO" time={tLO} variant="lo" />
-                    ) : null}
-                    {tLI ? (
-                      <DayPill label="LI" time={tLI} variant="li" />
+                {absent ? (
+                  <div className="mt-0.5 text-[8px] sm:text-[9px] font-bold text-rose-700 leading-tight">
+                    Absent
+                  </div>
+                ) : null}
+
+                {rec ? (
+                  <div className="mt-0.5 sm:mt-1 space-y-0.5">
+                    {tIn ? (
+                      <div className="flex items-center gap-0.5">
+                        <div className="w-1 h-1 rounded-full bg-green-500 flex-shrink-0" />
+                        <span className="text-[8px] sm:text-[9px] md:text-[10px] font-semibold text-green-700 tabular-nums">
+                          {tIn}
+                        </span>
+                      </div>
                     ) : null}
                     {tOut ? (
-                      <DayPill label="OUT" time={tOut} variant="out" />
+                      <div className="flex items-center gap-0.5">
+                        <div className="w-1 h-1 rounded-full bg-red-500 flex-shrink-0" />
+                        <span className="text-[8px] sm:text-[9px] md:text-[10px] font-semibold text-red-700 tabular-nums">
+                          {tOut}
+                        </span>
+                      </div>
                     ) : null}
                   </div>
-                </motion.button>
-              );
-            })}
-          </motion.div>
-        </AnimatePresence>
+                ) : null}
+
+                <div className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="w-3 h-3 bg-[#1F3C68]/10 rounded-full flex items-center justify-center">
+                    <div className="w-1.5 h-1.5 bg-[#1F3C68]/40 rounded-full" />
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
