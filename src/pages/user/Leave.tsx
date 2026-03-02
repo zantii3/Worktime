@@ -12,6 +12,9 @@ import {
   Send,
   FileUser,
   FileClock,
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { useClock } from "./hooks/useClock";
 import Usersidebar from "./components/Usersidebar.tsx";
@@ -31,7 +34,62 @@ interface LeaveForm {
   reason: string;
 }
 
-const ALL_LEAVES_KEY = STORAGE_KEY; // Shared key for admin and user
+const ALL_LEAVES_KEY = STORAGE_KEY;
+const ROWS_PER_PAGE = 5;
+
+// ─── Past-date Modal ──────────────────────────────────────────────────────────
+function PastDateModal({ onClose }: { onClose: () => void }) {
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ scale: 0.85, opacity: 0, y: 20 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.85, opacity: 0, y: 20 }}
+          transition={{ type: "spring", damping: 20, stiffness: 260 }}
+          onClick={(e) => e.stopPropagation()}
+          className="bg-white rounded-3xl shadow-2xl border-2 border-red-100 w-full max-w-sm mx-4 overflow-hidden"
+        >
+          {/* Header */}
+          <div className="bg-gradient-to-br from-red-500 to-rose-600 p-6 flex flex-col items-center text-white">
+            <div className="p-3 bg-white/20 rounded-2xl mb-3">
+              <AlertTriangle className="w-8 h-8" />
+            </div>
+            <h2 className="text-xl font-bold">Invalid Date Selected</h2>
+          </div>
+
+          {/* Body */}
+          <div className="p-6 text-center">
+            <p className="text-slate-600 text-sm leading-relaxed mb-1">
+              You've selected a date that has already passed.
+            </p>
+            <p className="text-slate-500 text-sm">
+              Leave requests can only be filed for{" "}
+              <span className="font-semibold text-[#1F3C68]">today or future dates</span>.
+            </p>
+          </div>
+
+          {/* Footer */}
+          <div className="px-6 pb-6">
+            <button
+              onClick={onClose}
+              className="w-full py-3 rounded-xl bg-[#1F3C68] text-white font-semibold hover:bg-[#162d52] transition-colors shadow-md"
+              type="button"
+            >
+              Got it, go back
+            </button>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
 
 function Leave() {
   const location = useLocation();
@@ -46,6 +104,13 @@ function Leave() {
   const [formError, setFormError] = useState("");
   const [fileName, setFileName] = useState("");
   const [activeTab, setActiveTab] = useState<"All" | LeaveStatus>("All");
+  const [showPastDateModal, setShowPastDateModal] = useState(false);
+
+  // Pagination - history
+  const [currentPage, setCurrentPage] = useState(1);
+  // Pagination - pending
+  const [pendingPage, setPendingPage] = useState(1);
+  const PENDING_PER_PAGE = 3;
 
   const [form, setForm] = useState<LeaveForm>({
     type: "Vacation Leave",
@@ -54,7 +119,6 @@ function Leave() {
     reason: "",
   });
 
-  // Lazy init from shared localStorage - filter to current user
   const [leaves, setLeaves] = useState<LeaveRequest[]>(() => {
     const stored = localStorage.getItem(ALL_LEAVES_KEY);
     if (!stored) return [];
@@ -66,7 +130,6 @@ function Leave() {
     }
   });
 
-  // Listen for admin updates (works across tabs/windows)
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key !== ALL_LEAVES_KEY) return;
@@ -77,12 +140,10 @@ function Leave() {
         // ignore
       }
     };
-
     window.addEventListener("storage", handleStorageChange);
     return () => window.removeEventListener("storage", handleStorageChange);
   }, [user?.name]);
 
-  // Load leave policy from localStorage
   const [leavePolicy] = useState<LeavePolicy[]>(() => {
     const stored = localStorage.getItem(
       `${POLICY_STORAGE_KEY}_${user?.id || "user"}`
@@ -108,7 +169,19 @@ function Leave() {
     return diff > 0 ? diff : 0;
   };
 
-  // Calculate used days from approved leaves only
+  // ─── Past-date guard ────────────────────────────────────────────────────────
+  const todayStr = new Date().toISOString().split("T")[0];
+
+  const handleDateChange = (field: "dateFrom" | "dateTo", value: string) => {
+    if (value && value < todayStr) {
+      setShowPastDateModal(true);
+      // Clear the offending field
+      setForm((prev) => ({ ...prev, [field]: "" }));
+      return;
+    }
+    setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
   const getUsedDays = (leaveType: LeaveType) => {
     return leaves
       .filter((l) => l.status === "Approved" && l.type === leaveType)
@@ -120,17 +193,14 @@ function Leave() {
       showError("Please fill in all fields.");
       return;
     }
-
     if (new Date(form.dateTo) < new Date(form.dateFrom)) {
       showError("End date cannot be before start date.");
       return;
     }
 
     const days = calculateDays(form.dateFrom, form.dateTo);
-
     const approvedDays = getUsedDays(form.type);
     const policy = leavePolicy.find((p) => p.type === form.type);
-
     if (policy) {
       const remaining = policy.total - approvedDays;
       if (days > remaining) {
@@ -157,25 +227,42 @@ function Leave() {
       fileName: fileName || undefined,
     };
 
-    // Read ALL leaves, append new one, write back to shared key
     const storedAll = localStorage.getItem(ALL_LEAVES_KEY);
     const allLeaves: LeaveRequest[] = storedAll ? JSON.parse(storedAll) : [];
     const updatedAllLeaves = [newLeave, ...allLeaves];
     localStorage.setItem(ALL_LEAVES_KEY, JSON.stringify(updatedAllLeaves));
 
-    // Update local UI (user-only filtered)
     setLeaves((prev) => [newLeave, ...prev]);
-
     setForm({ type: "Vacation Leave", dateFrom: "", dateTo: "", reason: "" });
     setFileName("");
     setFormError("");
-
+    setCurrentPage(1);
+    setPendingPage(1);
     showSuccess("Leave request submitted successfully!");
   };
 
   const pendingLeaves = leaves.filter((l) => l.status === "Pending");
+  const totalPendingPages = Math.max(1, Math.ceil(pendingLeaves.length / PENDING_PER_PAGE));
+  const paginatedPending = pendingLeaves.slice(
+    (pendingPage - 1) * PENDING_PER_PAGE,
+    pendingPage * PENDING_PER_PAGE
+  );
+
+  // Reset page when tab changes
+  const handleTabChange = (tab: "All" | LeaveStatus) => {
+    setActiveTab(tab);
+    setCurrentPage(1);
+  };
+
   const filteredLeaves =
     activeTab === "All" ? leaves : leaves.filter((l) => l.status === activeTab);
+
+  // ─── Pagination logic ───────────────────────────────────────────────────────
+  const totalPages = Math.max(1, Math.ceil(filteredLeaves.length / ROWS_PER_PAGE));
+  const paginatedLeaves = filteredLeaves.slice(
+    (currentPage - 1) * ROWS_PER_PAGE,
+    currentPage * ROWS_PER_PAGE
+  );
 
   const getStatusStyles = (status: LeaveStatus) => {
     if (status === "Approved")
@@ -205,6 +292,11 @@ function Leave() {
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex">
+      {/* Past-date modal */}
+      {showPastDateModal && (
+        <PastDateModal onClose={() => setShowPastDateModal(false)} />
+      )}
+
       {/* Sidebar Desktop */}
       <aside className="hidden md:flex w-64 bg-white shadow-lg flex-col border-r border-slate-200">
         <Usersidebar navigate={navigate} logout={handleLogout} />
@@ -314,24 +406,16 @@ function Leave() {
                   {policy.type}
                 </p>
                 <div className="flex items-end gap-1 mb-1">
-                  <span
-                    className={`text-4xl font-bold tabular-nums ${policy.textColor}`}
-                  >
+                  <span className={`text-4xl font-bold tabular-nums ${policy.textColor}`}>
                     {remaining}
                   </span>
-                  <span className="text-slate-400 text-sm mb-1">
-                    / {policy.total} days
-                  </span>
+                  <span className="text-slate-400 text-sm mb-1">/ {policy.total} days</span>
                 </div>
                 <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden my-3">
                   <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${pct}%` }}
-                    transition={{
-                      delay: 0.4 + i * 0.1,
-                      duration: 0.8,
-                      ease: "easeOut",
-                    }}
+                    transition={{ delay: 0.4 + i * 0.1, duration: 0.8, ease: "easeOut" }}
                     className={`h-full rounded-full ${policy.color}`}
                   />
                 </div>
@@ -358,9 +442,7 @@ function Leave() {
               </div>
               <div>
                 <h2 className="text-2xl font-bold">File a Leave Request</h2>
-                <p className="text-sm text-white/90">
-                  Complete the form below to submit
-                </p>
+                <p className="text-sm text-white/90">Complete the form below to submit</p>
               </div>
             </div>
           </div>
@@ -392,9 +474,7 @@ function Leave() {
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
                   Supporting Document{" "}
-                  <span className="text-slate-400 normal-case font-normal">
-                    (Optional)
-                  </span>
+                  <span className="text-slate-400 normal-case font-normal">(Optional)</span>
                 </label>
                 <label className="flex items-center gap-3 w-full bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl cursor-pointer hover:border-[#E97638] hover:bg-orange-50/30 transition-all">
                   <Paperclip className="w-4 h-4 text-slate-400 shrink-0" />
@@ -418,7 +498,8 @@ function Leave() {
                 <input
                   type="date"
                   value={form.dateFrom}
-                  onChange={(e) => setForm({ ...form, dateFrom: e.target.value })}
+                  min={todayStr}
+                  onChange={(e) => handleDateChange("dateFrom", e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 text-slate-800 px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F28C28]/40 focus:border-[#F28C28] transition-all"
                 />
               </div>
@@ -429,7 +510,8 @@ function Leave() {
                 <input
                   type="date"
                   value={form.dateTo}
-                  onChange={(e) => setForm({ ...form, dateTo: e.target.value })}
+                  min={form.dateFrom || todayStr}
+                  onChange={(e) => handleDateChange("dateTo", e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 text-slate-800 px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F28C28]/40 focus:border-[#F28C28] transition-all"
                 />
               </div>
@@ -497,55 +579,105 @@ function Leave() {
             transition={{ delay: 0.3 }}
             className="bg-white rounded-3xl shadow-md border border-slate-100 overflow-hidden mb-6"
           >
-            <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-100 p-5 flex items-center justify-between">
+            {/* Primary blue header */}
+            <div className="bg-gradient-to-r from-[#1F3C68] to-[#2a4f88] p-5 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-amber-100 rounded-xl">
-                  <Clock3 className="w-5 h-5 text-primary" />
+                <div className="p-2 bg-white/20 rounded-xl">
+                  <Clock3 className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-[#1F3C68]">Pending Requests</h2>
-                  <p className="text-xs text-slate-500">Awaiting approval</p>
+                  <h2 className="text-lg font-bold text-white">Pending Requests</h2>
+                  <p className="text-xs text-white/70">Awaiting approval</p>
                 </div>
               </div>
-              <span className="bg-primary text-white text-sm font-bold px-3 py-1 rounded-full">
+              <span className="bg-white text-[#1F3C68] text-sm font-bold px-3 py-1 rounded-full">
                 {pendingLeaves.length}
               </span>
             </div>
 
             <div className="divide-y divide-slate-50">
-              {pendingLeaves.map((leave, index) => (
-                <motion.div
-                  key={leave.id}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                  className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/60 transition-colors"
-                >
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-semibold text-[#1F3C68]">{leave.type}</span>
-                      <span className="text-xs bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full font-medium">
-                        {leave.days}d
+              <AnimatePresence mode="wait">
+                {paginatedPending.map((leave, index) => (
+                  <motion.div
+                    key={leave.id}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 10 }}
+                    transition={{ delay: index * 0.05 }}
+                    className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/60 transition-colors"
+                  >
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-semibold text-[#1F3C68]">{leave.type}</span>
+                        <span className="text-xs bg-[#1F3C68]/10 text-[#1F3C68] border border-[#1F3C68]/20 px-2 py-0.5 rounded-full font-medium">
+                          {leave.days}d
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-500">
+                        {formatDate(leave.startDate)}
+                        {leave.startDate !== leave.endDate && ` — ${formatDate(leave.endDate)}`}
+                      </p>
+                      <p className="text-xs text-slate-400 mt-0.5 truncate max-w-xs">
+                        {leave.reason}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#1F3C68]/10 text-[#1F3C68] border border-[#1F3C68]/20 text-sm font-semibold">
+                        <Clock3 className="w-4 h-4" />
+                        Awaiting Approval
                       </span>
                     </div>
-                    <p className="text-sm text-slate-500">
-                      {formatDate(leave.startDate)}
-                      {leave.startDate !== leave.endDate && ` — ${formatDate(leave.endDate)}`}
-                    </p>
-                    <p className="text-xs text-slate-400 mt-0.5 truncate max-w-xs">
-                      {leave.reason}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-100 text-primary border border-amber-200 text-sm font-semibold">
-                      <Clock3 className="w-4 h-4" />
-                      Awaiting Approval
-                    </span>
-                  </div>
-                </motion.div>
-              ))}
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             </div>
+
+            {/* Pending Pagination */}
+            {pendingLeaves.length > PENDING_PER_PAGE && (
+              <div className="flex items-center justify-between px-5 py-4 border-t border-slate-100 bg-slate-50/50">
+                <p className="text-xs text-slate-400">
+                  Showing{" "}
+                  <span className="font-semibold text-slate-600">
+                    {(pendingPage - 1) * PENDING_PER_PAGE + 1}–
+                    {Math.min(pendingPage * PENDING_PER_PAGE, pendingLeaves.length)}
+                  </span>{" "}
+                  of{" "}
+                  <span className="font-semibold text-slate-600">{pendingLeaves.length}</span>
+                </p>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setPendingPage((p) => Math.max(1, p - 1))}
+                    disabled={pendingPage === 1}
+                    className="p-2 rounded-lg hover:bg-[#1F3C68]/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                    type="button"
+                  >
+                    <ChevronLeft className="w-4 h-4 text-[#1F3C68]" />
+                  </button>
+                  {Array.from({ length: totalPendingPages }, (_, i) => i + 1).map((page) => (
+                    <button
+                      key={page}
+                      onClick={() => setPendingPage(page)}
+                      className={`w-8 h-8 rounded-lg text-xs font-semibold transition-all ${
+                        pendingPage === page
+                          ? "bg-[#1F3C68] text-white shadow"
+                          : "text-slate-600 hover:bg-[#1F3C68]/10"
+                      }`}
+                      type="button"
+                    >
+                      {page}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setPendingPage((p) => Math.min(totalPendingPages, p + 1))}
+                    disabled={pendingPage === totalPendingPages}
+                    className="p-2 rounded-lg hover:bg-[#1F3C68]/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                    type="button"
+                  >
+                    <ChevronRight className="w-4 h-4 text-[#1F3C68]" />
+                  </button>
+                </div>
+              </div>
+            )}
           </motion.div>
         )}
 
@@ -571,10 +703,10 @@ function Leave() {
               {(["All", "Pending", "Approved", "Rejected"] as const).map((s) => (
                 <button
                   key={s}
-                  onClick={() => setActiveTab(s)}
+                  onClick={() => handleTabChange(s)}
                   className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                     activeTab === s
-                      ? "bg-[#E97638] text-white shadow"
+                      ? "bg-[#1F3C68] text-white shadow"
                       : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                   }`}
                   type="button"
@@ -604,15 +736,15 @@ function Leave() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                <AnimatePresence>
-                  {filteredLeaves.length === 0 ? (
+                <AnimatePresence mode="wait">
+                  {paginatedLeaves.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-12 text-center text-slate-400">
                         No leave requests found.
                       </td>
                     </tr>
                   ) : (
-                    filteredLeaves.map((leave, index) => (
+                    paginatedLeaves.map((leave, index) => (
                       <motion.tr
                         key={leave.id}
                         initial={{ opacity: 0, y: 10 }}
@@ -656,6 +788,57 @@ function Leave() {
               </tbody>
             </table>
           </div>
+
+          {/* ─── Pagination Controls ─────────────────────────────────────────── */}
+          {filteredLeaves.length > ROWS_PER_PAGE && (
+            <div className="flex items-center justify-between mt-6 pt-4 border-t border-slate-100">
+              <p className="text-xs text-slate-400">
+                Showing{" "}
+                <span className="font-semibold text-slate-600">
+                  {(currentPage - 1) * ROWS_PER_PAGE + 1}–
+                  {Math.min(currentPage * ROWS_PER_PAGE, filteredLeaves.length)}
+                </span>{" "}
+                of{" "}
+                <span className="font-semibold text-slate-600">{filteredLeaves.length}</span>{" "}
+                entries
+              </p>
+
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="p-2 rounded-lg hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                  type="button"
+                >
+                  <ChevronLeft className="w-4 h-4 text-slate-600" />
+                </button>
+
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                  <button
+                    key={page}
+                    onClick={() => setCurrentPage(page)}
+                    className={`w-8 h-8 rounded-lg text-xs font-semibold transition-all ${
+                      currentPage === page
+                        ? "bg-[#1F3C68] text-white shadow"
+                        : "text-slate-600 hover:bg-slate-100"
+                    }`}
+                    type="button"
+                  >
+                    {page}
+                  </button>
+                ))}
+
+                <button
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="p-2 rounded-lg hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                  type="button"
+                >
+                  <ChevronRight className="w-4 h-4 text-slate-600" />
+                </button>
+              </div>
+            </div>
+          )}
         </motion.div>
       </main>
     </div>
