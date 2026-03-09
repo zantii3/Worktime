@@ -9,6 +9,7 @@ import {
   History,
   LogIn,
   LogOut,
+  Pencil,
   Timer,
   Utensils,
   X,
@@ -277,17 +278,19 @@ function LogSkeleton() {
   );
 }
 
-// ─── Day detail modal (copied from user UI; no leave badge here) ──────────────
+// ─── Day detail modal ──────────────────────────────────────────────────────────
 function DayDetailModal({
   dateISO,
   record,
   now,
   onClose,
+  onEdit,
 }: {
   dateISO: string;
   record: AttendanceRecord | null;
   now: Date;
   onClose: () => void;
+  onEdit: () => void;
 }) {
   const date = new Date(dateISO + "T12:00:00");
   const isToday = isTodayISO(dateISO);
@@ -324,13 +327,24 @@ function DayDetailModal({
       >
         {/* Header */}
         <div className="bg-[#1F3C68] p-6 text-white relative">
-          <button
-            onClick={onClose}
-            className="absolute top-4 right-4 p-1.5 hover:bg-white/20 rounded-lg transition-colors"
-            type="button"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <button
+              onClick={onEdit}
+              className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+              type="button"
+              aria-label="Edit day record"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={onClose}
+              className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+              type="button"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
 
           <p className="text-white/70 text-sm font-medium">
             {date.toLocaleDateString("en-US", { weekday: "long" })}
@@ -706,12 +720,12 @@ export default function Attendance() {
     setDetailOpen(true);
   }
 
-  // Month log items (copied “user daily logs” feel, but absent only for past weekdays)
+  // Month log items
   type MonthLogItem =
     | { kind: "present"; dateISO: string; record: AttendanceRecord; minutes: number }
     | { kind: "incomplete"; dateISO: string; record: AttendanceRecord; minutes: number }
-    | { kind: "absent"; dateISO: string } // past weekday only
-    | { kind: "upcoming"; dateISO: string } // future weekday no record
+    | { kind: "absent"; dateISO: string }
+    | { kind: "upcoming"; dateISO: string }
     | { kind: "weekend"; dateISO: string };
 
   const monthLogItems = useMemo<MonthLogItem[]>(() => {
@@ -730,7 +744,6 @@ export default function Attendance() {
       const complete = !!r?.timeIn && !!r?.timeOut;
 
       if (!r || !hasAny) {
-        // only absent if past
         if (isPastDayISO(dateISO)) items.push({ kind: "absent", dateISO });
         else items.push({ kind: "upcoming", dateISO });
         continue;
@@ -758,7 +771,7 @@ export default function Attendance() {
     return () => clearTimeout(t);
   }, [viewMonth, selectedEmployeeId]);
 
-  // Export CSV (Month) — includes weekdays; absent only for past weekdays
+  // Export CSV (Month)
   function exportMonthCSV() {
     const monthLabel = viewMonth.toLocaleDateString("en-US", {
       month: "short",
@@ -846,7 +859,7 @@ export default function Attendance() {
     window.print();
   }
 
-  // Admin Edit Modal (supports creating a record on absent day)
+  // Admin Edit Modal
   const [editOpen, setEditOpen] = useState(false);
   const [editDraft, setEditDraft] = useState<{
     dateISO: string;
@@ -869,6 +882,23 @@ export default function Attendance() {
 
     setEditDraft({
       dateISO: selectedDateISO,
+      source: (r?.source ?? "") as string,
+      timeIn: isoToLocalInput(r?.timeIn ?? null),
+      lunchOut: isoToLocalInput(r?.lunchOut ?? null),
+      lunchIn: isoToLocalInput(r?.lunchIn ?? null),
+      timeOut: isoToLocalInput(r?.timeOut ?? null),
+    });
+
+    setEditOpen(true);
+  }
+
+  function handleEditDate(dateISO: string) {
+    setSelectedDateISO(dateISO);
+
+    const r = recordByDate.get(dateISO) ?? null;
+
+    setEditDraft({
+      dateISO,
       source: (r?.source ?? "") as string,
       timeIn: isoToLocalInput(r?.timeIn ?? null),
       lunchOut: isoToLocalInput(r?.lunchOut ?? null),
@@ -906,7 +936,7 @@ export default function Attendance() {
 
   function handleSelectDate(dateISO: string) {
     setSelectedDateISO(dateISO);
-    setDetailOpen(true); // ✅ open user-style modal on calendar click
+    setDetailOpen(true);
   }
 
   return (
@@ -924,6 +954,10 @@ export default function Attendance() {
             record={selectedDayRecord}
             now={now}
             onClose={() => setDetailOpen(false)}
+            onEdit={() => {
+              setDetailOpen(false);
+              handleEditDate(selectedDateISO);
+            }}
           />
         )}
       </AnimatePresence>
@@ -961,7 +995,6 @@ export default function Attendance() {
               <span className="font-semibold">{selectedEmployee?.name}</span>
             </span>
 
-            {/* Date Search */}
             <div className="flex flex-wrap items-center gap-2 sm:ml-2">
               <div className="relative">
                 <input
@@ -1004,7 +1037,6 @@ export default function Attendance() {
           </div>
         </div>
 
-        {/* Clock badge */}
         <div className="bg-primary text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
           <Clock className="h-4 w-4 opacity-90" />
           <span className="tabular-nums">
@@ -1023,7 +1055,7 @@ export default function Attendance() {
           <AdminAttendanceCalendar
             viewMonth={viewMonth}
             selectedDateISO={selectedDateISO}
-            onSelectDateISO={handleSelectDate} // ✅ open modal on calendar click
+            onSelectDateISO={handleSelectDate}
             onPrevMonth={prevMonth}
             onNextMonth={nextMonth}
             recordsForMonth={recordsForMonth}
@@ -1116,7 +1148,7 @@ export default function Attendance() {
             </div>
           </motion.div>
 
-          {/* Daily logs (user-style) */}
+          {/* Daily logs */}
           <motion.div
             initial={{ opacity: 0, x: 10 }}
             animate={{ opacity: 1, x: 0 }}
@@ -1206,8 +1238,7 @@ export default function Attendance() {
                         { weekday: "short", month: "short", day: "numeric" }
                       );
 
-                      const baseRow =
-                        "p-3 rounded-2xl border transition-all cursor-pointer";
+                      const baseRow = "p-3 rounded-2xl border transition-all";
                       const selectedRing = isSelected ? "ring-2 ring-[#F28C28]/40" : "";
 
                       if (item.kind === "weekend") {
@@ -1217,27 +1248,38 @@ export default function Attendance() {
                             initial={{ opacity: 0, y: 8 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: idx * 0.02 }}
-                            onClick={() => {
-                              setSelectedDateISO(item.dateISO);
-                              setDetailOpen(true);
-                            }}
                             className={cx(
                               baseRow,
                               "bg-slate-50 border-slate-100 hover:border-slate-200",
                               selectedRing
                             )}
                           >
-                            <div className="flex justify-between items-center">
-                              <div>
-                                <p className="font-bold text-slate-500 text-sm">
-                                  {dateLabel}
-                                </p>
-                                <p className="text-xs text-slate-400 mt-1">
-                                  Weekend
-                                </p>
-                              </div>
-                              <div className="bg-slate-200/70 px-3 py-1 rounded-full text-xs font-bold text-slate-600">
-                                —
+                            <div className="flex justify-between items-center gap-3">
+                              <button
+                                onClick={() => {
+                                  setSelectedDateISO(item.dateISO);
+                                  setDetailOpen(true);
+                                }}
+                                className="flex-1 text-left"
+                                type="button"
+                              >
+                                <p className="font-bold text-slate-500 text-sm">{dateLabel}</p>
+                                <p className="text-xs text-slate-400 mt-1">Weekend</p>
+                              </button>
+
+                              <div className="flex items-center gap-2">
+                                <div className="bg-slate-200/70 px-3 py-1 rounded-full text-xs font-bold text-slate-600">
+                                  —
+                                </div>
+
+                                <button
+                                  onClick={() => handleEditDate(item.dateISO)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-text-heading hover:bg-white transition"
+                                  type="button"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                  Edit
+                                </button>
                               </div>
                             </div>
                           </motion.div>
@@ -1251,38 +1293,47 @@ export default function Attendance() {
                             initial={{ opacity: 0, y: 8 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: idx * 0.02 }}
-                            onClick={() => {
-                              setSelectedDateISO(item.dateISO);
-                              setDetailOpen(true);
-                            }}
                             className={cx(
                               baseRow,
                               "bg-rose-50 border-rose-200 hover:border-rose-300",
                               selectedRing
                             )}
                           >
-                            <div className="flex justify-between items-center">
-                              <div>
+                            <div className="flex justify-between items-center gap-3">
+                              <button
+                                onClick={() => {
+                                  setSelectedDateISO(item.dateISO);
+                                  setDetailOpen(true);
+                                }}
+                                className="flex-1 text-left"
+                                type="button"
+                              >
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <p className="font-bold text-rose-700 text-sm">
-                                    {dateLabel}
-                                  </p>
+                                  <p className="font-bold text-rose-700 text-sm">{dateLabel}</p>
                                   <span className="text-[9px] font-bold text-rose-700 bg-white/60 border border-rose-200 px-1.5 py-0.5 rounded-full">
                                     Absent
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-3 mt-1">
-                                  <span className="text-xs text-slate-400 font-semibold">
-                                    ——
-                                  </span>
+                                  <span className="text-xs text-slate-400 font-semibold">——</span>
                                   <span className="text-slate-300 text-xs">→</span>
-                                  <span className="text-xs text-slate-400 font-semibold">
-                                    ——
-                                  </span>
+                                  <span className="text-xs text-slate-400 font-semibold">——</span>
                                 </div>
-                              </div>
-                              <div className="bg-rose-600 px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
-                                0.0 hrs
+                              </button>
+
+                              <div className="flex items-center gap-2">
+                                <div className="bg-rose-600 px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
+                                  0.0 hrs
+                                </div>
+
+                                <button
+                                  onClick={() => handleEditDate(item.dateISO)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white/70 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-white transition"
+                                  type="button"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                  Edit
+                                </button>
                               </div>
                             </div>
                           </motion.div>
@@ -1296,38 +1347,47 @@ export default function Attendance() {
                             initial={{ opacity: 0, y: 8 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: idx * 0.02 }}
-                            onClick={() => {
-                              setSelectedDateISO(item.dateISO);
-                              setDetailOpen(true);
-                            }}
                             className={cx(
                               baseRow,
                               "bg-slate-50 border-slate-100 hover:border-slate-200",
                               selectedRing
                             )}
                           >
-                            <div className="flex justify-between items-center">
-                              <div>
+                            <div className="flex justify-between items-center gap-3">
+                              <button
+                                onClick={() => {
+                                  setSelectedDateISO(item.dateISO);
+                                  setDetailOpen(true);
+                                }}
+                                className="flex-1 text-left"
+                                type="button"
+                              >
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <p className="font-bold text-slate-600 text-sm">
-                                    {dateLabel}
-                                  </p>
+                                  <p className="font-bold text-slate-600 text-sm">{dateLabel}</p>
                                   <span className="text-[9px] font-bold text-slate-600 bg-white/60 border border-slate-200 px-1.5 py-0.5 rounded-full">
                                     Upcoming
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-3 mt-1">
-                                  <span className="text-xs text-slate-400 font-semibold">
-                                    ——
-                                  </span>
+                                  <span className="text-xs text-slate-400 font-semibold">——</span>
                                   <span className="text-slate-300 text-xs">→</span>
-                                  <span className="text-xs text-slate-400 font-semibold">
-                                    ——
-                                  </span>
+                                  <span className="text-xs text-slate-400 font-semibold">——</span>
                                 </div>
-                              </div>
-                              <div className="bg-slate-700 px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
-                                0.0 hrs
+                              </button>
+
+                              <div className="flex items-center gap-2">
+                                <div className="bg-slate-700 px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
+                                  0.0 hrs
+                                </div>
+
+                                <button
+                                  onClick={() => handleEditDate(item.dateISO)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-text-heading hover:bg-soft transition"
+                                  type="button"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                  Edit
+                                </button>
                               </div>
                             </div>
                           </motion.div>
@@ -1348,22 +1408,23 @@ export default function Attendance() {
                           initial={{ opacity: 0, y: 8 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ delay: idx * 0.02 }}
-                          onClick={() => {
-                            setSelectedDateISO(item.dateISO);
-                            setDetailOpen(true);
-                          }}
                           className={cx(
                             baseRow,
                             "bg-slate-50 border-slate-100 hover:border-[#F28C28]/30 hover:shadow-sm",
                             selectedRing
                           )}
                         >
-                          <div className="flex justify-between items-center">
-                            <div>
+                          <div className="flex justify-between items-center gap-3">
+                            <button
+                              onClick={() => {
+                                setSelectedDateISO(item.dateISO);
+                                setDetailOpen(true);
+                              }}
+                              className="flex-1 text-left"
+                              type="button"
+                            >
                               <div className="flex items-center gap-2 flex-wrap">
-                                <p className="font-bold text-[#1F3C68] text-sm">
-                                  {dateLabel}
-                                </p>
+                                <p className="font-bold text-[#1F3C68] text-sm">{dateLabel}</p>
                                 <span
                                   className={cx(
                                     "text-[9px] font-bold px-1.5 py-0.5 rounded-full border",
@@ -1384,13 +1445,22 @@ export default function Attendance() {
                                 </span>
                               </div>
 
-                              <div className="text-[11px] text-slate-400 mt-1">
-                                • {r.source ?? "—"}
-                              </div>
-                            </div>
+                              <div className="text-[11px] text-slate-400 mt-1">• {r.source ?? "—"}</div>
+                            </button>
 
-                            <div className="bg-primary px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
-                              {formatHoursFromMinutes(minutes)} hrs
+                            <div className="flex items-center gap-2">
+                              <div className="bg-primary px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
+                                {formatHoursFromMinutes(minutes)} hrs
+                              </div>
+
+                              <button
+                                onClick={() => handleEditDate(item.dateISO)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-text-heading hover:bg-soft transition"
+                                type="button"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                                Edit
+                              </button>
                             </div>
                           </div>
                         </motion.div>
