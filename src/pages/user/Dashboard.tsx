@@ -108,8 +108,6 @@ function BreakTooEarlyModal({ onClose, currentTime }: { onClose: () => void; cur
     </Modal>
   );
 }
-
-// ─── Early Out Modal ───────────────────────────────────────────────────────────
 function EarlyOutModal({
   onClose,
   onConfirmEarlyOut,
