@@ -1,51 +1,62 @@
 import { AnimatePresence, motion } from "framer-motion";
-import React, { useEffect, useMemo, useState } from "react";
 import {
+  ArrowUpDown,
+  ChevronDown,
+  ChevronRight,
   Clock,
+  Pencil,
   Plus,
   Search,
-  Pencil,
   Trash2,
   X,
-  ArrowUpDown,
 } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import AdminTable from "./components/AdminTable";
 import { useAdmin } from "./context/AdminProvider";
-import type { Task, TaskPriority, TaskStatus } from "./context/AdminTypes";
+import type { Project, Task, TaskPriority, TaskStatus } from "./context/AdminTypes";
 import { notifyError, notifySuccess } from "./utils/toast";
 
-// ✅ CONNECT TO accounts.json (src/pages/data/accounts.json)
-import accounts from "../data/accounts.json";
-
-type Account = {
-  id: number;
-  email: string;
-  password: string;
-  name: string;
-};
-
+// ---------- Types (admin-only extensions; backward-compatible) ----------
 type AdminTask = Task & {
+  // Canonical relations (frontend-only for now)
+  projectId?: number;
+  assignedToId?: number;
+  assignedBy?: string;
+  assignedById?: number;
+
+  // Optional metadata
   dueDate?: string; // YYYY-MM-DD
   tags?: string[];
 };
 
+type AdminProject = Project;
+
 type TaskForm = Omit<AdminTask, "id">;
+type ProjectForm = Omit<AdminProject, "id">;
+
+type ModalMode = "project" | "task";
 
 const createId = (): number => Date.now() + Math.floor(Math.random() * 1000);
 
 const STATUS: TaskStatus[] = ["Pending", "In Progress", "Completed"];
 const PRIORITY: TaskPriority[] = ["Low", "Medium", "High"];
 
-type SortKey =
+type ProjectSortKey = "newest" | "oldest" | "name" | "leader" | "dueDate" | "progress";
+type TaskSortKey =
   | "newest"
   | "oldest"
   | "priority"
   | "status"
   | "dueDate"
   | "title"
-  | "assignedTo";
+  | "assignee"
+  | "project";
 type SortDir = "asc" | "desc";
+
+function cn(...classes: Array<string | false | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
 
 function formatFullDate(now: Date) {
   return now.toLocaleDateString("en-US", {
@@ -70,10 +81,6 @@ function safeDateValue(yyyyMMdd?: string) {
   return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
 }
 
-function cn(...classes: Array<string | false | undefined>) {
-  return classes.filter(Boolean).join(" ");
-}
-
 function Pill({
   children,
   tone,
@@ -81,8 +88,7 @@ function Pill({
   children: string;
   tone: "primary" | "secondary" | "success" | "slate";
 }) {
-  const base =
-    "inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold border";
+  const base = "inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold border";
   const map = {
     primary: "bg-primary/10 text-primary border-primary/20",
     secondary: "bg-secondary/10 text-secondary border-secondary/20",
@@ -124,7 +130,6 @@ function Modal({
           aria-modal="true"
           role="dialog"
         >
-          {/* Backdrop */}
           <motion.button
             type="button"
             className="absolute inset-0 bg-black/30"
@@ -135,7 +140,6 @@ function Modal({
             aria-label="Close modal backdrop"
           />
 
-          {/* Panel */}
           <motion.div
             initial={{ y: 18, opacity: 0, scale: 0.98 }}
             animate={{ y: 0, opacity: 1, scale: 1 }}
@@ -159,7 +163,7 @@ function Modal({
               </button>
             </div>
 
-            <div className="p-4 sm:p-6 overflow-y-auto">{children}</div>
+            <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(85vh-72px)]">{children}</div>
           </motion.div>
         </motion.div>
       )}
@@ -168,48 +172,86 @@ function Modal({
 }
 
 export default function Tasks() {
-  const { tasks, setTasks } = useAdmin();
+  const { tasks, setTasks, projects, setProjects, users, admins } = useAdmin();
+
   const typedTasks = tasks as AdminTask[];
+  const typedProjects = projects as AdminProject[];
 
-  // ✅ assignees from accounts.json
+  // users come from accounts.json via AdminProvider (authoritative)
   const assignees = useMemo(() => {
-    const list = (accounts as Account[])
-      .map((a) => a.name?.trim())
-      .filter(Boolean) as string[];
-    return Array.from(new Set(list));
-  }, []);
+    const list = (users ?? []).map((u) => ({ id: (u as any).id as number, name: (u as any).name as string }));
+    return list.filter((u) => Number.isFinite(u.id) && u.name);
+  }, [users]);
 
+  const leaderOptions = assignees;
+
+  const projectById = useMemo(() => {
+    const m = new Map<number, AdminProject>();
+    for (const p of typedProjects) m.set(p.id, p);
+    return m;
+  }, [typedProjects]);
+
+  const userNameById = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const u of assignees) m.set(u.id, u.name);
+    return m;
+  }, [assignees]);
+
+  // Clock
   const [now, setNow] = useState<Date>(new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // Filters / sorting
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<TaskStatus | "All">("All");
-  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "All">(
-    "All"
-  );
-  const [sortKey, setSortKey] = useState<SortKey>("newest");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // ---------- UI state ----------
+  const [expandedProjects, setExpandedProjects] = useState<Record<number, boolean>>({});
+  const [showAllTasks, setShowAllTasks] = useState(false);
 
-  // Selection
+  // Project list controls
+  const [projectQuery, setProjectQuery] = useState("");
+  const [leaderFilter, setLeaderFilter] = useState<number | "All">("All");
+  const [projectSortKey, setProjectSortKey] = useState<ProjectSortKey>("newest");
+  const [projectSortDir, setProjectSortDir] = useState<SortDir>("desc");
+
+  // Task list controls (All Tasks)
+  const [taskQuery, setTaskQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<TaskStatus | "All">("All");
+  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "All">("All");
+  const [projectFilter, setProjectFilter] = useState<number | "All">("All");
+  const [taskSortKey, setTaskSortKey] = useState<TaskSortKey>("newest");
+  const [taskSortDir, setTaskSortDir] = useState<SortDir>("desc");
+
+  // Selection (All Tasks)
   const [selected, setSelected] = useState<Record<number, boolean>>({});
   const selectedIds = useMemo(
     () => Object.entries(selected).filter(([, v]) => v).map(([k]) => Number(k)),
     [selected]
   );
 
-  // Modal state
+  // ---------- Modal state ----------
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [modalMode, setModalMode] = useState<ModalMode>("project");
 
-  // Form
-  const [form, setForm] = useState<TaskForm>({
+  const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+
+  const [projectForm, setProjectForm] = useState<ProjectForm>({
+    name: "",
+    description: "",
+    leaderId: 0,
+    dueDate: "",
+    tags: [],
+  });
+
+  const [taskForm, setTaskForm] = useState<TaskForm>({
     title: "",
     description: "",
     assignedTo: "",
+    assignedToId: undefined,
+    assignedBy: "",
+    assignedById: undefined,
+    projectId: undefined,
     priority: "Low",
     status: "Pending",
     dueDate: "",
@@ -218,77 +260,141 @@ export default function Tasks() {
 
   const [tagInput, setTagInput] = useState("");
 
-  const resetForm = () => {
-    setForm({
+  const resetModal = () => {
+    setEditingProjectId(null);
+    setEditingTaskId(null);
+    setTagInput("");
+
+    setProjectForm({
+      name: "",
+      description: "",
+      leaderId: 0,
+      dueDate: "",
+      tags: [],
+    });
+
+    setTaskForm({
       title: "",
       description: "",
       assignedTo: "",
+      assignedToId: undefined,
+      assignedBy: "",
+      assignedById: undefined,
+      projectId: undefined,
       priority: "Low",
       status: "Pending",
       dueDate: "",
       tags: [],
     });
-    setTagInput("");
-    setEditingId(null);
   };
 
-  const openCreate = () => {
-    resetForm();
+  const openCreateProject = () => {
+    resetModal();
+    setModalMode("project");
     setModalOpen(true);
   };
 
-  const openEdit = (t: AdminTask) => {
-    setEditingId(t.id);
-    setForm({
+  const openEditProject = (p: AdminProject) => {
+    resetModal();
+    setModalMode("project");
+    setEditingProjectId(p.id);
+    setProjectForm({
+      name: p.name,
+      description: p.description,
+      leaderId: p.leaderId,
+      dueDate: p.dueDate ?? "",
+      tags: p.tags ?? [],
+    });
+    setModalOpen(true);
+  };
+
+  const openCreateTask = (prefProjectId?: number) => {
+    resetModal();
+    setModalMode("task");
+    setTaskForm((prev) => ({ ...prev, projectId: prefProjectId }));
+    setModalOpen(true);
+  };
+
+  const openEditTask = (t: AdminTask) => {
+    resetModal();
+    setModalMode("task");
+    setEditingTaskId(t.id);
+    setTaskForm({
       title: t.title,
       description: t.description,
       assignedTo: t.assignedTo,
+      assignedToId: t.assignedToId,
+      assignedBy: t.assignedBy ?? "",
+      assignedById: t.assignedById,
+      projectId: t.projectId,
       priority: t.priority,
       status: t.status,
       dueDate: t.dueDate ?? "",
       tags: t.tags ?? [],
     });
-    setTagInput("");
     setModalOpen(true);
   };
 
   const closeModal = () => {
     setModalOpen(false);
-    resetForm();
-  };
-
-  const onChange = (
-    e: React.ChangeEvent<
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >
-  ) => {
-    const { name, value } = e.target;
-    setForm((p) => ({ ...p, [name]: value }));
+    resetModal();
   };
 
   const addTag = () => {
     const clean = tagInput.trim();
     if (!clean) return;
-    setForm((p) => ({
-      ...p,
-      tags: Array.from(new Set([...(p.tags ?? []), clean])),
-    }));
+    if (modalMode === "project") {
+      setProjectForm((p) => ({ ...p, tags: Array.from(new Set([...(p.tags ?? []), clean])) }));
+    } else {
+      setTaskForm((p) => ({ ...p, tags: Array.from(new Set([...(p.tags ?? []), clean])) }));
+    }
     setTagInput("");
   };
 
   const removeTag = (tag: string) => {
-    setForm((p) => ({ ...p, tags: (p.tags ?? []).filter((t) => t !== tag) }));
+    if (modalMode === "project") {
+      setProjectForm((p) => ({ ...p, tags: (p.tags ?? []).filter((t) => t !== tag) }));
+    } else {
+      setTaskForm((p) => ({ ...p, tags: (p.tags ?? []).filter((t) => t !== tag) }));
+    }
   };
 
-  const save = () => {
-    if (!form.title.trim()) return notifyError("Task title is required.");
-    if (!form.assignedTo.trim())
+  // ---------- Save handlers ----------
+  const saveProject = () => {
+    if (!projectForm.name.trim()) return notifyError("Project name is required.");
+    if (!projectForm.leaderId || !userNameById.get(projectForm.leaderId))
+      return notifyError("Project leader is required.");
+
+    if (editingProjectId !== null) {
+      setProjects((prev) =>
+        (prev as AdminProject[]).map((p) => (p.id === editingProjectId ? { ...p, ...projectForm } : p))
+      );
+      notifySuccess("Project updated.");
+      closeModal();
+      return;
+    }
+
+    const newProject: AdminProject = { id: createId(), ...projectForm };
+    setProjects((prev) => [newProject as Project, ...prev]);
+    notifySuccess("Project created.");
+    closeModal();
+  };
+
+  const saveTask = () => {
+    if (!typedProjects.length) return notifyError("Create a project first.");
+    if (!taskForm.projectId || !projectById.get(taskForm.projectId))
+      return notifyError("Select a project for this task.");
+    if (!taskForm.title.trim()) return notifyError("Task title is required.");
+    if (!taskForm.assignedToId || !userNameById.get(taskForm.assignedToId))
       return notifyError("Assigned user is required.");
 
-    if (editingId) {
+    const assignedToName = userNameById.get(taskForm.assignedToId) ?? taskForm.assignedTo;
+    const assignedByName = taskForm.assignedById ? (userNameById.get(taskForm.assignedById) ?? taskForm.assignedBy) : undefined;
+
+    if (editingTaskId !== null) {
       setTasks((prev) =>
         (prev as AdminTask[]).map((t) =>
-          t.id === editingId ? { ...t, ...form } : t
+          t.id === editingTaskId ? ({ ...t, ...taskForm, assignedTo: assignedToName, assignedBy: assignedByName } as AdminTask) : t
         )
       );
       notifySuccess("Task updated.");
@@ -296,13 +402,34 @@ export default function Tasks() {
       return;
     }
 
-    const newTask: AdminTask = { id: createId(), ...form };
+    const newTask: AdminTask = {
+      id: createId(),
+      ...taskForm,
+      assignedTo: assignedToName,
+      assignedBy: assignedByName,
+    };
+
     setTasks((prev) => [newTask as Task, ...prev]);
-    notifySuccess("Task added.");
+    notifySuccess("Task created.");
     closeModal();
   };
 
-  const remove = (id: number) => {
+  const saveModal = () => (modalMode === "project" ? saveProject() : saveTask());
+
+  // ---------- Mutations ----------
+  const removeProject = (projectId: number) => {
+    const affected = typedTasks.filter((t) => t.projectId === projectId).length;
+    setProjects((prev) => prev.filter((p) => p.id !== projectId));
+    setTasks((prev) => (prev as AdminTask[]).filter((t) => t.projectId !== projectId));
+    setExpandedProjects((p) => {
+      const copy = { ...p };
+      delete copy[projectId];
+      return copy;
+    });
+    notifySuccess(affected ? `Project deleted (and ${affected} task(s) removed).` : "Project deleted.");
+  };
+
+  const removeTask = (id: number) => {
     setTasks((prev) => prev.filter((t) => t.id !== id));
     setSelected((p) => {
       const copy = { ...p };
@@ -319,9 +446,7 @@ export default function Tasks() {
 
   const bulkSetStatus = (status: TaskStatus) => {
     if (selectedIds.length === 0) return notifyError("Select tasks first.");
-    setTasks((prev) =>
-      prev.map((t) => (selectedIds.includes(t.id) ? { ...t, status } : t))
-    );
+    setTasks((prev) => prev.map((t) => (selectedIds.includes(t.id) ? { ...t, status } : t)));
     notifySuccess(`Updated ${selectedIds.length} task(s).`);
   };
 
@@ -344,57 +469,141 @@ export default function Tasks() {
     setSelected((prev) => ({ ...prev, [id]: checked }));
   };
 
-  // Derived: filtered + sorted
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let list = [...typedTasks];
+  const toggleExpanded = (projectId: number) => {
+    setExpandedProjects((prev) => ({ ...prev, [projectId]: !prev[projectId] }));
+  };
+
+  // ---------- Derived data ----------
+  const tasksByProject = useMemo(() => {
+    const map = new Map<number, AdminTask[]>();
+    for (const t of typedTasks) {
+      const pid = t.projectId;
+      if (!pid) continue;
+      const list = map.get(pid) ?? [];
+      list.push(t);
+      map.set(pid, list);
+    }
+    return map;
+  }, [typedTasks]);
+
+  const projectStats = useMemo(() => {
+    const m = new Map<number, { total: number; completed: number }>();
+    for (const p of typedProjects) {
+      const list = tasksByProject.get(p.id) ?? [];
+      const total = list.length;
+      const completed = list.filter((t) => t.status === "Completed").length;
+      m.set(p.id, { total, completed });
+    }
+    return m;
+  }, [typedProjects, tasksByProject]);
+
+  const filteredProjects = useMemo(() => {
+    const q = projectQuery.trim().toLowerCase();
+    let list = [...typedProjects];
 
     if (q) {
-      list = list.filter((t) => {
-        const blob = `${t.title} ${t.description} ${t.assignedTo}`.toLowerCase();
+      list = list.filter((p) => {
+        const leaderName = userNameById.get(p.leaderId) ?? "";
+        const blob = `${p.name} ${p.description} ${leaderName}`.toLowerCase();
         return blob.includes(q);
       });
     }
 
-    if (statusFilter !== "All")
-      list = list.filter((t) => t.status === statusFilter);
-    if (priorityFilter !== "All")
-      list = list.filter((t) => t.priority === priorityFilter);
+    if (leaderFilter !== "All") list = list.filter((p) => p.leaderId === leaderFilter);
 
-    const dir = sortDir === "asc" ? 1 : -1;
-
+    const dir = projectSortDir === "asc" ? 1 : -1;
     list.sort((a, b) => {
-      if (sortKey === "newest") return (b.id - a.id) * dir;
-      if (sortKey === "oldest") return (a.id - b.id) * dir;
-      if (sortKey === "priority")
-        return (priorityRank(b.priority) - priorityRank(a.priority)) * dir;
-      if (sortKey === "status")
-        return (statusRank(b.status) - statusRank(a.status)) * dir;
-      if (sortKey === "dueDate")
-        return (safeDateValue(a.dueDate) - safeDateValue(b.dueDate)) * dir;
-      if (sortKey === "title") return a.title.localeCompare(b.title) * dir;
-      if (sortKey === "assignedTo")
-        return a.assignedTo.localeCompare(b.assignedTo) * dir;
+      if (projectSortKey === "newest") return (b.id - a.id) * dir;
+      if (projectSortKey === "oldest") return (a.id - b.id) * dir;
+      if (projectSortKey === "name") return a.name.localeCompare(b.name) * dir;
+      if (projectSortKey === "leader") {
+        const an = userNameById.get(a.leaderId) ?? "";
+        const bn = userNameById.get(b.leaderId) ?? "";
+        return an.localeCompare(bn) * dir;
+      }
+      if (projectSortKey === "dueDate") return (safeDateValue(a.dueDate) - safeDateValue(b.dueDate)) * dir;
+      if (projectSortKey === "progress") {
+        const as = projectStats.get(a.id) ?? { total: 0, completed: 0 };
+        const bs = projectStats.get(b.id) ?? { total: 0, completed: 0 };
+        const ar = as.total ? as.completed / as.total : 0;
+        const br = bs.total ? bs.completed / bs.total : 0;
+        return (ar - br) * dir;
+      }
       return 0;
     });
 
     return list;
-  }, [typedTasks, query, statusFilter, priorityFilter, sortKey, sortDir]);
+  }, [typedProjects, projectQuery, leaderFilter, projectSortKey, projectSortDir, userNameById, projectStats]);
 
-  const visibleIds = useMemo(() => filtered.map((t) => t.id), [filtered]);
+  const filteredTasksAll = useMemo(() => {
+    const q = taskQuery.trim().toLowerCase();
+    let list = [...typedTasks];
 
+    if (q) {
+      list = list.filter((t) => {
+        const projectName = t.projectId ? projectById.get(t.projectId)?.name ?? "" : "";
+        const blob = `${t.title} ${t.description} ${t.assignedTo} ${projectName}`.toLowerCase();
+        return blob.includes(q);
+      });
+    }
+
+    if (statusFilter !== "All") list = list.filter((t) => t.status === statusFilter);
+    if (priorityFilter !== "All") list = list.filter((t) => t.priority === priorityFilter);
+    if (projectFilter !== "All") list = list.filter((t) => t.projectId === projectFilter);
+
+    const dir = taskSortDir === "asc" ? 1 : -1;
+    list.sort((a, b) => {
+      if (taskSortKey === "newest") return (b.id - a.id) * dir;
+      if (taskSortKey === "oldest") return (a.id - b.id) * dir;
+      if (taskSortKey === "priority") return (priorityRank(b.priority) - priorityRank(a.priority)) * dir;
+      if (taskSortKey === "status") return (statusRank(b.status) - statusRank(a.status)) * dir;
+      if (taskSortKey === "dueDate") return (safeDateValue(a.dueDate) - safeDateValue(b.dueDate)) * dir;
+      if (taskSortKey === "title") return a.title.localeCompare(b.title) * dir;
+      if (taskSortKey === "assignee") return a.assignedTo.localeCompare(b.assignedTo) * dir;
+      if (taskSortKey === "project") {
+        const an = a.projectId ? projectById.get(a.projectId)?.name ?? "" : "";
+        const bn = b.projectId ? projectById.get(b.projectId)?.name ?? "" : "";
+        return an.localeCompare(bn) * dir;
+      }
+      return 0;
+    });
+
+    return list;
+  }, [typedTasks, taskQuery, statusFilter, priorityFilter, projectFilter, taskSortKey, taskSortDir, projectById]);
+
+  const visibleTaskIdsAll = useMemo(() => filteredTasksAll.map((t) => t.id), [filteredTasksAll]);
   const allVisibleSelected = useMemo(() => {
-    if (visibleIds.length === 0) return false;
-    return visibleIds.every((id) => selected[id]);
-  }, [visibleIds, selected]);
+    if (visibleTaskIdsAll.length === 0) return false;
+    return visibleTaskIdsAll.every((id) => selected[id]);
+  }, [visibleTaskIdsAll, selected]);
 
   const stats = useMemo(() => {
-    const total = typedTasks.length;
-    const pending = typedTasks.filter((t) => t.status === "Pending").length;
-    const inProgress = typedTasks.filter((t) => t.status === "In Progress").length;
+    const totalProjects = typedProjects.length;
+    const totalTasks = typedTasks.length;
     const completed = typedTasks.filter((t) => t.status === "Completed").length;
-    return { total, pending, inProgress, completed };
-  }, [typedTasks]);
+    const inProgress = typedTasks.filter((t) => t.status === "In Progress").length;
+    return { totalProjects, totalTasks, completed, inProgress };
+  }, [typedProjects, typedTasks]);
+
+  const renderProjectProgress = (projectId: number) => {
+    const s = projectStats.get(projectId) ?? { total: 0, completed: 0 };
+    const pct = s.total ? Math.round((s.completed / s.total) * 100) : 0;
+    return (
+      <div className="min-w-[180px]">
+        <div className="flex items-center justify-between text-[11px] text-text-primary/70">
+          <span>
+            {s.completed}/{s.total} completed
+          </span>
+          <span>{pct}%</span>
+        </div>
+        <div className="mt-1 h-1.5 rounded-full bg-slate-200 overflow-hidden">
+          <div className="h-full bg-primary" style={{ width: `${Math.max(4, pct)}%` }} />
+        </div>
+      </div>
+    );
+  };
+
+  const projectName = (pid?: number) => (pid ? projectById.get(pid)?.name ?? "—" : "—");
 
   return (
     <motion.div
@@ -403,18 +612,13 @@ export default function Tasks() {
       transition={{ duration: 0.25 }}
       className="space-y-6"
     >
-      {/* Header card */}
+      {/* Header */}
       <div className="bg-card border border-slate-200 rounded-2xl shadow-sm p-5 flex items-center justify-between gap-4">
         <div>
-          <div className="text-2xl font-bold text-text-heading">
-            Task Management
-          </div>
-          <div className="text-sm text-text-primary/70">
-            {formatFullDate(now)}
-          </div>
+          <div className="text-2xl font-bold text-text-heading">Project Management</div>
+          <div className="text-sm text-text-primary/70">{formatFullDate(now)}</div>
         </div>
 
-        {/* Clock badge */}
         <div className="bg-primary text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
           <Clock className="h-4 w-4" />
           <span>
@@ -427,132 +631,226 @@ export default function Tasks() {
         </div>
       </div>
 
-      {/* Stats cards */}
+      {/* Stats */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25 }}
         className="grid grid-cols-1 md:grid-cols-4 gap-6"
       >
-        <StatCard label="Total Tasks" value={stats.total} tone="slate" />
-        <StatCard label="Pending" value={stats.pending} tone="secondary" />
-        <StatCard label="In Progress" value={stats.inProgress} tone="primary" />
+        <StatCard label="Total Projects" value={stats.totalProjects} tone="slate" />
+        <StatCard label="Total Tasks" value={stats.totalTasks} tone="primary" />
+        <StatCard label="In Progress" value={stats.inProgress} tone="secondary" />
         <StatCard label="Completed" value={stats.completed} tone="success" />
       </motion.div>
 
-      {/* ✅ MODAL: Create/Edit Task */}
+      {/* Modal */}
       <Modal
         open={modalOpen}
-        title={editingId ? `Edit Task #${editingId}` : "Create New Task"}
+        title={
+          modalMode === "project"
+            ? editingProjectId !== null
+              ? `Edit Project #${editingProjectId}`
+              : "Create Project"
+            : editingTaskId !== null
+            ? `Edit Task #${editingTaskId}`
+            : "Create Task"
+        }
         onClose={closeModal}
       >
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <label className="space-y-1">
-              <div className="text-xs font-semibold text-text-heading">
-                Task title
+          {modalMode === "project" ? (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <div className="text-xs font-semibold text-text-heading">Project name</div>
+                  <input
+                    value={projectForm.name}
+                    onChange={(e) => setProjectForm((p) => ({ ...p, name: e.target.value }))}
+                    placeholder="e.g., Worktime+ Revamp"
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </label>
+
+                <label className="space-y-1">
+                  <div className="text-xs font-semibold text-text-heading">Project leader</div>
+                  <select
+                    value={projectForm.leaderId || ""}
+                    onChange={(e) => setProjectForm((p) => ({ ...p, leaderId: Number(e.target.value) }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    <option value="" disabled>
+                      Select leader...
+                    </option>
+                    {leaderOptions.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
-              <input
-                name="title"
-                value={form.title}
-                onChange={onChange}
-                placeholder="Task title"
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
-              />
-            </label>
 
-            <label className="space-y-1">
-              <div className="text-xs font-semibold text-text-heading">
-                Assigned to
+              <label className="space-y-1">
+                <div className="text-xs font-semibold text-text-heading">Description</div>
+                <textarea
+                  value={projectForm.description}
+                  onChange={(e) => setProjectForm((p) => ({ ...p, description: e.target.value }))}
+                  placeholder="What is this project about?"
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white min-h-[100px] outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </label>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <div className="text-xs font-semibold text-text-heading">Due date (optional)</div>
+                  <input
+                    type="date"
+                    value={projectForm.dueDate ?? ""}
+                    onChange={(e) => setProjectForm((p) => ({ ...p, dueDate: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </label>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <div className="text-xs font-semibold text-text-heading">Task title</div>
+                  <input
+                    value={taskForm.title}
+                    onChange={(e) => setTaskForm((p) => ({ ...p, title: e.target.value }))}
+                    placeholder="Task title"
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </label>
+
+                <label className="space-y-1">
+                  <div className="text-xs font-semibold text-text-heading">Project</div>
+                  <select
+                    value={taskForm.projectId ?? ""}
+                    onChange={(e) => setTaskForm((p) => ({ ...p, projectId: Number(e.target.value) }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+                    disabled={typedProjects.length === 0}
+                  >
+                    <option value="" disabled>
+                      {typedProjects.length === 0 ? "No projects yet" : "Select project..."}
+                    </option>
+                    {typedProjects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
 
-              {/* ✅ CONNECTED DROPDOWN */}
-              <select
-                name="assignedTo"
-                value={form.assignedTo}
-                onChange={onChange}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                <option value="" disabled>
-                  Select employee...
-                </option>
-                {assignees.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <div className="text-xs font-semibold text-text-heading">Assigned to</div>
+                  <select
+                    value={taskForm.assignedToId ?? ""}
+                    onChange={(e) => {
+                      const id = Number(e.target.value);
+                      const name = userNameById.get(id) ?? "";
+                      setTaskForm((p) => ({ ...p, assignedToId: id, assignedTo: name }));
+                    }}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    <option value="" disabled>
+                      Select employee...
+                    </option>
+                    {assignees.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-          <label className="space-y-1">
-            <div className="text-xs font-semibold text-text-heading">
-              Description
-            </div>
-            <textarea
-              name="description"
-              value={form.description}
-              onChange={onChange}
-              placeholder="Description"
-              className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white min-h-[100px] outline-none focus:ring-2 focus:ring-primary/30"
-            />
-          </label>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <label className="space-y-1">
-              <div className="text-xs font-semibold text-text-heading">
-                Priority
+                <label className="space-y-1">
+                  <div className="text-xs font-semibold text-text-heading">Assigned by (Admin)</div>
+                  <select
+                    value={taskForm.assignedById ?? ""}
+                    onChange={(e) => {
+                      const id = Number(e.target.value);
+                      const name = userNameById.get(id) ?? "";
+                      setTaskForm((p) => ({ ...p, assignedById: id, assignedBy: name }));
+                    }}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    <option value="" disabled>
+                      Select admin...
+                    </option>
+                    {(admins ?? []).map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
-              <select
-                name="priority"
-                value={form.priority}
-                onChange={onChange}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                {PRIORITY.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </label>
 
-            <label className="space-y-1">
-              <div className="text-xs font-semibold text-text-heading">Status</div>
-              <select
-                name="status"
-                value={form.status}
-                onChange={onChange}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                {STATUS.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="space-y-1">
-              <div className="text-xs font-semibold text-text-heading">
-                Due date
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <div className="text-xs font-semibold text-text-heading">Due date (optional)</div>
+                  <input
+                    type="date"
+                    value={taskForm.dueDate ?? ""}
+                    onChange={(e) => setTaskForm((p) => ({ ...p, dueDate: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </label>
               </div>
-              <input
-                name="dueDate"
-                type="date"
-                value={form.dueDate ?? ""}
-                onChange={onChange}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
-              />
-            </label>
-          </div>
+
+              <label className="space-y-1">
+                <div className="text-xs font-semibold text-text-heading">Description</div>
+                <textarea
+                  value={taskForm.description}
+                  onChange={(e) => setTaskForm((p) => ({ ...p, description: e.target.value }))}
+                  placeholder="Description"
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white min-h-[100px] outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </label>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <div className="text-xs font-semibold text-text-heading">Priority</div>
+                  <select
+                    value={taskForm.priority}
+                    onChange={(e) => setTaskForm((p) => ({ ...p, priority: e.target.value as TaskPriority }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    {PRIORITY.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="space-y-1">
+                  <div className="text-xs font-semibold text-text-heading">Status</div>
+                  <select
+                    value={taskForm.status}
+                    onChange={(e) => setTaskForm((p) => ({ ...p, status: e.target.value as TaskStatus }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    {STATUS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </>
+          )}
 
           {/* Tags */}
           <div className="space-y-2">
-            <div className="text-xs font-semibold text-text-heading">
-              Tags (optional)
-            </div>
-
+            <div className="text-xs font-semibold text-text-heading">Tags (optional)</div>
             <div className="flex gap-2">
               <input
                 value={tagInput}
@@ -566,7 +864,6 @@ export default function Tasks() {
                   }
                 }}
               />
-
               <button
                 onClick={addTag}
                 className="bg-soft hover:bg-slate-200 text-text-primary px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200"
@@ -577,7 +874,7 @@ export default function Tasks() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {(form.tags ?? []).map((tag) => (
+              {((modalMode === "project" ? projectForm.tags : taskForm.tags) ?? []).map((tag) => (
                 <span
                   key={tag}
                   className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-slate-200 bg-white text-xs font-semibold text-text-primary"
@@ -604,306 +901,563 @@ export default function Tasks() {
             >
               Cancel
             </button>
-
             <button
-              onClick={save}
+              onClick={saveModal}
               className="bg-primary hover:opacity-95 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow-sm"
               type="button"
             >
-              {editingId ? "Update Task" : "Create Task"}
+              {modalMode === "project"
+                ? editingProjectId !== null
+                  ? "Update Project"
+                  : "Create Project"
+                : editingTaskId !== null
+                ? "Update Task"
+                : "Create Task"}
             </button>
           </div>
         </div>
       </Modal>
 
-      {/* Table wrapper card */}
+      {/* Project List */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, delay: 0.05 }}
         className="bg-card rounded-2xl shadow-sm border border-slate-200 overflow-hidden"
       >
-        {/* Table header with admin controls */}
         <div className="p-5 border-b border-slate-100 space-y-3">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
-              <div className="text-sm font-semibold text-text-heading">Tasks</div>
+              <div className="text-sm font-semibold text-text-heading">Projects</div>
               <div className="text-xs text-text-primary/70">
-                Search, filter, bulk update, and manage tasks
+                Create projects and manage subtasks under each project
               </div>
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
               <button
-                onClick={openCreate}
+                onClick={openCreateProject}
                 className="inline-flex items-center gap-2 bg-primary text-white rounded-xl px-3 py-2 text-sm font-semibold hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-primary/30"
                 type="button"
               >
                 <Plus className="h-4 w-4" />
+                Create Project
+              </button>
+
+              <button
+                onClick={() => openCreateTask()}
+                className="inline-flex items-center gap-2 border border-slate-200 bg-white hover:bg-soft rounded-xl px-3 py-2 text-sm font-semibold text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+                type="button"
+                title={typedProjects.length ? "Create a task under a project" : "Create a project first"}
+              >
+                <Plus className="h-4 w-4 text-text-primary/70" />
                 Add Task
+              </button>
+
+              <button
+                onClick={() => setShowAllTasks((v) => !v)}
+                className="inline-flex items-center gap-2 border border-slate-200 bg-white hover:bg-soft rounded-xl px-3 py-2 text-sm font-semibold text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+                type="button"
+              >
+                {showAllTasks ? "Hide" : "Show"} All Tasks
               </button>
 
               <div className="flex items-center gap-2 border border-slate-200 rounded-xl px-3 py-2 bg-white focus-within:ring-2 focus-within:ring-primary/30">
                 <Search className="h-4 w-4 text-text-primary/50" />
                 <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search tasks..."
+                  value={projectQuery}
+                  onChange={(e) => setProjectQuery(e.target.value)}
+                  placeholder="Search projects..."
                   className="outline-none text-sm w-44"
                 />
               </div>
 
               <select
-                value={statusFilter}
-                onChange={(e) =>
-                  setStatusFilter(e.target.value as TaskStatus | "All")
-                }
+                value={leaderFilter}
+                onChange={(e) => setLeaderFilter(e.target.value === "All" ? "All" : Number(e.target.value))}
                 className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
               >
-                <option value="All">All Status</option>
-                {STATUS.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
+                <option value="All">All Leaders</option>
+                {leaderOptions.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
                   </option>
                 ))}
               </select>
 
               <select
-                value={priorityFilter}
-                onChange={(e) =>
-                  setPriorityFilter(e.target.value as TaskPriority | "All")
-                }
-                className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
-              >
-                <option value="All">All Priority</option>
-                {PRIORITY.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={sortKey}
-                onChange={(e) => setSortKey(e.target.value as SortKey)}
+                value={projectSortKey}
+                onChange={(e) => setProjectSortKey(e.target.value as ProjectSortKey)}
                 className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
               >
                 <option value="newest">Sort: Newest</option>
                 <option value="oldest">Sort: Oldest</option>
+                <option value="name">Sort: Name</option>
+                <option value="leader">Sort: Leader</option>
                 <option value="dueDate">Sort: Due Date</option>
-                <option value="priority">Sort: Priority</option>
-                <option value="status">Sort: Status</option>
-                <option value="title">Sort: Title</option>
-                <option value="assignedTo">Sort: Assigned To</option>
+                <option value="progress">Sort: Progress</option>
               </select>
 
               <button
                 type="button"
-                onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                onClick={() => setProjectSortDir((d) => (d === "asc" ? "desc" : "asc"))}
                 className="inline-flex items-center gap-2 border border-slate-200 bg-white hover:bg-soft rounded-xl px-3 py-2 text-sm font-semibold text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
                 title="Toggle sort direction"
               >
                 <ArrowUpDown className="h-4 w-4 text-text-primary/70" />
-                {sortDir === "asc" ? "Asc" : "Desc"}
+                {projectSortDir === "asc" ? "Asc" : "Desc"}
               </button>
             </div>
           </div>
-
-          {/* Bulk actions */}
-          <AnimatePresence>
-            {selectedIds.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 6 }}
-                transition={{ duration: 0.15 }}
-                className="flex items-center justify-between gap-3 flex-wrap bg-soft border border-slate-200 rounded-2xl p-3"
-              >
-                <div className="text-sm font-semibold text-text-heading">
-                  {selectedIds.length} selected
-                </div>
-
-                <div className="flex items-center gap-2 flex-wrap">
-                  <button
-                    onClick={() => bulkSetStatus("Pending")}
-                    className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-white hover:bg-soft"
-                    type="button"
-                  >
-                    Mark Pending
-                  </button>
-
-                  <button
-                    onClick={() => bulkSetStatus("In Progress")}
-                    className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-white hover:bg-soft"
-                    type="button"
-                  >
-                    Mark In Progress
-                  </button>
-
-                  <button
-                    onClick={() => bulkSetStatus("Completed")}
-                    className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-white hover:bg-soft"
-                    type="button"
-                  >
-                    Mark Completed
-                  </button>
-
-                  <button
-                    onClick={bulkDelete}
-                    className="px-3 py-2 rounded-xl text-xs font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
-                    type="button"
-                  >
-                    Delete Selected
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
 
         <div className="w-full overflow-x-auto">
-          <AdminTable
-            headers={[
-              "",
-              "Title",
-              "Assigned To",
-              "Priority",
-              "Status",
-              "Due",
-              "Actions",
-            ]}
-          >
-            {/* Select-all row */}
-            <tr className="bg-soft border-b border-slate-200">
-              <td className="px-4 py-3">
-                <input
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  onChange={(e) => toggleAllVisible(visibleIds, e.target.checked)}
-                />
-              </td>
-              <td className="px-4 py-3 font-medium text-text-primary" colSpan={6}>
-                Select all visible
-              </td>
-            </tr>
+          <AdminTable headers={["", "Project", "Leader", "Due", "Progress", "Actions"]}>
+            {filteredProjects.map((p) => {
+              const expanded = !!expandedProjects[p.id];
+              const leaderName = userNameById.get(p.leaderId) ?? "—";
+              const due = p.dueDate ? p.dueDate : "—";
+              const projectTasks = tasksByProject.get(p.id) ?? [];
 
-            {filtered.map((t) => (
-              <motion.tr
-                key={t.id}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.15 }}
-                className="align-top"
-              >
-                <td className="px-4 py-3">
-                  <input
-                    type="checkbox"
-                    checked={!!selected[t.id]}
-                    onChange={(e) => toggleOne(t.id, e.target.checked)}
-                  />
-                </td>
+              return (
+                <React.Fragment key={p.id}>
+                  <motion.tr
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="align-top"
+                  >
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline"
+                        onClick={() => toggleExpanded(p.id)}
+                        aria-label={expanded ? "Collapse project" : "Expand project"}
+                      >
+                        {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        Tasks
+                      </button>
+                    </td>
 
-                <td className="px-4 py-3 min-w-[320px]">
-                  <div className="font-semibold text-text-heading">{t.title}</div>
-                  <div className="text-xs text-text-primary/70 line-clamp-2">
-                    {t.description}
-                  </div>
-
-                  {(t.tags?.length ?? 0) > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {t.tags!.slice(0, 4).map((tag) => (
-                        <span
-                          key={tag}
-                          className="px-2 py-0.5 rounded-full border border-slate-200 bg-white text-[10px] font-semibold text-text-primary"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                      {t.tags!.length > 4 && (
-                        <span className="text-[10px] text-text-primary/60">
-                          +{t.tags!.length - 4}
-                        </span>
+                    <td className="px-4 py-3 min-w-[320px]">
+                      <div className="font-semibold text-text-heading">{p.name}</div>
+                      <div className="text-xs text-text-primary/70 line-clamp-2">{p.description}</div>
+                      {(p.tags?.length ?? 0) > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {p.tags!.slice(0, 4).map((tag) => (
+                            <span
+                              key={tag}
+                              className="px-2 py-0.5 rounded-full border border-slate-200 bg-white text-[10px] font-semibold text-text-primary"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                          {p.tags!.length > 4 && (
+                            <span className="text-[10px] text-text-primary/60">+{p.tags!.length - 4}</span>
+                          )}
+                        </div>
                       )}
-                    </div>
-                  )}
-                </td>
+                    </td>
 
-                <td className="px-4 py-3 min-w-[160px]">{t.assignedTo}</td>
+                    <td className="px-4 py-3 min-w-[180px]">{leaderName}</td>
+                    <td className="px-4 py-3 min-w-[140px] text-sm text-text-primary">{due}</td>
+                    <td className="px-4 py-3">{renderProjectProgress(p.id)}</td>
 
-                <td className="px-4 py-3">
-                  <Pill
-                    tone={
-                      t.priority === "High"
-                        ? "secondary"
-                        : t.priority === "Medium"
-                        ? "primary"
-                        : "slate"
-                    }
-                  >
-                    {t.priority}
-                  </Pill>
-                </td>
+                    <td className="px-4 py-3 min-w-[260px]">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <button
+                          onClick={() => openCreateTask(p.id)}
+                          className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline font-semibold"
+                          type="button"
+                        >
+                          <Plus className="h-4 w-4" />
+                          Add Task
+                        </button>
+                        <button
+                          onClick={() => openEditProject(p)}
+                          className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline font-semibold"
+                          type="button"
+                        >
+                          <Pencil className="h-4 w-4" />
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => removeProject(p.id)}
+                          className="inline-flex items-center gap-1.5 text-sm text-red-700 hover:underline font-semibold"
+                          type="button"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Delete
+                        </button>
+                        <span className="text-xs text-text-primary/60">({projectTasks.length} tasks)</span>
+                      </div>
+                    </td>
+                  </motion.tr>
 
-                <td className="px-4 py-3 min-w-[180px]">
-                  <select
-                    value={t.status}
-                    onChange={(e) =>
-                      setTaskStatus(t.id, e.target.value as TaskStatus)
-                    }
-                    className="border border-slate-200 rounded-xl px-2 py-1 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm w-full"
-                  >
-                    {STATUS.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
-                </td>
+                  <AnimatePresence>
+                    {expanded && (
+                      <motion.tr
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 8 }}
+                        transition={{ duration: 0.15 }}
+                        className="bg-soft border-t border-slate-200"
+                      >
+                        <td colSpan={6} className="px-4 py-4">
+                          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+                            <div className="p-4 flex items-center justify-between gap-3 flex-wrap border-b border-slate-100">
+                              <div>
+                                <div className="text-sm font-semibold text-text-heading">Tasks under {p.name}</div>
+                                <div className="text-xs text-text-primary/70">These are the subtasks for this project</div>
+                              </div>
+                              <button
+                                onClick={() => openCreateTask(p.id)}
+                                className="inline-flex items-center gap-2 bg-primary text-white rounded-xl px-3 py-2 text-sm font-semibold hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                type="button"
+                              >
+                                <Plus className="h-4 w-4" />
+                                Add Task
+                              </button>
+                            </div>
 
-                <td className="px-4 py-3 text-sm text-text-primary min-w-[130px]">
-                  {t.dueDate ? (
-                    t.dueDate
-                  ) : (
-                    <span className="text-text-primary/50">—</span>
-                  )}
-                </td>
+                            <div className="w-full overflow-x-auto">
+                              <AdminTable headers={["Title", "Assigned To", "Priority", "Status", "Due", "Actions"]}>
+                                {projectTasks.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={6} className="px-4 py-10 text-center text-text-primary/60">
+                                      No tasks yet for this project.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  projectTasks.map((t) => (
+                                    <tr key={t.id} className="align-top">
+                                      <td className="px-4 py-3 min-w-[320px]">
+                                        <div className="font-semibold text-text-heading">{t.title}</div>
+                                        <div className="text-xs text-text-primary/70 line-clamp-2">{t.description}</div>
+                                      </td>
+                                      <td className="px-4 py-3 min-w-[170px]">{t.assignedTo}</td>
+                                      <td className="px-4 py-3">
+                                        <Pill
+                                          tone={
+                                            t.priority === "High"
+                                              ? "secondary"
+                                              : t.priority === "Medium"
+                                              ? "primary"
+                                              : "slate"
+                                          }
+                                        >
+                                          {t.priority}
+                                        </Pill>
+                                      </td>
+                                      <td className="px-4 py-3 min-w-[180px]">
+                                        <select
+                                          value={t.status}
+                                          onChange={(e) => setTaskStatus(t.id, e.target.value as TaskStatus)}
+                                          className="border border-slate-200 rounded-xl px-2 py-1 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm w-full"
+                                        >
+                                          {STATUS.map((s) => (
+                                            <option key={s} value={s}>
+                                              {s}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </td>
+                                      <td className="px-4 py-3 text-sm text-text-primary min-w-[130px]">
+                                        {t.dueDate ? t.dueDate : <span className="text-text-primary/50">—</span>}
+                                      </td>
+                                      <td className="px-4 py-3 min-w-[190px]">
+                                        <div className="flex items-center gap-3">
+                                          <button
+                                            onClick={() => openEditTask(t)}
+                                            className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline font-semibold"
+                                            type="button"
+                                          >
+                                            <Pencil className="h-4 w-4" />
+                                            Edit
+                                          </button>
+                                          <button
+                                            onClick={() => removeTask(t.id)}
+                                            className="inline-flex items-center gap-1.5 text-sm text-red-700 hover:underline font-semibold"
+                                            type="button"
+                                          >
+                                            <Trash2 className="h-4 w-4" />
+                                            Delete
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ))
+                                )}
+                              </AdminTable>
+                            </div>
+                          </div>
+                        </td>
+                      </motion.tr>
+                    )}
+                  </AnimatePresence>
+                </React.Fragment>
+              );
+            })}
 
-                <td className="px-4 py-3 min-w-[190px]">
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => openEdit(t)}
-                      className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline font-semibold"
-                      type="button"
-                    >
-                      <Pencil className="h-4 w-4" />
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => remove(t.id)}
-                      className="inline-flex items-center gap-1.5 text-sm text-red-700 hover:underline font-semibold"
-                      type="button"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      Delete
-                    </button>
-                  </div>
-                </td>
-              </motion.tr>
-            ))}
-
-            {filtered.length === 0 && (
+            {filteredProjects.length === 0 && (
               <tr>
-                <td
-                  colSpan={7}
-                  className="px-4 py-10 text-center text-text-primary/60"
-                >
-                  No tasks found.
+                <td colSpan={6} className="px-4 py-10 text-center text-text-primary/60">
+                  No projects found.
                 </td>
               </tr>
             )}
           </AdminTable>
         </div>
       </motion.div>
+
+      {/* All Tasks section (Project column included) */}
+      <AnimatePresence>
+        {showAllTasks && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 12 }}
+            transition={{ duration: 0.2 }}
+            className="bg-card rounded-2xl shadow-sm border border-slate-200 overflow-hidden"
+          >
+            <div className="p-5 border-b border-slate-100 space-y-3">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <div className="text-sm font-semibold text-text-heading">All Tasks</div>
+                  <div className="text-xs text-text-primary/70">
+                    Includes a Project column so you can see where each task belongs
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={() => openCreateTask()}
+                    className="inline-flex items-center gap-2 bg-primary text-white rounded-xl px-3 py-2 text-sm font-semibold hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    type="button"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Task
+                  </button>
+
+                  <div className="flex items-center gap-2 border border-slate-200 rounded-xl px-3 py-2 bg-white focus-within:ring-2 focus-within:ring-primary/30">
+                    <Search className="h-4 w-4 text-text-primary/50" />
+                    <input
+                      value={taskQuery}
+                      onChange={(e) => setTaskQuery(e.target.value)}
+                      placeholder="Search tasks..."
+                      className="outline-none text-sm w-44"
+                    />
+                  </div>
+
+                  <select
+                    value={projectFilter}
+                    onChange={(e) => setProjectFilter(e.target.value === "All" ? "All" : Number(e.target.value))}
+                    className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
+                  >
+                    <option value="All">All Projects</option>
+                    {typedProjects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value as TaskStatus | "All")}
+                    className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
+                  >
+                    <option value="All">All Status</option>
+                    {STATUS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={priorityFilter}
+                    onChange={(e) => setPriorityFilter(e.target.value as TaskPriority | "All")}
+                    className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
+                  >
+                    <option value="All">All Priority</option>
+                    {PRIORITY.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={taskSortKey}
+                    onChange={(e) => setTaskSortKey(e.target.value as TaskSortKey)}
+                    className="border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm"
+                  >
+                    <option value="newest">Sort: Newest</option>
+                    <option value="oldest">Sort: Oldest</option>
+                    <option value="dueDate">Sort: Due Date</option>
+                    <option value="priority">Sort: Priority</option>
+                    <option value="status">Sort: Status</option>
+                    <option value="title">Sort: Title</option>
+                    <option value="assignee">Sort: Assigned To</option>
+                    <option value="project">Sort: Project</option>
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() => setTaskSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                    className="inline-flex items-center gap-2 border border-slate-200 bg-white hover:bg-soft rounded-xl px-3 py-2 text-sm font-semibold text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    title="Toggle sort direction"
+                  >
+                    <ArrowUpDown className="h-4 w-4 text-text-primary/70" />
+                    {taskSortDir === "asc" ? "Asc" : "Desc"}
+                  </button>
+                </div>
+              </div>
+
+              <AnimatePresence>
+                {selectedIds.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 6 }}
+                    transition={{ duration: 0.15 }}
+                    className="flex items-center justify-between gap-3 flex-wrap bg-soft border border-slate-200 rounded-2xl p-3"
+                  >
+                    <div className="text-sm font-semibold text-text-heading">{selectedIds.length} selected</div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => bulkSetStatus("Pending")}
+                        className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-white hover:bg-soft"
+                        type="button"
+                      >
+                        Mark Pending
+                      </button>
+                      <button
+                        onClick={() => bulkSetStatus("In Progress")}
+                        className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-white hover:bg-soft"
+                        type="button"
+                      >
+                        Mark In Progress
+                      </button>
+                      <button
+                        onClick={() => bulkSetStatus("Completed")}
+                        className="px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 bg-white hover:bg-soft"
+                        type="button"
+                      >
+                        Mark Completed
+                      </button>
+                      <button
+                        onClick={bulkDelete}
+                        className="px-3 py-2 rounded-xl text-xs font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                        type="button"
+                      >
+                        Delete Selected
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            <div className="w-full overflow-x-auto">
+              <AdminTable headers={["", "Task", "Project", "Assigned To", "Priority", "Status", "Due", "Actions"]}>
+                <tr className="bg-soft border-b border-slate-200">
+                  <td className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={(e) => toggleAllVisible(visibleTaskIdsAll, e.target.checked)}
+                    />
+                  </td>
+                  <td className="px-4 py-3 font-medium text-text-primary" colSpan={7}>
+                    Select all visible
+                  </td>
+                </tr>
+
+                {filteredTasksAll.map((t) => (
+                  <motion.tr
+                    key={t.id}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="align-top"
+                  >
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={!!selected[t.id]}
+                        onChange={(e) => toggleOne(t.id, e.target.checked)}
+                      />
+                    </td>
+
+                    <td className="px-4 py-3 min-w-[320px]">
+                      <div className="font-semibold text-text-heading">{t.title}</div>
+                      <div className="text-xs text-text-primary/70 line-clamp-2">{t.description}</div>
+                    </td>
+
+                    <td className="px-4 py-3 min-w-[220px]">{projectName(t.projectId)}</td>
+                    <td className="px-4 py-3 min-w-[180px]">{t.assignedTo}</td>
+
+                    <td className="px-4 py-3">
+                      <Pill tone={t.priority === "High" ? "secondary" : t.priority === "Medium" ? "primary" : "slate"}>
+                        {t.priority}
+                      </Pill>
+                    </td>
+
+                    <td className="px-4 py-3 min-w-[180px]">
+                      <select
+                        value={t.status}
+                        onChange={(e) => setTaskStatus(t.id, e.target.value as TaskStatus)}
+                        className="border border-slate-200 rounded-xl px-2 py-1 bg-white outline-none focus:ring-2 focus:ring-primary/30 text-sm w-full"
+                      >
+                        {STATUS.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+
+                    <td className="px-4 py-3 text-sm text-text-primary min-w-[130px]">
+                      {t.dueDate ? t.dueDate : <span className="text-text-primary/50">—</span>}
+                    </td>
+
+                    <td className="px-4 py-3 min-w-[210px]">
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => openEditTask(t)}
+                          className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline font-semibold"
+                          type="button"
+                        >
+                          <Pencil className="h-4 w-4" />
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => removeTask(t.id)}
+                          className="inline-flex items-center gap-1.5 text-sm text-red-700 hover:underline font-semibold"
+                          type="button"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </motion.tr>
+                ))}
+
+                {filteredTasksAll.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-10 text-center text-text-primary/60">
+                      No tasks found.
+                    </td>
+                  </tr>
+                )}
+              </AdminTable>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
@@ -918,15 +1472,14 @@ function StatCard({
   tone: "secondary" | "primary" | "success" | "slate";
 }) {
   const bar =
-    tone === "primary"
-      ? "bg-primary"
-      : tone === "secondary"
+    tone === "secondary"
       ? "bg-secondary"
+      : tone === "primary"
+      ? "bg-primary"
       : tone === "success"
-      ? "bg-green-600"
+      ? "bg-green-500"
       : "bg-slate-400";
 
-  // NOTE: keeping your original behavior (value * 10) to avoid changing other UI.
   const pct = Math.max(8, Math.min(100, value * 10));
 
   return (
@@ -935,19 +1488,17 @@ function StatCard({
       transition={{ duration: 0.15 }}
       className="bg-card rounded-2xl shadow-sm border border-slate-200 p-5"
     >
-      <div className="text-[10px] font-bold text-text-primary/60">
-        {label.toUpperCase()}
-      </div>
+      <div className="text-[10px] font-bold text-slate-500">{label.toUpperCase()}</div>
       <div className="mt-2 flex items-baseline gap-2">
         <div className="text-3xl font-extrabold text-text-heading">{value}</div>
         <div className="text-xs text-text-primary/70">items</div>
       </div>
-      <div className="mt-3 h-1.5 rounded-full bg-soft overflow-hidden">
+      <div className="mt-3 h-1.5 rounded-full bg-slate-200 overflow-hidden">
         <div className={`h-full ${bar}`} style={{ width: `${pct}%` }} />
       </div>
-      <div className="mt-2 flex items-center justify-between text-[10px] text-text-primary/60">
-        <span>0%</span>
-        <span>{pct}%</span>
+      <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500">
+        <span>0</span>
+        <span>{value}</span>
       </div>
     </motion.div>
   );

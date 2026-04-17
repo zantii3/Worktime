@@ -3,38 +3,36 @@
     "id": 1,
     "email": "calvinbalvar@gmail.com",
     "password": "alvar123",
-    "name": "Calvin Alvar"
-
+    "name": "Calvin Alvar",
+    "assignedProjects": [1, 2]
 },
-
 {
     "id": 2,
     "email": "jackelynomena@gmail.com",
     "password": "omena123",
-    "name": "Jackelyn Omena"
-
+    "name": "Jackelyn Omena",
+    "assignedProjects": [1, 3]
 },
-
 {
     "id": 3,
     "email": "theresemina@gmail.com",
     "password": "mina123",
-    "name": "Therese Mina"
-
+    "name": "Therese Mina",
+    "assignedProjects": [2]
 },
-
 {
     "id": 4,
     "email": "ajcalugs25@gmail.com",
     "password": "calugs123",
-    "name": "Aiary Calugtong"
-
+    "name": "Aiary Calugtong",
+    "assignedProjects": [1, 2, 3]
 },
 {
     "id": 5,
     "email": "clarenceponce@gmail.com",
     "password": "ponce123",
-    "name": "Clarence Ponce"
-
+    "name": "Clarence Ponce",
+    "assignedProjects": [3]
 }
+
 ]

@@ -6,38 +6,58 @@ export interface Task {
   title: string;
   description: string;
   assignedTo: string;
+  assignedToId?: number;
+  assignedBy?: string;
+  assignedById?: number;
   priority: TaskPriority;
   status: TaskStatus;
+  dueDate?: string;
+  projectId?: number;
+  tags?: string[];
+}
+
+// Projects (admin)
+export interface Project {
+  id: number;
+  name: string;
+  description: string;
+
+  // Canonical reference to a real account (accounts.json)
+  leaderId: number;
+
+  // Frontend-only metadata (optional)
+  dueDate?: string; // YYYY-MM-DD
+  tags?: string[];
 }
 
 export type LeaveStatus = "Pending" | "Approved" | "Rejected";
+
 export type LeaveType =
-  | "Vacation"
-  | "Sick"
-  | "Emergency"
-  | "Maternity/Paternity";
+  | "Vacation Leave"
+  | "Sick Leave"
+  | "Emergency Leave"
+  | "Maternity/Paternity Leave";
 
 export interface LeaveRequest {
   id: number;
   employee: string;
   type: LeaveType;
-
-  // ✅ new range fields (admin UI + user UI style)
-  dateFrom: string; // YYYY-MM-DD
-  dateTo: string;   // YYYY-MM-DD
-
   reason: string;
   status: LeaveStatus;
 
-  // ✅ frontend-only
+  dateFrom?: string;
+  dateTo?: string;
+
+  startDate?: string;
+  endDate?: string;
+
   attachmentName?: string | null;
-  appliedOn?: string; // YYYY-MM-DD
+  fileName?: string;
 
-  // ✅ backward compatibility if you still have old records
+  appliedOn?: string;
   date?: string;
+  days?: number;
 }
-
-
 
 export type UserRole = "Employee" | "Admin";
 export type UserStatus = "Active" | "Inactive";
@@ -63,6 +83,9 @@ export interface Attendance {
 export interface AdminContextType {
   tasks: Task[];
   setTasks: React.Dispatch<React.SetStateAction<Task[]>>;
+
+  projects: Project[];
+  setProjects: React.Dispatch<React.SetStateAction<Project[]>>;
 
   leaves: LeaveRequest[];
   setLeaves: React.Dispatch<React.SetStateAction<LeaveRequest[]>>;

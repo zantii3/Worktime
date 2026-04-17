@@ -1,9 +1,12 @@
 import { motion } from "framer-motion";
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import accounts from "../data/accounts.json";
+import { STORAGE_KEY as LEAVE_STORAGE_KEY } from "../user/types/leaveconstants";
 import { useAdmin } from "./context/AdminProvider";
 
 import {
+  ArrowRight,
   CalendarDays,
   CheckCircle2,
   ClipboardList,
@@ -22,14 +25,27 @@ type StatusMap = Record<string, Status>;
 
 type UserAccount = { id: number; email: string; password: string; name: string };
 
+type LooseLeaveStatus = "Pending" | "Approved" | "Rejected" | string;
+
+type DashboardLeave = {
+  id: number | string;
+  employee: string;
+  type: string;
+  status: LooseLeaveStatus;
+  dateFrom: string;
+  dateTo: string;
+  appliedOn?: string;
+  reason?: string;
+};
+
 export type AttendanceRecord = {
   id: string;
-  employeeId: string; // for admins: String(admin.id)
+  employeeId: string;
   source?: "Desktop" | "Mobile" | string;
-  dateISO: string; // YYYY-MM-DD
+  dateISO: string;
   timeIn: string | null;
-  lunchOut: string | null; // Start Break
-  lunchIn: string | null; // End Break
+  lunchOut: string | null;
+  lunchIn: string | null;
   timeOut: string | null;
 };
 
@@ -79,6 +95,81 @@ function writeAttendance(list: AttendanceRecord[]) {
   }
 }
 
+function normalizeLeave(raw: unknown): DashboardLeave | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const item = raw as Record<string, unknown>;
+
+  const employee =
+    typeof item.employee === "string" && item.employee.trim()
+      ? item.employee.trim()
+      : "Unknown";
+
+  const type =
+    typeof item.type === "string" && item.type.trim() ? item.type.trim() : "Leave";
+
+  const status =
+    typeof item.status === "string" && item.status.trim() ? item.status.trim() : "Pending";
+
+  const dateFrom =
+    typeof item.dateFrom === "string" && item.dateFrom
+      ? item.dateFrom
+      : typeof item.startDate === "string" && item.startDate
+      ? item.startDate
+      : typeof item.date === "string" && item.date
+      ? item.date
+      : "";
+
+  const dateTo =
+    typeof item.dateTo === "string" && item.dateTo
+      ? item.dateTo
+      : typeof item.endDate === "string" && item.endDate
+      ? item.endDate
+      : typeof item.date === "string" && item.date
+      ? item.date
+      : dateFrom;
+
+  const appliedOn =
+    typeof item.appliedOn === "string"
+      ? item.appliedOn
+      : typeof item.date === "string"
+      ? item.date
+      : undefined;
+
+  return {
+    id:
+      typeof item.id === "number" || typeof item.id === "string"
+        ? item.id
+        : Date.now(),
+    employee,
+    type,
+    status,
+    dateFrom,
+    dateTo,
+    appliedOn,
+    reason: typeof item.reason === "string" ? item.reason : undefined,
+  };
+}
+
+function readLeavesFromStorage(): DashboardLeave[] {
+  try {
+    const raw = localStorage.getItem(LEAVE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map(normalizeLeave)
+      .filter((item): item is DashboardLeave => Boolean(item))
+      .sort((a, b) => {
+        const aTime = new Date(b.appliedOn ?? b.dateFrom ?? 0).getTime();
+        const bTime = new Date(a.appliedOn ?? a.dateFrom ?? 0).getTime();
+        return aTime - bTime;
+      });
+  } catch {
+    return [];
+  }
+}
+
 function getStatusLabel(r: AttendanceRecord | null) {
   if (!r?.timeIn) return "Not Started";
   if (r.timeOut) return "Clocked Out";
@@ -93,10 +184,6 @@ function computeBreakMsLive(r: AttendanceRecord | null, nowMs: number) {
   return Math.max(0, end - start);
 }
 
-/**
- * Work elapsed:
- * (timeOut or now) - timeIn - (break duration)
- */
 function computeWorkMsLive(r: AttendanceRecord | null, nowMs: number) {
   if (!r?.timeIn) return 0;
 
@@ -106,6 +193,7 @@ function computeWorkMsLive(r: AttendanceRecord | null, nowMs: number) {
   if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
 
   let breakMs = 0;
+
   if (r.lunchOut && r.lunchIn) {
     const bo = new Date(r.lunchOut).getTime();
     const bi = new Date(r.lunchIn).getTime();
@@ -125,6 +213,12 @@ function formatTimeLocal(iso: string | null) {
   return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatLeaveDateRange(from: string, to: string) {
+  if (!from && !to) return "No date";
+  if (from && to && from !== to) return `${from} • ${to}`;
+  return from || to;
+}
+
 function getDeviceLabel() {
   const ua = navigator.userAgent.toLowerCase();
   const w = window.innerWidth;
@@ -133,6 +227,7 @@ function getDeviceLabel() {
   const isMobileViewport = w <= 765;
   const isTabletViewport = w > 765 && w <= 1024;
   const hasTouch = () => "ontouchstart" in window || navigator.maxTouchPoints > 0;
+
   return isMobileUA || (isMobileViewport && hasTouch())
     ? "Mobile"
     : isTabletUA || isTabletViewport
@@ -155,11 +250,10 @@ function msToHM(ms: number) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-/** Smaller ring + % centered inside */
 function ProgressRing({ pct }: { pct: number }) {
-  const size = 132; // smaller
-  const radius = 44;
-  const stroke = 10;
+  const size = 176;
+  const radius = 62;
+  const stroke = 12;
   const cxp = size / 2;
   const cyp = size / 2;
   const c = 2 * Math.PI * radius;
@@ -167,14 +261,14 @@ function ProgressRing({ pct }: { pct: number }) {
   const dash = (safePct / 100) * c;
 
   return (
-    <div className="relative w-[132px] h-[132px] grid place-items-center">
+    <div className="relative h-[176px] w-[176px] grid place-items-center">
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="block">
         <circle
           cx={cxp}
           cy={cyp}
           r={radius}
           fill="none"
-          stroke="rgba(148, 163, 184, 0.25)"
+          stroke="rgba(148, 163, 184, 0.22)"
           strokeWidth={stroke}
         />
         <circle
@@ -190,9 +284,11 @@ function ProgressRing({ pct }: { pct: number }) {
         />
       </svg>
 
-      <div className="absolute inset-0 grid place-items-center text-center">
-        <div className="text-[11px] text-text-primary/70 font-semibold leading-none">Progress</div>
-        <div className="mt-1 text-2xl font-extrabold text-[#1F3C68] tabular-nums leading-none">
+      <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-text-primary/70">
+          Progress
+        </div>
+        <div className="mt-1 text-3xl font-extrabold text-[#1F3C68] tabular-nums leading-none">
           {Math.round(safePct)}%
         </div>
       </div>
@@ -209,6 +305,7 @@ function StatusBadge({ status }: { status: string }) {
     "In Progress": "bg-soft text-text-heading border-slate-200",
     Completed: "bg-green-50 text-green-700 border-green-200",
   };
+
   return (
     <span className={`${base} ${map[status] ?? "bg-soft text-text-primary border-slate-200"}`}>
       {status}
@@ -229,12 +326,12 @@ function Panel({
 }) {
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="h-9 w-9 rounded-xl bg-soft border border-slate-200 flex items-center justify-center">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="h-9 w-9 rounded-xl bg-soft border border-slate-200 flex items-center justify-center shrink-0">
             <Icon className="w-4 h-4 text-text-primary/70" />
           </span>
-          <h2 className="text-sm font-semibold text-text-heading">{title}</h2>
+          <h2 className="text-sm font-semibold text-text-heading truncate">{title}</h2>
         </div>
         {right}
       </div>
@@ -275,18 +372,22 @@ function KpiCard({
   value,
   subtitle,
   icon: Icon,
+  onClick,
 }: {
   title: string;
   value: string | number;
   subtitle: string;
   icon: React.ElementType;
+  onClick: () => void;
 }) {
   return (
-    <motion.div
-      whileHover={{ y: -2 }}
+    <motion.button
+      whileHover={{ y: -3 }}
       whileTap={{ scale: 0.99 }}
       transition={{ duration: 0.15 }}
-      className="rounded-2xl overflow-hidden border border-slate-200 shadow-sm bg-card"
+      onClick={onClick}
+      type="button"
+      className="rounded-2xl overflow-hidden border border-slate-200 shadow-sm bg-card text-left group cursor-pointer"
     >
       <div className="bg-primary p-4 text-white">
         <div className="flex items-start justify-between gap-3">
@@ -294,16 +395,18 @@ function KpiCard({
             <div className="text-[11px] font-extrabold tracking-wide opacity-95">{title}</div>
             <div className="mt-2 text-4xl font-extrabold leading-none">{value}</div>
           </div>
-          <span className="h-10 w-10 rounded-xl bg-white/15 flex items-center justify-center">
+
+          <span className="h-10 w-10 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
             <Icon className="w-5 h-5 text-white" />
           </span>
         </div>
       </div>
 
-      <div className="p-4 bg-card">
+      <div className="p-4 bg-card flex items-center justify-between gap-3">
         <div className="text-xs text-text-primary/70">{subtitle}</div>
+        <ArrowRight className="w-4 h-4 text-text-primary/50 transition-transform group-hover:translate-x-1" />
       </div>
-    </motion.div>
+    </motion.button>
   );
 }
 
@@ -327,25 +430,24 @@ function TimeDetailTile({
   } as const;
 
   return (
-    <div className={cx("p-4 rounded-xl border", map[tone])}>
+    <div className={cx("p-4 rounded-xl border min-w-0", map[tone])}>
       <p className="text-xs text-slate-600 mb-1 font-medium">{label}</p>
-      <p className="text-lg font-bold tabular-nums">{value}</p>
-      {sub && <p className="text-[11px] text-slate-500 mt-1 tabular-nums">{sub}</p>}
+      <p className="text-lg font-bold tabular-nums truncate">{value}</p>
+      {sub && <p className="text-[11px] text-slate-500 mt-1 tabular-nums line-clamp-2">{sub}</p>}
     </div>
   );
 }
 
 export default function Dashboard() {
-  const { tasks, leaves } = useAdmin();
+  const navigate = useNavigate();
+  const { tasks } = useAdmin();
 
-  // main clock
   const [now, setNow] = useState<Date>(new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // tick for live timers
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setTick((x) => x + 1), 1000);
@@ -354,27 +456,43 @@ export default function Dashboard() {
 
   const nowMs = Date.now();
 
-  // localStorage-backed status map
   const [statusMap, setStatusMap] = useState<StatusMap>(() => readStatusMap());
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === STATUS_KEY) setStatusMap(readStatusMap());
     };
+
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  // localStorage-backed attendance
   const [allAttendance, setAllAttendance] = useState<AttendanceRecord[]>(() => readAttendance());
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === ATTENDANCE_KEY) setAllAttendance(readAttendance());
     };
+
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  // current admin session
+  const [storedLeaves, setStoredLeaves] = useState<DashboardLeave[]>(() => readLeavesFromStorage());
+  useEffect(() => {
+    const syncLeaves = () => setStoredLeaves(readLeavesFromStorage());
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === LEAVE_STORAGE_KEY) syncLeaves();
+    };
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", syncLeaves);
+
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", syncLeaves);
+    };
+  }, []);
+
   const currentAdmin = useMemo(() => {
     try {
       return JSON.parse(localStorage.getItem("currentAdmin") || "null") as
@@ -388,7 +506,6 @@ export default function Dashboard() {
   const adminEmployeeId = currentAdmin ? String(currentAdmin.id) : "";
   const todayISO = useMemo(() => toISODate(now), [now]);
 
-  // KPI: Active Users (employees only)
   const userStats = useMemo(() => {
     const list = accounts as UserAccount[];
     const total = list.length;
@@ -396,10 +513,11 @@ export default function Dashboard() {
     return { total, active };
   }, [statusMap]);
 
-  // KPI: Pending leaves
-  const pendingLeaves = useMemo(() => leaves.filter((l) => l.status === "Pending").length, [leaves]);
+  const pendingLeaves = useMemo(
+    () => storedLeaves.filter((l) => l.status === "Pending").length,
+    [storedLeaves]
+  );
 
-  // KPI: Task completion
   const taskStats = useMemo(() => {
     const completed = tasks.filter((t) => t.status === "Completed").length;
     const inProgress = tasks.filter((t) => t.status === "In Progress").length;
@@ -409,12 +527,10 @@ export default function Dashboard() {
     return { completed, inProgress, pending, total, pct };
   }, [tasks]);
 
-  // KPI: Attendance today (all records today with a Time In)
   const todayAttendanceCount = useMemo(() => {
     return allAttendance.filter((r) => r.dateISO === todayISO && !!r.timeIn).length;
   }, [allAttendance, todayISO]);
 
-  // Admin record today
   const adminTodayRecord = useMemo(() => {
     if (!adminEmployeeId) return null;
     return allAttendance.find((r) => r.employeeId === adminEmployeeId && r.dateISO === todayISO) ?? null;
@@ -432,8 +548,7 @@ export default function Dashboard() {
 
   const isOnBreak = !!adminTodayRecord?.lunchOut && !adminTodayRecord?.lunchIn && !adminTodayRecord?.timeOut;
 
-  // Remaining time / regular / overtime / progress
-  const SHIFT_MS = 8 * 60 * 60 * 1000; // 8h target
+  const SHIFT_MS = 8 * 60 * 60 * 1000;
   const remainingMs = clamp(SHIFT_MS - workMs, 0, SHIFT_MS);
   const regularMs = clamp(workMs, 0, SHIFT_MS);
   const overtimeMs = Math.max(0, workMs - SHIFT_MS);
@@ -444,7 +559,9 @@ export default function Dashboard() {
 
     const id = `${adminEmployeeId}_${todayISO}`;
     const nextList = [...allAttendance];
-    const idx = nextList.findIndex((r) => r.employeeId === adminEmployeeId && r.dateISO === todayISO);
+    const idx = nextList.findIndex(
+      (r) => r.employeeId === adminEmployeeId && r.dateISO === todayISO
+    );
 
     if (idx === -1) {
       const base: AttendanceRecord = {
@@ -466,7 +583,6 @@ export default function Dashboard() {
     writeAttendance(nextList);
   };
 
-  // Actions
   const doTimeIn = () => {
     if (!adminEmployeeId) return;
     if (adminTodayRecord?.timeIn) return;
@@ -492,7 +608,15 @@ export default function Dashboard() {
     upsertAttendance(patch);
   };
 
-  const recentLeaves = useMemo(() => leaves.slice(0, 5), [leaves]);
+  const recentPendingLeaves = useMemo(() => {
+    return storedLeaves.filter((l) => l.status === "Pending").slice(0, 5);
+  }, [storedLeaves]);
+
+  const adminOwnLeaves = useMemo(() => {
+    if (!currentAdmin?.name) return [];
+    return storedLeaves.filter((l) => l.employee === currentAdmin.name).slice(0, 5);
+  }, [storedLeaves, currentAdmin?.name]);
+
   const recentTasks = useMemo(() => tasks.slice(0, 5), [tasks]);
 
   return (
@@ -502,7 +626,6 @@ export default function Dashboard() {
       transition={{ duration: 0.25 }}
       className="space-y-6"
     >
-      {/* Header */}
       <div className="bg-card border border-slate-200 rounded-2xl shadow-sm p-5 flex items-center justify-between gap-4">
         <div>
           <div className="text-2xl font-bold text-text-heading">Admin Dashboard</div>
@@ -520,32 +643,57 @@ export default function Dashboard() {
         <div className="bg-primary text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
           <ClockIcon className="w-4 h-4" />
           <span className="tabular-nums">
-            {now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            {now.toLocaleTimeString("en-US", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}
           </span>
         </div>
       </div>
 
-      {/* KPI cards */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25 }}
-        className="grid grid-cols-1 md:grid-cols-4 gap-6"
+        className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6"
       >
-        <KpiCard title="Active Users" value={userStats.active} subtitle={`Out of ${userStats.total} users`} icon={UsersIcon} />
-        <KpiCard title="Pending Leaves" value={pendingLeaves} subtitle="Needs approval" icon={FileText} />
-        <KpiCard title="Task Completion" value={`${taskStats.pct}%`} subtitle={`${taskStats.completed}/${taskStats.total} completed`} icon={CheckCircle2} />
-        <KpiCard title="Attendance Today" value={todayAttendanceCount} subtitle={todayISO} icon={CalendarDays} />
+        <KpiCard
+          title="Active Users"
+          value={userStats.active}
+          subtitle={`Out of ${userStats.total} users`}
+          icon={UsersIcon}
+          onClick={() => navigate("/admin/users")}
+        />
+        <KpiCard
+          title="Pending Leaves"
+          value={pendingLeaves}
+          subtitle="Needs approval"
+          icon={FileText}
+          onClick={() => navigate("/admin/leave")}
+        />
+        <KpiCard
+          title="Task Completion"
+          value={`${taskStats.pct}%`}
+          subtitle={`${taskStats.completed}/${taskStats.total} completed`}
+          icon={CheckCircle2}
+          onClick={() => navigate("/admin/tasks")}
+        />
+        <KpiCard
+          title="Attendance Today"
+          value={todayAttendanceCount}
+          subtitle={todayISO}
+          icon={CalendarDays}
+          onClick={() => navigate("/admin/attendance")}
+        />
       </motion.div>
 
-      {/* ✅ Admin Time Tracking */}
       <motion.div
         initial={{ scale: 0.97, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.25 }}
         className="bg-white rounded-3xl shadow-xl border-2 border-[#F28C28]/20 overflow-hidden"
       >
-        {/* Header bar */}
         <div className="bg-primary p-6 text-white">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3 min-w-0">
@@ -577,10 +725,8 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Upper aligned section (smaller circle + right cards lower) */}
         <div className="px-6 sm:px-8 pt-7">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-center">
-            {/* LEFT: Progress Ring */}
             <div className="flex justify-center lg:justify-start">
               <div className="relative">
                 <div className="absolute inset-0 -z-10 rounded-full blur-2xl opacity-35 bg-orange-200" />
@@ -588,11 +734,10 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* CENTER: Remaining + Regular/Overtime */}
             <div className="flex flex-col items-center">
-              <div className="text-center">
+              <div className="text-center max-w-full">
                 <div className="text-sm text-text-primary/70 font-semibold">Remaining Time</div>
-                <div className="mt-2 text-5xl font-extrabold tabular-nums tracking-[0.10em] text-[#1F3C68]">
+                <div className="mt-2 text-[clamp(2rem,5vw,3.5rem)] font-extrabold tabular-nums tracking-[0.08em] text-[#1F3C68] leading-none">
                   {msToClockText(remainingMs)}
                 </div>
               </div>
@@ -614,20 +759,19 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* RIGHT: Elapsed + Break cards (slightly lower) */}
             <div className="flex justify-center lg:justify-end">
-              <div className="w-full max-w-[520px] grid grid-cols-1 sm:grid-cols-2 gap-4 lg:mt-8">
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 text-center">
+              <div className="w-full max-w-[560px] grid grid-cols-1 sm:grid-cols-2 gap-4 lg:mt-6">
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 text-center min-w-0 overflow-hidden">
                   <div className="text-sm text-text-primary/70 font-semibold">Elapsed Time</div>
-                  <div className="mt-2 text-3xl font-extrabold tabular-nums tracking-[0.08em] text-[#1F3C68]">
+                  <div className="mt-2 text-[clamp(1.6rem,3vw,2.4rem)] font-extrabold tabular-nums tracking-[0.04em] text-[#1F3C68] leading-tight break-words">
                     {adminTodayRecord?.timeIn ? msToClockText(workMs) : "00:00:00"}
                   </div>
                   <div className="mt-1 text-xs text-text-primary/60">(work, break excluded)</div>
                 </div>
 
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 text-center">
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 text-center min-w-0 overflow-hidden">
                   <div className="text-sm text-text-primary/70 font-semibold">Break Time</div>
-                  <div className="mt-2 text-3xl font-extrabold tabular-nums tracking-[0.08em] text-secondary">
+                  <div className="mt-2 text-[clamp(1.6rem,3vw,2.4rem)] font-extrabold tabular-nums tracking-[0.04em] text-secondary leading-tight break-words">
                     {adminTodayRecord?.lunchOut ? msToClockText(breakMs) : "00:00:00"}
                   </div>
                   <div className="mt-1 text-xs text-text-primary/60">{isOnBreak ? "(running)" : "(stopped)"}</div>
@@ -637,11 +781,8 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Buttons + details */}
         <div className="p-8">
-          {/* Buttons row (with requested colors) */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-            {/* Time In - GREEN */}
             <motion.button
               whileHover={{ scale: adminStatus === "Active" && !adminTodayRecord?.timeIn ? 1.02 : 1 }}
               whileTap={{ scale: adminStatus === "Active" && !adminTodayRecord?.timeIn ? 0.98 : 1 }}
@@ -656,14 +797,18 @@ export default function Dashboard() {
               type="button"
             >
               <div className="flex flex-col items-center justify-center gap-2">
-                <LogIn className={cx("w-6 h-6", adminStatus !== "Active" || adminTodayRecord?.timeIn ? "text-slate-400" : "text-white")} />
+                <LogIn
+                  className={cx(
+                    "w-6 h-6",
+                    adminStatus !== "Active" || adminTodayRecord?.timeIn ? "text-slate-400" : "text-white"
+                  )}
+                />
                 <span className={cx("text-lg", adminStatus !== "Active" || adminTodayRecord?.timeIn ? "text-slate-400" : "text-white")}>
                   Time In
                 </span>
               </div>
             </motion.button>
 
-            {/* Start Break - SECONDARY */}
             <motion.button
               whileHover={{
                 scale:
@@ -729,7 +874,6 @@ export default function Dashboard() {
               </div>
             </motion.button>
 
-            {/* End Break - PRIMARY */}
             <motion.button
               whileHover={{ scale: adminStatus === "Active" && isOnBreak ? 1.02 : 1 }}
               whileTap={{ scale: adminStatus === "Active" && isOnBreak ? 0.98 : 1 }}
@@ -751,7 +895,6 @@ export default function Dashboard() {
               </div>
             </motion.button>
 
-            {/* Time Out - RED */}
             <motion.button
               whileHover={{
                 scale: adminStatus === "Active" && !!adminTodayRecord?.timeIn && !adminTodayRecord?.timeOut ? 1.02 : 1,
@@ -798,19 +941,27 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Details tiles row */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             <TimeDetailTile label="Time In" value={formatTimeLocal(adminTodayRecord?.timeIn ?? null)} tone="blue" />
             <TimeDetailTile label="Start Break" value={formatTimeLocal(adminTodayRecord?.lunchOut ?? null)} tone="orange" />
             <TimeDetailTile label="End Break" value={formatTimeLocal(adminTodayRecord?.lunchIn ?? null)} tone="orange" />
             <TimeDetailTile label="Time Out" value={formatTimeLocal(adminTodayRecord?.timeOut ?? null)} tone="red" />
-            <TimeDetailTile label="Elapsed Time" value={adminTodayRecord?.timeIn ? msToClockText(workMs) : "--:--"} tone="yellow" sub="(Work time, break excluded)" />
-            <TimeDetailTile label="Device" value={adminTodayRecord?.source ?? getDeviceLabel()} tone="slate" sub={currentAdmin?.name ? `Admin: ${currentAdmin.name}` : undefined} />
+            <TimeDetailTile
+              label="Elapsed Time"
+              value={adminTodayRecord?.timeIn ? msToClockText(workMs) : "--:--"}
+              tone="yellow"
+              sub="(Work time, break excluded)"
+            />
+            <TimeDetailTile
+              label="Device"
+              value={adminTodayRecord?.source ?? getDeviceLabel()}
+              tone="slate"
+              sub={currentAdmin?.name ? `Admin: ${currentAdmin.name}` : undefined}
+            />
           </div>
         </div>
       </motion.div>
 
-      {/* Task Progress */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -845,20 +996,41 @@ export default function Dashboard() {
         </div>
       </motion.div>
 
-      {/* Recent panels */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Panel title="Recent Leave Requests" icon={FileText}>
-          {recentLeaves.map((l, idx) => (
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <Panel title="Recent Pending Leave Requests" icon={FileText}>
+          {recentPendingLeaves.map((l, idx) => (
             <motion.div
-              key={l.id}
+              key={String(l.id)}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2, delay: idx * 0.03 }}
             >
-              <Row primary={l.employee} secondary={`${l.type} • ${l.dateFrom ?? l.date ?? ""}`} badge={l.status} />
+              <Row
+                primary={l.employee}
+                secondary={`${l.type} • ${formatLeaveDateRange(l.dateFrom, l.dateTo)}`}
+                badge={String(l.status)}
+              />
             </motion.div>
           ))}
-          {recentLeaves.length === 0 && <Empty text="No leave requests." />}
+          {recentPendingLeaves.length === 0 && <Empty text="No pending leave requests." />}
+        </Panel>
+
+        <Panel title="My Leave Requests" icon={CalendarDays}>
+          {adminOwnLeaves.map((l, idx) => (
+            <motion.div
+              key={String(l.id)}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2, delay: idx * 0.03 }}
+            >
+              <Row
+                primary={l.type}
+                secondary={formatLeaveDateRange(l.dateFrom, l.dateTo)}
+                badge={String(l.status)}
+              />
+            </motion.div>
+          ))}
+          {adminOwnLeaves.length === 0 && <Empty text="You have no leave requests yet." />}
         </Panel>
 
         <Panel title="Recent Tasks" icon={ClipboardList}>

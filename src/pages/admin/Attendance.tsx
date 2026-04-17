@@ -1,13 +1,34 @@
-import { motion } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  AlertCircle,
+  Calendar as CalendarIcon,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Coffee,
+  History,
+  LogIn,
+  LogOut,
+  Pencil,
+  Timer,
+  Utensils,
+  X,
+} from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
 import accounts from "../data/accounts.json";
-import adminAccounts from "./data/adminAccounts.json";
 import AdminAttendanceCalendar, {
   type AttendanceRecord,
 } from "./components/AdminAttendanceCalendar";
-import { Clock, Timer, Receipt, X } from "lucide-react";
+import adminAccounts from "./data/adminAccounts.json";
 
 type Account = { id: number; email: string; password: string; name: string };
+
+const ATTENDANCE_KEY = "worktime_attendance_v1";
+const MONTH_TARGET_HOURS = 160;
+
+// match user modal behavior
+const STANDARD_SHIFT_START = "08:00";
+const LATE_THRESHOLD_MINUTES = 0;
 
 function toISODate(d: Date) {
   const y = d.getFullYear();
@@ -26,6 +47,25 @@ function isSameMonth(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
 }
 
+// normalize date comparisons to local midnight
+function isoToLocalMidnight(dateISO: string) {
+  return new Date(dateISO + "T00:00:00");
+}
+function isWeekdayISO(dateISO: string) {
+  const d = isoToLocalMidnight(dateISO);
+  const day = d.getDay();
+  return day !== 0 && day !== 6;
+}
+function isPastDayISO(dateISO: string) {
+  const d = isoToLocalMidnight(dateISO).getTime();
+  const today = new Date();
+  const t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  return d < t0; // strictly past, NOT today
+}
+function isTodayISO(dateISO: string) {
+  return dateISO === toISODate(new Date());
+}
+
 function formatFullDate(dateISO: string) {
   const d = new Date(dateISO + "T00:00:00");
   return d.toLocaleDateString("en-US", {
@@ -36,7 +76,7 @@ function formatFullDate(dateISO: string) {
   });
 }
 
-function formatTime(iso: string | null) {
+function formatTime(iso: string | null | undefined) {
   if (!iso) return "—";
   const dt = new Date(iso);
   return dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
@@ -52,14 +92,39 @@ function minutesBetween(aISO: string | null, bISO: string | null) {
 
 function computeWorkMinutes(r: AttendanceRecord) {
   // (out - in) - (lunchIn - lunchOut)
-  const gross = minutesBetween(r.timeIn, r.timeOut);
-  const lunch = minutesBetween(r.lunchOut, r.lunchIn);
+  const gross = minutesBetween(r.timeIn ?? null, r.timeOut ?? null);
+  const lunch = minutesBetween(r.lunchOut ?? null, r.lunchIn ?? null);
   return Math.max(0, gross - lunch);
 }
 
-function formatHours(mins: number) {
-  const hrs = mins / 60;
-  return hrs.toFixed(1);
+function formatHoursFromMinutes(mins: number) {
+  return (mins / 60).toFixed(1);
+}
+
+function formatMinutes(minutes: number) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m}m`;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+// late calc copied behavior
+function getLateMinutes(timeIn: string | null, now?: Date): number {
+  const [h, m] = STANDARD_SHIFT_START.split(":").map(Number);
+
+  if (!timeIn) {
+    if (!now) return 0;
+    const shiftStart = new Date(now);
+    shiftStart.setHours(h, m, 0, 0);
+    const diff = Math.floor((now.getTime() - shiftStart.getTime()) / 60000);
+    return diff > LATE_THRESHOLD_MINUTES ? diff : 0;
+  }
+
+  const t = new Date(timeIn);
+  const dayShiftStart = new Date(t);
+  dayShiftStart.setHours(h, m, 0, 0);
+  const diff = Math.floor((t.getTime() - dayShiftStart.getTime()) / 60000);
+  return diff > LATE_THRESHOLD_MINUTES ? diff : 0;
 }
 
 function safeTextCSV(v: unknown) {
@@ -101,6 +166,26 @@ function localInputToISO(val: string) {
 
 function cx(...classes: Array<string | false | undefined | null>) {
   return classes.filter(Boolean).join(" ");
+}
+
+function isValidISODateText(s: string) {
+  // expects YYYY-MM-DD
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(s + "T00:00:00");
+  return Number.isFinite(d.getTime()) && toISODate(d) === s;
+}
+
+function listMonthDatesISO(viewMonth: Date) {
+  const y = viewMonth.getFullYear();
+  const m = viewMonth.getMonth();
+  const last = new Date(y, m + 1, 0).getDate();
+  const out: string[] = [];
+  for (let day = 1; day <= last; day++) {
+    out.push(
+      `${y}-${String(m + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+    );
+  }
+  return out;
 }
 
 function ActionButton({
@@ -156,30 +241,320 @@ function Modal({
   );
 }
 
-function isValidISODateText(s: string) {
-  // expects YYYY-MM-DD
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-  const d = new Date(s + "T00:00:00");
-  return Number.isFinite(d.getTime()) && toISODate(d) === s;
+// ─── Skeleton Loading (same UX pattern as user) ───────────────────────────────
+function LogSkeleton() {
+  return (
+    <div className="space-y-3">
+      {[...Array(6)].map((_, i) => (
+        <motion.div
+          key={i}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: i * 0.06 }}
+          className="p-3 rounded-2xl bg-slate-50 border border-slate-100 overflow-hidden"
+        >
+          <div className="flex justify-between items-center">
+            <div className="space-y-2 flex-1">
+              <div className="flex items-center gap-2">
+                <div
+                  className="h-3.5 rounded-full bg-slate-200 animate-pulse"
+                  style={{ width: `${70 + (i % 3) * 24}px` }}
+                />
+                {i % 2 === 0 && (
+                  <div className="h-3 w-12 rounded-full bg-slate-200 animate-pulse" />
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="h-3 w-10 rounded-full bg-green-100 animate-pulse" />
+                <div className="h-2 w-3 rounded-full bg-slate-200 animate-pulse" />
+                <div className="h-3 w-10 rounded-full bg-red-100 animate-pulse" />
+              </div>
+            </div>
+            <div className="h-6 w-16 rounded-full bg-slate-200 animate-pulse ml-3" />
+          </div>
+        </motion.div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Day detail modal ──────────────────────────────────────────────────────────
+function DayDetailModal({
+  dateISO,
+  record,
+  now,
+  onClose,
+  onEdit,
+}: {
+  dateISO: string;
+  record: AttendanceRecord | null;
+  now: Date;
+  onClose: () => void;
+  onEdit: () => void;
+}) {
+  const date = new Date(dateISO + "T12:00:00");
+  const isToday = isTodayISO(dateISO);
+
+  const lateMinutes = getLateMinutes(record?.timeIn ?? null, isToday ? now : undefined);
+
+  const workMins = record ? computeWorkMinutes(record) : 0;
+  const totalHours = workMins / 60;
+  const regularHours = Math.min(totalHours, 9);
+  const overtimeHours = Math.max(totalHours - 9, 0);
+
+  const hasAny =
+    !!record?.timeIn || !!record?.timeOut || !!record?.lunchIn || !!record?.lunchOut;
+
+  const isAbsentPastWeekday = isWeekdayISO(dateISO) && isPastDayISO(dateISO) && !record;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.9, opacity: 0, y: 20 }}
+        transition={{ type: "spring", damping: 25, stiffness: 300 }}
+        className="relative bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="bg-[#1F3C68] p-6 text-white relative">
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <button
+              onClick={onEdit}
+              className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+              type="button"
+              aria-label="Edit day record"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={onClose}
+              className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+              type="button"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <p className="text-white/70 text-sm font-medium">
+            {date.toLocaleDateString("en-US", { weekday: "long" })}
+          </p>
+
+          <h2 className="text-2xl font-bold mt-0.5">
+            {date.toLocaleDateString("en-US", {
+              month: "long",
+              day: "numeric",
+              year: "numeric",
+            })}
+          </h2>
+
+          <div className="flex gap-2 mt-3 flex-wrap">
+            {isAbsentPastWeekday && (
+              <span className="px-3 py-1 bg-rose-400/30 text-rose-100 rounded-full text-xs font-bold">
+                Absent
+              </span>
+            )}
+
+            {!record && !isAbsentPastWeekday && (
+              <span className="px-3 py-1 bg-slate-500/40 rounded-full text-xs font-bold">
+                No Record
+              </span>
+            )}
+
+            {hasAny && (
+              <span
+                className={cx(
+                  "px-3 py-1 rounded-full text-xs font-bold",
+                  lateMinutes > 0
+                    ? "bg-red-400/30 text-red-200"
+                    : "bg-green-400/30 text-green-200"
+                )}
+              >
+                {lateMinutes > 0 ? `Late ${formatMinutes(lateMinutes)}` : "On Time"}
+              </span>
+            )}
+
+            {overtimeHours > 0 && (
+              <span className="px-3 py-1 bg-orange-400/30 text-orange-200 rounded-full text-xs font-bold">
+                +{overtimeHours.toFixed(1)}h OT
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="p-5 space-y-3">
+          {record ? (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-green-50 border border-green-200 rounded-2xl p-3">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div className="p-1.5 bg-green-500 rounded-lg">
+                      <LogIn className="w-3.5 h-3.5 text-white" />
+                    </div>
+                    <p className="text-xs font-bold text-green-700 uppercase tracking-wide">
+                      Time In
+                    </p>
+                  </div>
+                  <p className="text-xl font-bold text-green-800">
+                    {formatTime(record.timeIn)}
+                  </p>
+                  {lateMinutes > 0 && (
+                    <div className="flex items-center gap-1 mt-1">
+                      <AlertCircle className="w-3 h-3 text-red-500" />
+                      <p className="text-[10px] text-red-500 font-semibold">
+                        {formatMinutes(lateMinutes)} late
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-red-50 border border-red-200 rounded-2xl p-3">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div className="p-1.5 bg-red-500 rounded-lg">
+                      <LogOut className="w-3.5 h-3.5 text-white" />
+                    </div>
+                    <p className="text-xs font-bold text-red-700 uppercase tracking-wide">
+                      Time Out
+                    </p>
+                  </div>
+                  <p className="text-xl font-bold text-red-800">
+                    {formatTime(record.timeOut)}
+                  </p>
+                </div>
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-3">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div className="p-1.5 bg-yellow-500 rounded-lg">
+                      <Coffee className="w-3.5 h-3.5 text-white" />
+                    </div>
+                    <p className="text-xs font-bold text-yellow-700 uppercase tracking-wide">
+                      Start Break
+                    </p>
+                  </div>
+                  <p className="text-xl font-bold text-yellow-800">
+                    {formatTime(record.lunchOut)}
+                  </p>
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div className="p-1.5 bg-blue-500 rounded-lg">
+                      <Utensils className="w-3.5 h-3.5 text-white" />
+                    </div>
+                    <p className="text-xs font-bold text-blue-700 uppercase tracking-wide">
+                      End Break
+                    </p>
+                  </div>
+                  <p className="text-xl font-bold text-blue-800">
+                    {formatTime(record.lunchIn)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">
+                  Hours Summary
+                </p>
+
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-sm text-slate-600">Regular Hours</span>
+                  <span className="font-bold text-[#1F3C68]">
+                    {regularHours.toFixed(1)} hrs
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-sm text-slate-600">Overtime</span>
+                  <span
+                    className={cx(
+                      "font-bold",
+                      overtimeHours > 0 ? "text-orange-500" : "text-slate-400"
+                    )}
+                  >
+                    {overtimeHours.toFixed(1)} hrs
+                  </span>
+                </div>
+
+                <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                  <div className="h-full flex">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${Math.min((regularHours / 9) * 100, 100)}%` }}
+                      transition={{ duration: 0.6, ease: "easeOut" }}
+                      className="h-full bg-[#1F3C68] rounded-l-full"
+                    />
+                    {overtimeHours > 0 && (
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${Math.min((overtimeHours / 9) * 30, 30)}%` }}
+                        transition={{ duration: 0.6, ease: "easeOut", delay: 0.2 }}
+                        className="h-full bg-orange-400 rounded-r-full"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex justify-between mt-1">
+                  <span className="text-[10px] text-slate-400">0h</span>
+                  <span className="text-[10px] font-bold text-[#1F3C68]">
+                    Total: {totalHours.toFixed(1)} hrs
+                  </span>
+                  <span className="text-[10px] text-slate-400">9h</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-sm text-slate-500">
+                <span>Device</span>
+                <span className="font-semibold text-slate-700 bg-slate-100 px-3 py-1 rounded-full text-xs">
+                  {record.source ?? "—"}
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="text-center py-8 text-slate-400">
+              <CalendarIcon className="w-10 h-10 mx-auto mb-2 opacity-30" />
+              <p className="text-sm font-medium">
+                {isAbsentPastWeekday ? "Absent (no attendance recorded)" : "No attendance recorded"}
+              </p>
+              {!isAbsentPastWeekday && (
+                <p className="text-xs mt-2 text-slate-400">
+                  Future dates won’t be marked absent until the day has passed.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
 }
 
 export default function Attendance() {
-  // ✅ Use accounts.json as employee list
+  // Employees: Admins + Users
   const employeeList = useMemo(() => {
-  const admins = (adminAccounts as Account[]).map(a => ({
-    id: String(a.id),
-    name: `${a.name} (Admin)`,
-  }));
+    const admins = (adminAccounts as Account[]).map((a) => ({
+      id: String(a.id),
+      name: `${a.name} (Admin)`,
+    }));
 
-  const users = (accounts as Account[]).map(u => ({
-    id: String(u.id),
-    name: `${u.name} (User)`,
-  }));
+    const users = (accounts as Account[]).map((u) => ({
+      id: String(u.id),
+      name: `${u.name} (User)`,
+    }));
 
-  return [...admins, ...users];
-}, []);
-
-  const ATTENDANCE_KEY = "worktime_attendance_v1";
+    return [...admins, ...users];
+  }, []);
 
   function readAttendance(): AttendanceRecord[] {
     try {
@@ -195,6 +570,7 @@ export default function Attendance() {
     readAttendance()
   );
 
+  // persist on change
   useEffect(() => {
     try {
       localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(allRecords));
@@ -203,7 +579,7 @@ export default function Attendance() {
     }
   }, [allRecords]);
 
-  // optional: live sync when another tab changes attendance
+  // live sync across tabs
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === ATTENDANCE_KEY) setAllRecords(readAttendance());
@@ -220,36 +596,39 @@ export default function Attendance() {
     toISODate(new Date())
   );
 
-  // ✅ Date search bar state
+  // day detail modal open/close
+  const [detailOpen, setDetailOpen] = useState(false);
+
+  // Date search bar
   const [dateQuery, setDateQuery] = useState<string>(selectedDateISO);
   const [dateError, setDateError] = useState<string>("");
 
-  // realtime clock (badge at top-right)
+  // realtime clock
   const [now, setNow] = useState<Date>(new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // Keep date search input synced when date changes (calendar click etc.)
-  useEffect(() => {
-    setDateQuery(selectedDateISO);
-  }, [selectedDateISO]);
+  // Keep date search input synced
+  useEffect(() => setDateQuery(selectedDateISO), [selectedDateISO]);
 
-  // If selected day is not in the viewed month, align month view to selected date
+  // If selected day not in viewed month, align month
   useEffect(() => {
     const d = new Date(selectedDateISO + "T00:00:00");
     if (!isSameMonth(d, viewMonth)) setViewMonth(d);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDateISO]);
 
-  // If accounts list changes (rare), ensure selected employee still exists
+  // If employee list changes (rare)
   useEffect(() => {
     if (!employeeList.length) return;
     const exists = employeeList.some((e) => e.id === selectedEmployeeId);
     if (!exists) setSelectedEmployeeId(employeeList[0].id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employeeList.length]);
+
+  const selectedEmployee = employeeList.find((e) => e.id === selectedEmployeeId);
 
   const recordsForEmployee = useMemo(() => {
     return allRecords.filter((r) => r.employeeId === selectedEmployeeId);
@@ -264,30 +643,37 @@ export default function Attendance() {
     });
   }, [recordsForEmployee, viewMonth]);
 
-  const selectedDayRecord = useMemo(() => {
-    return recordsForEmployee.find((r) => r.dateISO === selectedDateISO) ?? null;
-  }, [recordsForEmployee, selectedDateISO]);
+  const recordByDate = useMemo(() => {
+    const map = new Map<string, AttendanceRecord>();
+    for (const r of recordsForMonth) map.set(r.dateISO, r);
+    return map;
+  }, [recordsForMonth]);
 
+  const selectedDayRecord = useMemo(() => {
+    return recordByDate.get(selectedDateISO) ?? null;
+  }, [recordByDate, selectedDateISO]);
+
+  // Total minutes (month)
   const monthTotalMinutes = useMemo(() => {
     return recordsForMonth.reduce((sum, r) => sum + computeWorkMinutes(r), 0);
   }, [recordsForMonth]);
 
-  // ✅ Attendance Overview (Month)
+  // Overview: Absent = weekday that is already past and has no record (or record is empty)
   const monthOverview = useMemo(() => {
-    const byDate = new Map<string, AttendanceRecord>();
-    for (const r of recordsForMonth) {
-      if (!byDate.has(r.dateISO)) byDate.set(r.dateISO, r);
-    }
+    const dates = listMonthDatesISO(viewMonth).filter(isWeekdayISO);
 
     let presentDays = 0;
     let absentDays = 0;
     let incompleteDays = 0;
 
-    for (const r of byDate.values()) {
-      const hasAny = !!r.timeIn || !!r.timeOut || !!r.lunchIn || !!r.lunchOut;
+    for (const dateISO of dates) {
+      const r = recordByDate.get(dateISO);
 
-      if (!hasAny) {
-        absentDays += 1;
+      const hasAny =
+        !!r?.timeIn || !!r?.timeOut || !!r?.lunchIn || !!r?.lunchOut;
+
+      if (!r || !hasAny) {
+        if (isPastDayISO(dateISO)) absentDays += 1;
         continue;
       }
 
@@ -306,14 +692,15 @@ export default function Attendance() {
       incompleteDays,
       avgHoursPerWorkDay: avgMins / 60,
     };
-  }, [recordsForMonth, monthTotalMinutes]);
+  }, [viewMonth, recordByDate, monthTotalMinutes]);
 
-  const targetMinutes = 160 * 60;
+  const targetMinutes = MONTH_TARGET_HOURS * 60;
   const progressPct = Math.min(
     100,
     Math.round((monthTotalMinutes / targetMinutes) * 100)
   );
 
+  // Month navigation
   function prevMonth() {
     setViewMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1));
   }
@@ -321,9 +708,70 @@ export default function Attendance() {
     setViewMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1));
   }
 
-  const selectedEmployee = employeeList.find((e) => e.id === selectedEmployeeId);
-  const dailyMinutes = selectedDayRecord ? computeWorkMinutes(selectedDayRecord) : 0;
+  // Date search
+  function goToDate() {
+    const q = dateQuery.trim();
+    if (!isValidISODateText(q)) {
+      setDateError(`Use YYYY-MM-DD (e.g. ${toISODate(new Date())}).`);
+      return;
+    }
+    setDateError("");
+    setSelectedDateISO(q);
+    setDetailOpen(true);
+  }
 
+  // Month log items
+  type MonthLogItem =
+    | { kind: "present"; dateISO: string; record: AttendanceRecord; minutes: number }
+    | { kind: "incomplete"; dateISO: string; record: AttendanceRecord; minutes: number }
+    | { kind: "absent"; dateISO: string }
+    | { kind: "upcoming"; dateISO: string }
+    | { kind: "weekend"; dateISO: string };
+
+  const monthLogItems = useMemo<MonthLogItem[]>(() => {
+    const dates = listMonthDatesISO(viewMonth);
+    const items: MonthLogItem[] = [];
+
+    for (const dateISO of dates) {
+      if (!isWeekdayISO(dateISO)) {
+        items.push({ kind: "weekend", dateISO });
+        continue;
+      }
+
+      const r = recordByDate.get(dateISO);
+      const hasAny =
+        !!r?.timeIn || !!r?.timeOut || !!r?.lunchIn || !!r?.lunchOut;
+      const complete = !!r?.timeIn && !!r?.timeOut;
+
+      if (!r || !hasAny) {
+        if (isPastDayISO(dateISO)) items.push({ kind: "absent", dateISO });
+        else items.push({ kind: "upcoming", dateISO });
+        continue;
+      }
+
+      const mins = computeWorkMinutes(r);
+      if (complete) items.push({ kind: "present", dateISO, record: r, minutes: mins });
+      else items.push({ kind: "incomplete", dateISO, record: r, minutes: mins });
+    }
+
+    items.sort((a, b) => b.dateISO.localeCompare(a.dateISO));
+    return items;
+  }, [viewMonth, recordByDate]);
+
+  // Skeleton loading like user page
+  const [logsLoading, setLogsLoading] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setLogsLoading(false), 700);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    setLogsLoading(true);
+    const t = setTimeout(() => setLogsLoading(false), 500);
+    return () => clearTimeout(t);
+  }, [viewMonth, selectedEmployeeId]);
+
+  // Export CSV (Month)
   function exportMonthCSV() {
     const monthLabel = viewMonth.toLocaleDateString("en-US", {
       month: "short",
@@ -335,33 +783,71 @@ export default function Attendance() {
       "Employee Name",
       "Month",
       "Date",
+      "Status",
       "Source",
-      "Time In",
-      "Lunch Out",
-      "Lunch In",
-      "Time Out",
+      "Time In (ISO)",
+      "Lunch Out (ISO)",
+      "Lunch In (ISO)",
+      "Time Out (ISO)",
       "Work Hours",
     ];
 
-    const rows = recordsForMonth
+    const rows = monthLogItems
       .slice()
       .sort((a, b) => a.dateISO.localeCompare(b.dateISO))
-      .map((r) => [
-        selectedEmployeeId,
-        selectedEmployee?.name ?? "",
-        monthLabel,
-        r.dateISO,
-        (r as any).source ?? "",
-        r.timeIn ?? "",
-        r.lunchOut ?? "",
-        r.lunchIn ?? "",
-        r.timeOut ?? "",
-        formatHours(computeWorkMinutes(r)),
-      ]);
+      .filter((i) => i.kind !== "weekend")
+      .map((i) => {
+        if (i.kind === "absent") {
+          return [
+            selectedEmployeeId,
+            selectedEmployee?.name ?? "",
+            monthLabel,
+            i.dateISO,
+            "Absent",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "0.0",
+          ];
+        }
+
+        if (i.kind === "upcoming") {
+          return [
+            selectedEmployeeId,
+            selectedEmployee?.name ?? "",
+            monthLabel,
+            i.dateISO,
+            "Upcoming",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "0.0",
+          ];
+        }
+
+        const r = i.record;
+        const status = i.kind === "present" ? "Present" : "Incomplete";
+        return [
+          selectedEmployeeId,
+          selectedEmployee?.name ?? "",
+          monthLabel,
+          i.dateISO,
+          status,
+          r.source ?? "",
+          r.timeIn ?? "",
+          r.lunchOut ?? "",
+          r.lunchIn ?? "",
+          r.timeOut ?? "",
+          formatHoursFromMinutes(computeWorkMinutes(r)),
+        ];
+      });
 
     const csv =
-      [header, ...rows].map((r) => r.map(safeTextCSV).join(",")).join("\n") +
-      "\n";
+      [header, ...rows].map((r) => r.map(safeTextCSV).join(",")).join("\n") + "\n";
 
     downloadCSV(
       `attendance_${selectedEmployeeId}_${toISODate(startOfMonth(viewMonth))}.csv`,
@@ -371,16 +857,6 @@ export default function Attendance() {
 
   function printReport() {
     window.print();
-  }
-
-  function goToDate() {
-    const q = dateQuery.trim();
-    if (!isValidISODateText(q)) {
-      setDateError("Use YYYY-MM-DD (e.g. 2026-02-19).");
-      return;
-    }
-    setDateError("");
-    setSelectedDateISO(q);
   }
 
   // Admin Edit Modal
@@ -402,41 +878,65 @@ export default function Attendance() {
   });
 
   function openEditModal() {
-    if (!selectedDayRecord) return;
+    const r = selectedDayRecord;
 
     setEditDraft({
-      dateISO: selectedDayRecord.dateISO,
-      source: (selectedDayRecord as any).source ?? "",
-      timeIn: isoToLocalInput(selectedDayRecord.timeIn),
-      lunchOut: isoToLocalInput(selectedDayRecord.lunchOut),
-      lunchIn: isoToLocalInput(selectedDayRecord.lunchIn),
-      timeOut: isoToLocalInput(selectedDayRecord.timeOut),
+      dateISO: selectedDateISO,
+      source: (r?.source ?? "") as string,
+      timeIn: isoToLocalInput(r?.timeIn ?? null),
+      lunchOut: isoToLocalInput(r?.lunchOut ?? null),
+      lunchIn: isoToLocalInput(r?.lunchIn ?? null),
+      timeOut: isoToLocalInput(r?.timeOut ?? null),
     });
+
+    setEditOpen(true);
+  }
+
+  function handleEditDate(dateISO: string) {
+    setSelectedDateISO(dateISO);
+
+    const r = recordByDate.get(dateISO) ?? null;
+
+    setEditDraft({
+      dateISO,
+      source: (r?.source ?? "") as string,
+      timeIn: isoToLocalInput(r?.timeIn ?? null),
+      lunchOut: isoToLocalInput(r?.lunchOut ?? null),
+      lunchIn: isoToLocalInput(r?.lunchIn ?? null),
+      timeOut: isoToLocalInput(r?.timeOut ?? null),
+    });
+
     setEditOpen(true);
   }
 
   function saveEdit() {
-    if (!selectedDayRecord) return;
+    const dateISO = editDraft.dateISO;
 
-    setAllRecords((prev) =>
-      prev.map((r) => {
-        if (r.employeeId !== selectedEmployeeId) return r;
-        if (r.dateISO !== editDraft.dateISO) return r;
+    const next: AttendanceRecord = {
+      id: `${selectedEmployeeId}_${dateISO}`,
+      employeeId: selectedEmployeeId,
+      dateISO,
+      source: editDraft.source?.trim() ? editDraft.source.trim() : undefined,
+      timeIn: localInputToISO(editDraft.timeIn),
+      lunchOut: localInputToISO(editDraft.lunchOut),
+      lunchIn: localInputToISO(editDraft.lunchIn),
+      timeOut: localInputToISO(editDraft.timeOut),
+    };
 
-        return {
-          ...r,
-          timeIn: localInputToISO(editDraft.timeIn),
-          lunchOut: localInputToISO(editDraft.lunchOut),
-          lunchIn: localInputToISO(editDraft.lunchIn),
-          timeOut: localInputToISO(editDraft.timeOut),
-          ...(typeof (r as any).source !== "undefined" || editDraft.source
-            ? { source: editDraft.source }
-            : {}),
-        } as AttendanceRecord;
-      })
-    );
+    setAllRecords((prev) => {
+      const idx = prev.findIndex(
+        (r) => r.employeeId === selectedEmployeeId && r.dateISO === dateISO
+      );
+      if (idx === -1) return [...prev, next];
+      return prev.map((r, i) => (i === idx ? { ...r, ...next } : r));
+    });
 
     setEditOpen(false);
+  }
+
+  function handleSelectDate(dateISO: string) {
+    setSelectedDateISO(dateISO);
+    setDetailOpen(true);
   }
 
   return (
@@ -446,6 +946,22 @@ export default function Attendance() {
       transition={{ duration: 0.25 }}
       className="p-6 space-y-6"
     >
+      {/* Day detail modal */}
+      <AnimatePresence>
+        {detailOpen && (
+          <DayDetailModal
+            dateISO={selectedDateISO}
+            record={selectedDayRecord}
+            now={now}
+            onClose={() => setDetailOpen(false)}
+            onEdit={() => {
+              setDetailOpen(false);
+              handleEditDate(selectedDateISO);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Header card */}
       <div className="bg-card border border-slate-200 rounded-2xl shadow-sm p-5 flex items-center justify-between gap-4">
         <div>
@@ -479,7 +995,6 @@ export default function Attendance() {
               <span className="font-semibold">{selectedEmployee?.name}</span>
             </span>
 
-            {/* Date Search */}
             <div className="flex flex-wrap items-center gap-2 sm:ml-2">
               <div className="relative">
                 <input
@@ -515,18 +1030,13 @@ export default function Attendance() {
                 Export CSV (Month)
               </ActionButton>
 
-              <ActionButton
-                variant="default"
-                onClick={printReport}
-                type="button"
-              >
+              <ActionButton variant="default" onClick={printReport} type="button">
                 Print
               </ActionButton>
             </div>
           </div>
         </div>
 
-        {/* Clock badge */}
         <div className="bg-primary text-white rounded-xl px-4 py-3 font-bold shadow-sm flex items-center gap-2">
           <Clock className="h-4 w-4 opacity-90" />
           <span className="tabular-nums">
@@ -545,7 +1055,7 @@ export default function Attendance() {
           <AdminAttendanceCalendar
             viewMonth={viewMonth}
             selectedDateISO={selectedDateISO}
-            onSelectDateISO={setSelectedDateISO}
+            onSelectDateISO={handleSelectDate}
             onPrevMonth={prevMonth}
             onNextMonth={nextMonth}
             recordsForMonth={recordsForMonth}
@@ -612,7 +1122,9 @@ export default function Attendance() {
                     <div className="text-xs font-semibold text-text-heading">
                       Total Work Hours
                     </div>
-                    <div className="text-xs text-text-primary/70">This Month</div>
+                    <div className="text-xs text-text-primary/70">
+                      This Month
+                    </div>
                   </div>
                   <div className="h-9 w-9 rounded-xl bg-white/60 flex items-center justify-center">
                     <Timer className="h-4 w-4 text-text-primary/70" />
@@ -620,7 +1132,7 @@ export default function Attendance() {
                 </div>
 
                 <div className="mt-3 text-3xl font-extrabold text-text-heading">
-                  {formatHours(monthTotalMinutes)} hrs
+                  {formatHoursFromMinutes(monthTotalMinutes)} hrs
                 </div>
 
                 <div className="mt-3 h-2 rounded-full bg-white/70 overflow-hidden">
@@ -630,125 +1142,361 @@ export default function Attendance() {
                   />
                 </div>
                 <div className="mt-2 text-xs font-semibold text-text-primary/80">
-                  {progressPct}% of monthly target (160 hrs)
+                  {progressPct}% of monthly target ({MONTH_TARGET_HOURS} hrs)
                 </div>
               </div>
             </div>
           </motion.div>
 
-          {/* Daily logs card */}
+          {/* Daily logs */}
           <motion.div
             initial={{ opacity: 0, x: 10 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.3, delay: 0.05 }}
-            className="rounded-2xl bg-card border border-slate-200 shadow-sm"
+            className="bg-white rounded-3xl shadow-md border border-slate-100 overflow-hidden flex flex-col h-[500px]"
           >
-            <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-xl bg-soft flex items-center justify-center">
-                  <Receipt className="h-4 w-4 text-text-primary/70" />
+            <div className="p-5 border-b border-slate-100 bg-primary">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-white/20 backdrop-blur-sm rounded-xl">
+                  <History className="w-6 h-6 text-white" />
                 </div>
-                <div>
-                  <div className="font-bold text-text-heading">Daily Logs</div>
-                  <div className="text-xs text-text-primary/70">
-                    Selected day attendance record
+                <div className="flex-1">
+                  <h2 className="text-lg font-bold text-[#F2F2F2]">
+                    Daily Logs
+                  </h2>
+                  <p className="text-xs text-slate-300">
+                    Click a date on calendar or a row below
+                  </p>
+
+                  <div className="flex items-center justify-between mt-4">
+                    <button
+                      onClick={prevMonth}
+                      className="p-2 rounded-full bg-slate-100 hover:bg-gray-200 transition"
+                      type="button"
+                      aria-label="Previous month"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+
+                    <h2 className="text-sm font-semibold text-slate-200 min-w-[180px] text-center">
+                      {viewMonth.toLocaleString("default", {
+                        month: "long",
+                        year: "numeric",
+                      })}
+                    </h2>
+
+                    <button
+                      onClick={nextMonth}
+                      className="p-2 rounded-full bg-slate-100 hover:bg-gray-200 transition"
+                      type="button"
+                      aria-label="Next month"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
                   </div>
                 </div>
-              </div>
 
-              <div className="flex flex-col items-end gap-2">
-                <div className="text-xs font-bold rounded-full bg-secondary/10 text-secondary px-3 py-1">
-                  {selectedDayRecord
-                    ? `${formatHours(dailyMinutes)} hrs`
-                    : "0 hrs"}
+                <div className="hidden sm:flex flex-col items-end gap-2">
+                  <ActionButton
+                    variant="dark"
+                    onClick={openEditModal}
+                    className="px-3 py-1.5 text-xs"
+                    type="button"
+                    title="Edit or create this day record"
+                  >
+                    Edit
+                  </ActionButton>
                 </div>
-
-                <ActionButton
-                  variant="dark"
-                  onClick={openEditModal}
-                  disabled={!selectedDayRecord}
-                  className="px-3 py-1.5 text-xs"
-                  title={
-                    !selectedDayRecord
-                      ? "No record to edit for this day"
-                      : "Edit this record"
-                  }
-                  type="button"
-                >
-                  Edit
-                </ActionButton>
               </div>
             </div>
 
-            <div className="p-5">
-              {!selectedDayRecord ? (
-                <div className="text-sm text-text-primary/70">
-                  No logs for{" "}
-                  <span className="font-semibold">{selectedDateISO}</span>.
-                </div>
-              ) : (
-                <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="space-y-4"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-bold text-text-heading">
-                        {new Date(
-                          selectedDayRecord.dateISO + "T00:00:00"
-                        ).toLocaleDateString("en-US", {
-                          weekday: "short",
-                          month: "short",
-                          day: "2-digit",
-                        })}
-                      </div>
-                      <div className="text-xs text-text-primary/70">
-                        • {(selectedDayRecord as any).source ?? "—"}
-                      </div>
-                    </div>
-                  </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              <AnimatePresence mode="wait">
+                {logsLoading ? (
+                  <motion.div
+                    key="skeleton"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <LogSkeleton />
+                  </motion.div>
+                ) : monthLogItems.length > 0 ? (
+                  <motion.div
+                    key="logs"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.25 }}
+                    className="space-y-3"
+                  >
+                    {monthLogItems.map((item, idx) => {
+                      const isSelected = item.dateISO === selectedDateISO;
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-[10px] font-bold text-slate-500">
-                        TIME IN
-                      </div>
-                      <div className="text-sm font-extrabold text-green-700">
-                        {formatTime(selectedDayRecord.timeIn)}
-                      </div>
-                    </div>
+                      const dateLabel = new Date(item.dateISO + "T00:00:00").toLocaleDateString(
+                        "en-US",
+                        { weekday: "short", month: "short", day: "numeric" }
+                      );
 
-                    <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-[10px] font-bold text-slate-500">
-                        LUNCH OUT
-                      </div>
-                      <div className="text-sm font-extrabold text-yellow-700">
-                        {formatTime(selectedDayRecord.lunchOut)}
-                      </div>
-                    </div>
+                      const baseRow = "p-3 rounded-2xl border transition-all";
+                      const selectedRing = isSelected ? "ring-2 ring-[#F28C28]/40" : "";
 
-                    <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-[10px] font-bold text-slate-500">
-                        LUNCH IN
-                      </div>
-                      <div className="text-sm font-extrabold text-blue-700">
-                        {formatTime(selectedDayRecord.lunchIn)}
-                      </div>
-                    </div>
+                      if (item.kind === "weekend") {
+                        return (
+                          <motion.div
+                            key={item.dateISO}
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: idx * 0.02 }}
+                            className={cx(
+                              baseRow,
+                              "bg-slate-50 border-slate-100 hover:border-slate-200",
+                              selectedRing
+                            )}
+                          >
+                            <div className="flex justify-between items-center gap-3">
+                              <button
+                                onClick={() => {
+                                  setSelectedDateISO(item.dateISO);
+                                  setDetailOpen(true);
+                                }}
+                                className="flex-1 text-left"
+                                type="button"
+                              >
+                                <p className="font-bold text-slate-500 text-sm">{dateLabel}</p>
+                                <p className="text-xs text-slate-400 mt-1">Weekend</p>
+                              </button>
 
-                    <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-[10px] font-bold text-slate-500">
-                        TIME OUT
-                      </div>
-                      <div className="text-sm font-extrabold text-red-700">
-                        {formatTime(selectedDayRecord.timeOut)}
-                      </div>
+                              <div className="flex items-center gap-2">
+                                <div className="bg-slate-200/70 px-3 py-1 rounded-full text-xs font-bold text-slate-600">
+                                  —
+                                </div>
+
+                                <button
+                                  onClick={() => handleEditDate(item.dateISO)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-text-heading hover:bg-white transition"
+                                  type="button"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                  Edit
+                                </button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        );
+                      }
+
+                      if (item.kind === "absent") {
+                        return (
+                          <motion.div
+                            key={item.dateISO}
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: idx * 0.02 }}
+                            className={cx(
+                              baseRow,
+                              "bg-rose-50 border-rose-200 hover:border-rose-300",
+                              selectedRing
+                            )}
+                          >
+                            <div className="flex justify-between items-center gap-3">
+                              <button
+                                onClick={() => {
+                                  setSelectedDateISO(item.dateISO);
+                                  setDetailOpen(true);
+                                }}
+                                className="flex-1 text-left"
+                                type="button"
+                              >
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="font-bold text-rose-700 text-sm">{dateLabel}</p>
+                                  <span className="text-[9px] font-bold text-rose-700 bg-white/60 border border-rose-200 px-1.5 py-0.5 rounded-full">
+                                    Absent
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-3 mt-1">
+                                  <span className="text-xs text-slate-400 font-semibold">——</span>
+                                  <span className="text-slate-300 text-xs">→</span>
+                                  <span className="text-xs text-slate-400 font-semibold">——</span>
+                                </div>
+                              </button>
+
+                              <div className="flex items-center gap-2">
+                                <div className="bg-rose-600 px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
+                                  0.0 hrs
+                                </div>
+
+                                <button
+                                  onClick={() => handleEditDate(item.dateISO)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white/70 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-white transition"
+                                  type="button"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                  Edit
+                                </button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        );
+                      }
+
+                      if (item.kind === "upcoming") {
+                        return (
+                          <motion.div
+                            key={item.dateISO}
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: idx * 0.02 }}
+                            className={cx(
+                              baseRow,
+                              "bg-slate-50 border-slate-100 hover:border-slate-200",
+                              selectedRing
+                            )}
+                          >
+                            <div className="flex justify-between items-center gap-3">
+                              <button
+                                onClick={() => {
+                                  setSelectedDateISO(item.dateISO);
+                                  setDetailOpen(true);
+                                }}
+                                className="flex-1 text-left"
+                                type="button"
+                              >
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="font-bold text-slate-600 text-sm">{dateLabel}</p>
+                                  <span className="text-[9px] font-bold text-slate-600 bg-white/60 border border-slate-200 px-1.5 py-0.5 rounded-full">
+                                    Upcoming
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-3 mt-1">
+                                  <span className="text-xs text-slate-400 font-semibold">——</span>
+                                  <span className="text-slate-300 text-xs">→</span>
+                                  <span className="text-xs text-slate-400 font-semibold">——</span>
+                                </div>
+                              </button>
+
+                              <div className="flex items-center gap-2">
+                                <div className="bg-slate-700 px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
+                                  0.0 hrs
+                                </div>
+
+                                <button
+                                  onClick={() => handleEditDate(item.dateISO)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-text-heading hover:bg-soft transition"
+                                  type="button"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                  Edit
+                                </button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        );
+                      }
+
+                      const r = item.record;
+                      const minutes = item.minutes;
+                      const badge = item.kind === "present" ? "Present" : "Incomplete";
+                      const badgeClass =
+                        item.kind === "present"
+                          ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+                          : "text-amber-700 bg-amber-50 border-amber-200";
+
+                      return (
+                        <motion.div
+                          key={item.dateISO}
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: idx * 0.02 }}
+                          className={cx(
+                            baseRow,
+                            "bg-slate-50 border-slate-100 hover:border-[#F28C28]/30 hover:shadow-sm",
+                            selectedRing
+                          )}
+                        >
+                          <div className="flex justify-between items-center gap-3">
+                            <button
+                              onClick={() => {
+                                setSelectedDateISO(item.dateISO);
+                                setDetailOpen(true);
+                              }}
+                              className="flex-1 text-left"
+                              type="button"
+                            >
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="font-bold text-[#1F3C68] text-sm">{dateLabel}</p>
+                                <span
+                                  className={cx(
+                                    "text-[9px] font-bold px-1.5 py-0.5 rounded-full border",
+                                    badgeClass
+                                  )}
+                                >
+                                  {badge}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-3 mt-1">
+                                <span className="text-xs text-green-600 font-semibold">
+                                  {formatTime(r.timeIn)}
+                                </span>
+                                <span className="text-slate-300 text-xs">→</span>
+                                <span className="text-xs text-red-600 font-semibold">
+                                  {formatTime(r.timeOut)}
+                                </span>
+                              </div>
+
+                              <div className="text-[11px] text-slate-400 mt-1">• {r.source ?? "—"}</div>
+                            </button>
+
+                            <div className="flex items-center gap-2">
+                              <div className="bg-primary px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
+                                {formatHoursFromMinutes(minutes)} hrs
+                              </div>
+
+                              <button
+                                onClick={() => handleEditDate(item.dateISO)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-text-heading hover:bg-soft transition"
+                                type="button"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                                Edit
+                              </button>
+                            </div>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="empty"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.3 }}
+                    className="h-full flex flex-col items-center justify-center text-slate-400 space-y-3 py-12"
+                  >
+                    <div className="p-4 bg-slate-50 rounded-2xl">
+                      <History className="w-12 h-12 opacity-30" />
                     </div>
-                  </div>
-                </motion.div>
-              )}
+                    <p className="text-sm font-medium">No records for this month</p>
+                    <p className="text-xs text-center max-w-[220px]">
+                      Select a date and click Edit to create or correct logs.
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Small-screen Edit button */}
+            <div className="sm:hidden p-4 pt-0">
+              <ActionButton
+                variant="dark"
+                onClick={openEditModal}
+                className="w-full"
+                type="button"
+              >
+                Edit / Create Selected Day
+              </ActionButton>
             </div>
           </motion.div>
         </div>
@@ -757,9 +1505,9 @@ export default function Attendance() {
       {/* EDIT MODAL */}
       <Modal
         open={editOpen}
-        title={`Admin Edit • ${
-          selectedEmployee?.name ?? selectedEmployeeId
-        } • ${editDraft.dateISO}`}
+        title={`Admin Edit • ${selectedEmployee?.name ?? selectedEmployeeId} • ${
+          editDraft.dateISO
+        }`}
         onClose={() => setEditOpen(false)}
       >
         <div className="space-y-4">

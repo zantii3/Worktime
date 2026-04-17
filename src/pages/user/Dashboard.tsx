@@ -224,7 +224,7 @@ function Dashboard() {
         try {
           const allTasks: Task[] = JSON.parse(stored);
           const userTasks = Array.isArray(allTasks)
-            ? allTasks.filter((t) => t.assignedTo === user?.name)
+            ? allTasks.filter((t) => t.assignedTo === user?.name || t.assignedToId === user?.id)
             : [];
           setTaskCounts({
             pending: userTasks.filter((t) => t.status === "Pending").length,
@@ -240,7 +240,7 @@ function Dashboard() {
     loadTaskCounts();
     const interval = setInterval(loadTaskCounts, 2000);
     return () => clearInterval(interval);
-  }, [user?.name]);
+  }, [user?.name, user?.id]);
 
   const completionPct = taskCounts.total ? Math.round((taskCounts.completed / taskCounts.total) * 100) : 0;
 
@@ -572,82 +572,95 @@ function Dashboard() {
 
             <div className="p-3 md:p-4 lg:p-8">
               {/* Action Buttons */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-4 md:mb-6">
+              <div className="grid grid-cols-2 gap-3 mb-4 md:mb-6">
 
-                {/* Time In */}
-                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                  onClick={handleTimeIn} disabled={!!todayRecord?.timeIn}
-                  className={`relative overflow-hidden p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
-                    todayRecord?.timeIn ? "bg-slate-300 cursor-not-allowed" : "bg-gradient-to-br from-green-500 to-emerald-600 hover:shadow-2xl hover:shadow-green-500/30"
-                  }`}>
-                  {isAnimating && !todayRecord?.timeOut && (
-                    <motion.div initial={{ scale: 0 }} animate={{ scale: 2, opacity: 0 }} transition={{ duration: 1 }}
-                      className="absolute inset-0 bg-white rounded-full" />
+              {/* Clock In / Clock Out toggle */}
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={todayRecord?.timeIn ? handleTimeOutClick : handleTimeIn}
+                disabled={!!todayRecord?.timeOut}
+                className={`relative overflow-hidden p-4 md:p-5 lg:p-6 rounded-2xl font-bold text-white shadow-lg transition-all flex flex-col items-center justify-center gap-2 ${
+                  todayRecord?.timeOut
+                    ? "bg-slate-300 cursor-not-allowed"
+                    : todayRecord?.timeIn
+                    ? "bg-gradient-to-br from-red-500 to-rose-600 hover:shadow-xl hover:shadow-red-500/25"
+                    : "bg-gradient-to-br from-green-500 to-emerald-600 hover:shadow-xl hover:shadow-green-500/25"
+                }`}
+              >
+                {isAnimating && (
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 2.5, opacity: 0 }}
+                    transition={{ duration: 0.8 }}
+                    className="absolute inset-0 bg-white rounded-full"
+                  />
+                )}
+                <div className="relative flex flex-col items-center gap-1.5">
+                  {todayRecord?.timeIn ? (
+                    <LogOutIcon className="w-5 h-5 md:w-6 md:h-6" />
+                  ) : (
+                    <LogIn className="w-5 h-5 md:w-6 md:h-6" />
                   )}
-                  <div className="relative flex flex-col items-center justify-center gap-0.5 md:gap-1">
-                    <LogIn className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
-                    <span className="text-[10px] md:text-xs lg:text-lg">Time In</span>
-                  </div>
-                </motion.button>
+                  <span className="text-sm md:text-base font-bold">
+                    {todayRecord?.timeOut ? "Clocked Out" : todayRecord?.timeIn ? "Time Out" : "Time In"}
+                  </span>
+                  <span className="text-[10px] md:text-xs opacity-80">
+                    {todayRecord?.timeOut
+                      ? formatTimeLocal(todayRecord.timeOut)
+                      : todayRecord?.timeIn
+                      ? "End your shift"
+                      : "Start your shift"}
+                  </span>
+                </div>
+              </motion.button>
 
-                {/* Start Break — locked before 11 AM */}
-                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                  onClick={handleStartBreakClick}
-                  disabled={!todayRecord?.timeIn || !!todayRecord?.lunchOut || !!todayRecord?.timeOut}
-                  className={`relative p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
-                    !todayRecord?.timeIn || todayRecord?.lunchOut || todayRecord?.timeOut
-                      ? "bg-slate-300 cursor-not-allowed"
-                      : isBeforeBreakTime && breakButtonActive
-                      ? "bg-gradient-to-br from-amber-400 to-orange-500 cursor-pointer"
-                      : "bg-gradient-to-br from-yellow-500 to-secondary"
-                  }`}>
-                  {/* Lock badge shown before 11 AM */}
-                  {breakButtonActive && isBeforeBreakTime && (
-                    <span className="absolute -top-1 -right-1 bg-white text-amber-500 text-[8px] font-black px-1.5 py-0.5 rounded-full shadow border border-amber-200 leading-tight">
-                      11AM
-                    </span>
+              {/* Start Break / End Break toggle */}
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={todayRecord?.lunchOut && !todayRecord?.lunchIn ? handleLunchIn : handleStartBreakClick}
+                disabled={
+                  !todayRecord?.timeIn ||
+                  !!todayRecord?.timeOut ||
+                  (!!todayRecord?.lunchOut && !!todayRecord?.lunchIn)
+                }
+                className={`relative p-4 md:p-5 lg:p-6 rounded-2xl font-bold text-white shadow-lg transition-all flex flex-col items-center justify-center gap-2 ${
+                  !todayRecord?.timeIn || !!todayRecord?.timeOut || (!!todayRecord?.lunchOut && !!todayRecord?.lunchIn)
+                    ? "bg-slate-300 cursor-not-allowed"
+                    : todayRecord?.lunchOut && !todayRecord?.lunchIn
+                    ? "bg-gradient-to-br from-blue-500 to-indigo-600 hover:shadow-xl hover:shadow-blue-500/25"
+                    : "bg-gradient-to-br from-amber-400 to-orange-500 hover:shadow-xl hover:shadow-amber-500/25"
+                }`}
+              >
+                {/* 11AM lock badge */}
+                {breakButtonActive && isBeforeBreakTime && !todayRecord?.lunchOut && (
+                  <span className="absolute -top-1.5 -right-1.5 bg-white text-amber-500 text-[9px] font-black px-2 py-0.5 rounded-full shadow border border-amber-200 leading-tight">
+                    11AM
+                  </span>
+                )}
+                <div className="flex flex-col items-center gap-1.5">
+                  {todayRecord?.lunchOut && !todayRecord?.lunchIn ? (
+                    <Clock className="w-5 h-5 md:w-6 md:h-6" />
+                  ) : (
+                    <Coffee className="w-5 h-5 md:w-6 md:h-6" />
                   )}
-                  <div className="flex flex-col items-center justify-center gap-0.5 md:gap-1">
-                    <Coffee className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
-                    <span className="text-[10px] md:text-xs lg:text-lg">Start Break</span>
-                  </div>
-                </motion.button>
+                  <span className="text-sm md:text-base font-bold">
+                    {todayRecord?.lunchOut && !todayRecord?.lunchIn ? "End Break" : "Start Break"}
+                  </span>
+                  <span className="text-[10px] md:text-xs opacity-80">
+                    {todayRecord?.lunchOut && todayRecord?.lunchIn
+                      ? `Back at ${formatTimeLocal(todayRecord.lunchIn)}`
+                      : todayRecord?.lunchOut
+                      ? "Resume working"
+                      : isBeforeBreakTime
+                      ? "Available at 11:00 AM"
+                      : "Take a breather"}
+                  </span>
+                </div>
+              </motion.button>
 
-                {/* End Break */}
-                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                  onClick={handleLunchIn}
-                  disabled={!todayRecord?.lunchOut || !!todayRecord?.lunchIn || !!todayRecord?.timeOut}
-                  className={`p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
-                    !todayRecord?.lunchOut || todayRecord?.lunchIn || todayRecord?.timeOut
-                      ? "bg-slate-300 cursor-not-allowed"
-                      : "bg-gradient-to-br from-blue-500 to-indigo-600"
-                  }`}>
-                  <div className="flex flex-col items-center justify-center gap-0.5 md:gap-1">
-                    <Clock className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
-                    <span className="text-[10px] md:text-xs lg:text-lg">End Break</span>
-                  </div>
-                </motion.button>
-
-                {/* Time Out — shows early out modal if < 8h */}
-                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                  onClick={handleTimeOutClick}
-                  disabled={!todayRecord?.timeIn || !!todayRecord?.timeOut}
-                  className={`relative overflow-hidden p-2 md:p-3 lg:p-6 rounded-lg md:rounded-xl lg:rounded-2xl font-bold text-white shadow-lg transition-all ${
-                    !todayRecord?.timeIn || todayRecord?.timeOut
-                      ? "bg-slate-300 cursor-not-allowed"
-                      : "bg-gradient-to-br from-red-500 to-rose-600 hover:shadow-2xl hover:shadow-red-500/30"
-                  }`}>
-                  {isAnimating && todayRecord?.timeOut && (
-                    <motion.div initial={{ scale: 0 }} animate={{ scale: 2, opacity: 0 }} transition={{ duration: 1 }}
-                      className="absolute inset-0 bg-white rounded-full" />
-                  )}
-                  <div className="relative flex flex-col items-center justify-center gap-0.5 md:gap-1">
-                    <LogOutIcon className="w-3.5 md:w-4 lg:w-5 h-3.5 md:h-4 lg:h-5" />
-                    <span className="text-[10px] md:text-xs lg:text-lg">Time Out</span>
-                  </div>
-                </motion.button>
-              </div>
-
+            </div>
               {/* Time Details */}
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 md:gap-2.5 lg:gap-3">
                 {detailItems.map((item, idx) => (
