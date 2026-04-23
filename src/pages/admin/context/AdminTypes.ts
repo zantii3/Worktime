@@ -1,3 +1,5 @@
+import React from "react";
+
 export type TaskStatus = "Pending" | "In Progress" | "Completed";
 export type TaskPriority = "Low" | "Medium" | "High";
 
@@ -16,22 +18,29 @@ export interface Task {
   tags?: string[];
 }
 
-// Projects (admin)
 export interface Project {
   id: number;
   name: string;
   description: string;
-
-  // Canonical reference to a real account (accounts.json)
   leaderId: number;
-
-  // Frontend-only metadata (optional)
-  dueDate?: string; // YYYY-MM-DD
+  dueDate?: string;
   tags?: string[];
+  createdAt: string;
+  files: ProjectFile[];
+  /** Explicitly added project members — user account IDs only (never admin IDs). */
+  memberIds?: number[];
 }
 
-export type LeaveStatus = "Pending" | "Approved" | "Rejected";
+export type ProjectFile = {
+  id: number;
+  name: string;
+  base64: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  projectId: number;
+};
 
+export type LeaveStatus = "Pending" | "Approved" | "Rejected";
 export type LeaveType =
   | "Vacation Leave"
   | "Sick Leave"
@@ -44,16 +53,12 @@ export interface LeaveRequest {
   type: LeaveType;
   reason: string;
   status: LeaveStatus;
-
   dateFrom?: string;
   dateTo?: string;
-
   startDate?: string;
   endDate?: string;
-
   attachmentName?: string | null;
   fileName?: string;
-
   appliedOn?: string;
   date?: string;
   days?: number;
@@ -74,25 +79,24 @@ export type AttendanceStatus = "Clocked In" | "Clocked Out" | "Absent";
 export interface Attendance {
   id: number;
   employee: string;
-  date: string; // YYYY-MM-DD
+  date: string;
   timeIn: string;
   timeOut: string;
   status: AttendanceStatus;
 }
 
+export type AdminEntry = { id: number; name: string; email: string };
+
 export interface AdminContextType {
   tasks: Task[];
   setTasks: React.Dispatch<React.SetStateAction<Task[]>>;
-
   projects: Project[];
   setProjects: React.Dispatch<React.SetStateAction<Project[]>>;
-
   leaves: LeaveRequest[];
   setLeaves: React.Dispatch<React.SetStateAction<LeaveRequest[]>>;
-
   users: User[];
   setUsers: React.Dispatch<React.SetStateAction<User[]>>;
-
   attendance: Attendance[];
   setAttendance: React.Dispatch<React.SetStateAction<Attendance[]>>;
+  admins: AdminEntry[];
 }

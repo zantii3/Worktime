@@ -7,6 +7,7 @@ import {
   LogOut,
   UserCircle2,
   Users,
+  FolderGit,
   X,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -21,7 +22,8 @@ const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
   { icon: CalendarDays, label: "Attendance", path: "/admin/attendance" },
   { icon: FileUser, label: "Leave", path: "/admin/leave" },
-  { icon: ListTodo, label: "Task", path: "/admin/tasks" },
+  { icon: ListTodo, label: "Project Management", path: "/admin/project-management" },
+  { icon: FolderGit, label: "Project List", path: "/admin/project-list" },
   { icon: Users, label: "Users", path: "/admin/users" },
   { icon: UserCircle2, label: "Profile", path: "/admin/profile" },
 ] as const;
