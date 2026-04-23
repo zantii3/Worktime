@@ -24,11 +24,28 @@ import adminAccounts from "./data/adminAccounts.json";
 type Account = { id: number; email: string; password: string; name: string };
 
 const ATTENDANCE_KEY = "worktime_attendance_v1";
+// ── NEW ──────────────────────────────────────────────────────────────────────
+const ALL_LEAVES_KEY = "all_leaves_v1";
+// ─────────────────────────────────────────────────────────────────────────────
 const MONTH_TARGET_HOURS = 160;
 
 // match user modal behavior
 const STANDARD_SHIFT_START = "08:00";
 const LATE_THRESHOLD_MINUTES = 0;
+
+// ── NEW: minimal leave types needed here ─────────────────────────────────────
+// Status is capitalized to match Leave.tsx: "Pending" | "Approved" | "Rejected"
+type StoredLeaveRequest = {
+  id: number;
+  employee: string;
+  status: string;
+  dateFrom?: string;
+  dateTo?: string;
+  startDate?: string;
+  endDate?: string;
+  date?: string;
+};
+// ─────────────────────────────────────────────────────────────────────────────
 
 function toISODate(d: Date) {
   const y = d.getFullYear();
@@ -187,6 +204,43 @@ function listMonthDatesISO(viewMonth: Date) {
   }
   return out;
 }
+
+// ── NEW: leave helpers ────────────────────────────────────────────────────────
+function readLeaves(): StoredLeaveRequest[] {
+  try {
+    const raw = localStorage.getItem(ALL_LEAVES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as StoredLeaveRequest[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Resolve the actual date-from/date-to regardless of which field shape was used. */
+function resolveLeaveRange(leave: StoredLeaveRequest): {
+  dateFrom: string;
+  dateTo: string;
+} {
+  return {
+    dateFrom: leave.dateFrom ?? leave.startDate ?? leave.date ?? "",
+    dateTo: leave.dateTo ?? leave.endDate ?? leave.date ?? "",
+  };
+}
+
+/** Enumerate every YYYY-MM-DD between dateFrom and dateTo (inclusive). */
+function enumerateDateRange(dateFrom: string, dateTo: string): string[] {
+  if (!dateFrom || !dateTo) return [];
+  const dates: string[] = [];
+  const cursor = new Date(dateFrom + "T00:00:00");
+  const end = new Date(dateTo + "T00:00:00");
+  if (!Number.isFinite(cursor.getTime()) || !Number.isFinite(end.getTime())) return [];
+  while (cursor <= end) {
+    dates.push(toISODate(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 function ActionButton({
   variant = "default",
@@ -529,7 +583,7 @@ function DayDetailModal({
               </p>
               {!isAbsentPastWeekday && (
                 <p className="text-xs mt-2 text-slate-400">
-                  Future dates won’t be marked absent until the day has passed.
+                  Future dates won't be marked absent until the day has passed.
                 </p>
               )}
             </div>
@@ -587,6 +641,21 @@ export default function Attendance() {
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
+
+  // ── NEW: leave state ─────────────────────────────────────────────────────────
+  const [allLeaves, setAllLeaves] = useState<StoredLeaveRequest[]>(() =>
+    readLeaves()
+  );
+
+  // live sync across tabs for leaves
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === ALL_LEAVES_KEY) setAllLeaves(readLeaves());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+  // ─────────────────────────────────────────────────────────────────────────────
 
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(
     employeeList[0]?.id ?? ""
@@ -652,6 +721,44 @@ export default function Attendance() {
   const selectedDayRecord = useMemo(() => {
     return recordByDate.get(selectedDateISO) ?? null;
   }, [recordByDate, selectedDateISO]);
+
+  // ── NEW: build leave date map for the viewed month ────────────────────────
+  const leaveDatesForMonth = useMemo(() => {
+    const map = new Map<string, "Pending" | "Approved">();
+
+    // Strip the " (Admin)" / " (User)" suffix that Attendance.tsx appends,
+    // since leave requests store the bare employee name.
+    const baseName =
+      selectedEmployee?.name.replace(/ \((Admin|User)\)$/, "") ?? "";
+
+    if (!baseName) return map;
+
+    const monthStart = startOfMonth(viewMonth).getTime();
+    const monthEnd = endOfMonth(viewMonth).getTime();
+
+    for (const leave of allLeaves) {
+      if (leave.employee !== baseName) continue;
+
+      // Only "Pending" and "Approved" are visualized; skip "Rejected" etc.
+      if (leave.status !== "Pending" && leave.status !== "Approved") continue;
+
+      const { dateFrom, dateTo } = resolveLeaveRange(leave);
+      if (!dateFrom || !dateTo) continue;
+
+      for (const dateISO of enumerateDateRange(dateFrom, dateTo)) {
+        const t = new Date(dateISO + "T00:00:00").getTime();
+        if (t < monthStart || t > monthEnd) continue;
+
+        // "Approved" wins over "Pending" if the same date appears in multiple requests
+        if (map.get(dateISO) !== "Approved") {
+          map.set(dateISO, leave.status as "Pending" | "Approved");
+        }
+      }
+    }
+
+    return map;
+  }, [allLeaves, selectedEmployee, viewMonth]);
+  // ─────────────────────────────────────────────────────────────────────────────
 
   // Total minutes (month)
   const monthTotalMinutes = useMemo(() => {
@@ -1059,6 +1166,7 @@ export default function Attendance() {
             onPrevMonth={prevMonth}
             onNextMonth={nextMonth}
             recordsForMonth={recordsForMonth}
+            leaveDatesForMonth={leaveDatesForMonth}
           />
         </div>
 
@@ -1512,7 +1620,7 @@ export default function Attendance() {
       >
         <div className="space-y-4">
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
-            Tip: Use datetime inputs to correct logs. Leave blank to set as “—”.
+            Tip: Use datetime inputs to correct logs. Leave blank to set as "—".
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">

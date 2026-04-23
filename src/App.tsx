@@ -18,7 +18,8 @@ import AdminAttendance from "./pages/admin/Attendance";
 import AdminForgotPassword from "./pages/admin/ForgotPassword";
 import AdminLeave from "./pages/admin/Leave";
 import AdminLogin from "./pages/admin/Login";
-import AdminTasks from "./pages/admin/Tasks";
+import AdminProjectManagement from "./pages/admin/ProjectManagement";
+import AdminProjectList from "./pages/admin/ProjectList";
 import AdminUsers from "./pages/admin/Users";
 import AdminLayout from "./pages/admin/layout/AdminLayout";
 
@@ -124,13 +125,23 @@ export default function App() {
           }
         />
         <Route
-          path="/admin/tasks"
+          path="/admin/project-management"
           element={
             <AdminLayout>
-              <AdminTasks />
+              <AdminProjectManagement />
+            </AdminLayout>
+          }  
+        />
+
+        <Route
+          path="/admin/project-list"
+          element={
+            <AdminLayout>
+              <AdminProjectList />
             </AdminLayout>
           }
         />
+
         <Route
           path="/admin/users"
           element={

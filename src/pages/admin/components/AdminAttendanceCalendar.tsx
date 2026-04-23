@@ -20,6 +20,8 @@ type Props = {
   onPrevMonth: () => void;
   onNextMonth: () => void;
   recordsForMonth: AttendanceRecord[];
+  // ── NEW ──────────────────────────────────────────────────────────────
+  leaveDatesForMonth?: Map<string, "Pending" | "Approved">;
 };
 
 function startOfMonth(d: Date) {
@@ -71,6 +73,7 @@ export default function AdminAttendanceCalendar({
   onPrevMonth,
   onNextMonth,
   recordsForMonth,
+  leaveDatesForMonth,
 }: Props) {
   const rows = useMemo(() => {
     const first = startOfMonth(viewMonth);
@@ -162,6 +165,15 @@ export default function AdminAttendanceCalendar({
             <div className="w-2 h-2 rounded-full bg-rose-500" />
             Absent (Weekday)
           </div>
+          {/* ── NEW ── */}
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 rounded-full bg-yellow-400" />
+            Leave (Pending)
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 rounded-full bg-blue-500" />
+            Leave (Approved)
+          </div>
         </div>
 
         {/* Weekday header */}
@@ -195,6 +207,15 @@ export default function AdminAttendanceCalendar({
             const tIn = formatTime(rec?.timeIn ?? null);
             const tOut = formatTime(rec?.timeOut ?? null);
 
+            // ── NEW ──────────────────────────────────────────────────────
+            const leaveStatus = inMonth
+              ? (leaveDatesForMonth?.get(iso) ?? null)
+              : null;
+            const onLeavePending = leaveStatus === "Pending";
+            const onLeaveApproved = leaveStatus === "Approved";
+            const onLeave = onLeavePending || onLeaveApproved;
+            // ─────────────────────────────────────────────────────────────
+
             return (
               <motion.button
                 key={iso}
@@ -206,6 +227,12 @@ export default function AdminAttendanceCalendar({
                   "h-16 sm:h-20 md:h-24 border p-1.5 sm:p-2 text-left transition-all relative overflow-hidden group",
                   !inMonth
                     ? "bg-slate-50/30 border-slate-100 opacity-60"
+                    // ── NEW: leave states take priority over absent/no-record ──
+                    : onLeaveApproved
+                    ? "bg-blue-50 border-blue-300 hover:bg-blue-100/60"
+                    : onLeavePending
+                    ? "bg-yellow-50 border-yellow-300 hover:bg-yellow-100/60"
+                    // ── existing states ──────────────────────────────────────
                     : absent
                     ? "bg-rose-50 border-rose-200 hover:bg-rose-100/60"
                     : today
@@ -222,6 +249,10 @@ export default function AdminAttendanceCalendar({
                     "text-xs sm:text-sm font-bold",
                     today
                       ? "text-[#F28C28]"
+                      : onLeaveApproved
+                      ? "text-blue-700"
+                      : onLeavePending
+                      ? "text-yellow-700"
                       : absent
                       ? "text-rose-700"
                       : rec
@@ -232,7 +263,19 @@ export default function AdminAttendanceCalendar({
                   {d.getDate()}
                 </span>
 
-                {absent && (
+                {/* ── NEW: leave label ── */}
+                {onLeave && (
+                  <div
+                    className={cx(
+                      "mt-0.5 text-[8px] sm:text-[9px] font-bold leading-tight",
+                      onLeaveApproved ? "text-blue-700" : "text-yellow-700"
+                    )}
+                  >
+                    {onLeaveApproved ? "On Leave" : "Leave (Pending)"}
+                  </div>
+                )}
+
+                {absent && !onLeave && (
                   <div className="mt-0.5 text-[8px] sm:text-[9px] font-bold text-rose-700 leading-tight">
                     Absent
                   </div>

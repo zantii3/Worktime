@@ -493,6 +493,7 @@ export default function Dashboard() {
     };
   }, []);
 
+
   const currentAdmin = useMemo(() => {
     try {
       return JSON.parse(localStorage.getItem("currentAdmin") || "null") as
@@ -547,6 +548,70 @@ export default function Dashboard() {
   const breakMs = useMemo(() => computeBreakMsLive(adminTodayRecord, nowMs), [adminTodayRecord, nowMs, tick]);
 
   const isOnBreak = !!adminTodayRecord?.lunchOut && !adminTodayRecord?.lunchIn && !adminTodayRecord?.timeOut;
+
+  /* ================================
+   BUTTON + STATE LOGIC
+  ================================ */
+
+    const isTimedIn = !!adminTodayRecord?.timeIn;
+    const isTimedOut = !!adminTodayRecord?.timeOut;
+
+    const canTimeIn =
+      adminStatus === "Active" &&
+      !isTimedIn;
+
+    const canTimeOut =
+      adminStatus === "Active" &&
+      isTimedIn &&
+      !isTimedOut;
+
+    const canStartBreak =
+      adminStatus === "Active" &&
+      isTimedIn &&
+      !adminTodayRecord?.lunchOut &&
+      !isTimedOut;
+
+    const canEndBreak =
+      adminStatus === "Active" &&
+      isOnBreak;
+
+    /* Toggle handlers */
+
+    const handleTimeToggle = () => {
+      if (canTimeIn) doTimeIn();
+      else if (canTimeOut) doTimeOut();
+    };
+
+    const handleBreakToggle = () => {
+      if (canStartBreak) doStartBreak();
+      else if (canEndBreak) doEndBreak();
+    };
+
+    /* Dynamic Labels */
+
+    const timeButtonLabel =
+      canTimeIn ? "Time In" : "Time Out";
+
+    const breakButtonLabel =
+      canEndBreak ? "End Break" : "Start Break";
+
+    /* ================================
+       LIVE STATE TEXT
+    ================================ */
+
+    const liveStateText = useMemo(() => {
+      if (!isTimedIn) return "Ready to Time In";
+
+      if (isOnBreak) return "On Break";
+
+      if (isTimedOut) return "Work Completed";
+
+      return "Working";
+    }, [
+      isTimedIn,
+      isTimedOut,
+      isOnBreak
+    ]);
 
   const SHIFT_MS = 8 * 60 * 60 * 1000;
   const remainingMs = clamp(SHIFT_MS - workMs, 0, SHIFT_MS);
@@ -719,7 +784,36 @@ export default function Dashboard() {
                 )}
               >
                 <span className="w-2 h-2 rounded-full bg-current animate-pulse" />
-                <span className="text-lg">{statusLabel}</span>
+                <div
+  className={cx(
+    "flex flex-col items-end font-bold whitespace-nowrap",
+
+    statusLabel === "Clocked In"
+      ? "text-emerald-200"
+      : statusLabel === "Clocked Out"
+      ? "text-red-200"
+      : "text-white/70"
+  )}
+>
+
+  <div className="flex items-center gap-2">
+
+    <span className="w-2 h-2 rounded-full bg-current animate-pulse" />
+
+    <span className="text-lg">
+      {statusLabel}
+    </span>
+
+  </div>
+
+  {/* NEW STATE TEXT */}
+  <span className="text-xs text-white/80 mt-1 font-semibold tracking-wide">
+
+    {liveStateText}
+
+  </span>
+
+</div>
               </div>
             </div>
           </div>
@@ -782,158 +876,109 @@ export default function Dashboard() {
         </div>
 
         <div className="p-8">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-            <motion.button
-              whileHover={{ scale: adminStatus === "Active" && !adminTodayRecord?.timeIn ? 1.02 : 1 }}
-              whileTap={{ scale: adminStatus === "Active" && !adminTodayRecord?.timeIn ? 0.98 : 1 }}
-              onClick={doTimeIn}
-              disabled={adminStatus !== "Active" || !!adminTodayRecord?.timeIn}
-              className={cx(
-                "h-24 rounded-2xl font-bold shadow-sm transition-all border",
-                adminStatus !== "Active" || adminTodayRecord?.timeIn
-                  ? "bg-slate-200/40 border-slate-200 text-slate-400 cursor-not-allowed"
-                  : "bg-emerald-600 border-emerald-600 hover:bg-emerald-700 text-white"
-              )}
-              type="button"
-            >
-              <div className="flex flex-col items-center justify-center gap-2">
-                <LogIn
-                  className={cx(
-                    "w-6 h-6",
-                    adminStatus !== "Active" || adminTodayRecord?.timeIn ? "text-slate-400" : "text-white"
-                  )}
-                />
-                <span className={cx("text-lg", adminStatus !== "Active" || adminTodayRecord?.timeIn ? "text-slate-400" : "text-white")}>
-                  Time In
-                </span>
-              </div>
-            </motion.button>
+          {/* ================================
+   MERGED BUTTONS (2 ONLY)
+================================ */}
 
-            <motion.button
-              whileHover={{
-                scale:
-                  adminStatus === "Active" &&
-                  !!adminTodayRecord?.timeIn &&
-                  !adminTodayRecord?.lunchOut &&
-                  !adminTodayRecord?.timeOut
-                    ? 1.02
-                    : 1,
-              }}
-              whileTap={{
-                scale:
-                  adminStatus === "Active" &&
-                  !!adminTodayRecord?.timeIn &&
-                  !adminTodayRecord?.lunchOut &&
-                  !adminTodayRecord?.timeOut
-                    ? 0.98
-                    : 1,
-              }}
-              onClick={doStartBreak}
-              disabled={
-                adminStatus !== "Active" ||
-                !adminTodayRecord?.timeIn ||
-                !!adminTodayRecord?.lunchOut ||
-                !!adminTodayRecord?.timeOut
-              }
-              className={cx(
-                "h-24 rounded-2xl font-bold shadow-sm transition-all border",
-                adminStatus !== "Active" ||
-                  !adminTodayRecord?.timeIn ||
-                  !!adminTodayRecord?.lunchOut ||
-                  !!adminTodayRecord?.timeOut
-                  ? "bg-slate-200/40 border-slate-200 text-slate-400 cursor-not-allowed"
-                  : "bg-secondary border-secondary hover:opacity-95 text-white"
-              )}
-              type="button"
-            >
-              <div className="flex flex-col items-center justify-center gap-2">
-                <Coffee
-                  className={cx(
-                    "w-6 h-6",
-                    adminStatus !== "Active" ||
-                      !adminTodayRecord?.timeIn ||
-                      !!adminTodayRecord?.lunchOut ||
-                      !!adminTodayRecord?.timeOut
-                      ? "text-slate-400"
-                      : "text-white"
-                  )}
-                />
-                <span
-                  className={cx(
-                    "text-lg",
-                    adminStatus !== "Active" ||
-                      !adminTodayRecord?.timeIn ||
-                      !!adminTodayRecord?.lunchOut ||
-                      !!adminTodayRecord?.timeOut
-                      ? "text-slate-400"
-                      : "text-white"
-                  )}
-                >
-                  Start Break
-                </span>
-              </div>
-            </motion.button>
+<div className="grid grid-cols-2 gap-4 mb-6">
 
-            <motion.button
-              whileHover={{ scale: adminStatus === "Active" && isOnBreak ? 1.02 : 1 }}
-              whileTap={{ scale: adminStatus === "Active" && isOnBreak ? 0.98 : 1 }}
-              onClick={doEndBreak}
-              disabled={adminStatus !== "Active" || !isOnBreak}
-              className={cx(
-                "h-24 rounded-2xl font-bold shadow-sm transition-all border",
-                adminStatus !== "Active" || !isOnBreak
-                  ? "bg-slate-200/40 border-slate-200 text-slate-400 cursor-not-allowed"
-                  : "bg-primary border-primary hover:opacity-95 text-white"
-              )}
-              type="button"
-            >
-              <div className="flex flex-col items-center justify-center gap-2">
-                <Play className={cx("w-6 h-6", adminStatus !== "Active" || !isOnBreak ? "text-slate-400" : "text-white")} />
-                <span className={cx("text-lg", adminStatus !== "Active" || !isOnBreak ? "text-slate-400" : "text-white")}>
-                  End Break
-                </span>
-              </div>
-            </motion.button>
+  {/* TIME BUTTON */}
 
-            <motion.button
-              whileHover={{
-                scale: adminStatus === "Active" && !!adminTodayRecord?.timeIn && !adminTodayRecord?.timeOut ? 1.02 : 1,
-              }}
-              whileTap={{
-                scale: adminStatus === "Active" && !!adminTodayRecord?.timeIn && !adminTodayRecord?.timeOut ? 0.98 : 1,
-              }}
-              onClick={doTimeOut}
-              disabled={adminStatus !== "Active" || !adminTodayRecord?.timeIn || !!adminTodayRecord?.timeOut}
-              className={cx(
-                "h-24 rounded-2xl font-bold shadow-sm transition-all border",
-                adminStatus !== "Active" || !adminTodayRecord?.timeIn || !!adminTodayRecord?.timeOut
-                  ? "bg-slate-200/40 border-slate-200 text-slate-400 cursor-not-allowed"
-                  : "bg-red-500 border-red-500 hover:bg-red-600 text-white"
-              )}
-              type="button"
-            >
-              <div className="flex flex-col items-center justify-center gap-2">
-                <LogOut
-                  className={cx(
-                    "w-6 h-6",
-                    adminStatus !== "Active" || !adminTodayRecord?.timeIn || !!adminTodayRecord?.timeOut
-                      ? "text-slate-400"
-                      : "text-white"
-                  )}
-                />
-                <span
-                  className={cx(
-                    "text-lg",
-                    adminStatus !== "Active" || !adminTodayRecord?.timeIn || !!adminTodayRecord?.timeOut
-                      ? "text-slate-400"
-                      : "text-white"
-                  )}
-                >
-                  Time Out
-                </span>
-              </div>
-            </motion.button>
-          </div>
+  <motion.button
+    whileHover={{
+      scale: canTimeIn || canTimeOut ? 1.02 : 1
+    }}
+    whileTap={{
+      scale: canTimeIn || canTimeOut ? 0.98 : 1
+    }}
+    onClick={handleTimeToggle}
+    disabled={!canTimeIn && !canTimeOut}
+    className={cx(
+      "h-28 rounded-2xl font-bold shadow-sm transition-all border",
+
+      !canTimeIn && !canTimeOut
+        ? "bg-slate-200/40 border-slate-200 text-slate-400 cursor-not-allowed"
+
+        : canTimeIn
+        ? "bg-emerald-600 border-emerald-600 hover:bg-emerald-700 text-white"
+
+        : "bg-red-500 border-red-500 hover:bg-red-600 text-white"
+    )}
+    type="button"
+  >
+
+    <div className="flex flex-col items-center justify-center gap-2">
+
+      {canTimeIn ? (
+
+        <LogIn className="w-7 h-7 text-white" />
+
+      ) : (
+
+        <LogOut className="w-7 h-7 text-white" />
+
+      )}
+
+      <span className="text-lg">
+
+        {timeButtonLabel}
+
+      </span>
+
+    </div>
+
+  </motion.button>
+
+
+
+  {/* BREAK BUTTON */}
+
+  <motion.button
+    whileHover={{
+      scale: canStartBreak || canEndBreak ? 1.02 : 1
+    }}
+    whileTap={{
+      scale: canStartBreak || canEndBreak ? 0.98 : 1
+    }}
+    onClick={handleBreakToggle}
+    disabled={!canStartBreak && !canEndBreak}
+    className={cx(
+      "h-28 rounded-2xl font-bold shadow-sm transition-all border",
+
+      !canStartBreak && !canEndBreak
+        ? "bg-slate-200/40 border-slate-200 text-slate-400 cursor-not-allowed"
+
+        : canEndBreak
+        ? "bg-primary border-primary hover:opacity-95 text-white"
+
+        : "bg-secondary border-secondary hover:opacity-95 text-white"
+    )}
+    type="button"
+  >
+
+    <div className="flex flex-col items-center justify-center gap-2">
+
+      {canEndBreak ? (
+
+        <Play className="w-7 h-7 text-white" />
+
+      ) : (
+
+        <Coffee className="w-7 h-7 text-white" />
+
+      )}
+
+      <span className="text-lg">
+
+        {breakButtonLabel}
+
+      </span>
+
+    </div>
+
+  </motion.button>
+
+</div>
 
           {adminStatus !== "Active" && (
             <div className="mb-4 text-xs font-semibold text-rose-700">
