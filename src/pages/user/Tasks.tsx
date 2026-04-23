@@ -5,12 +5,17 @@ import {
   Menu,
   Clock,
   CheckCircle2,
+  AlertCircle,
   ListTodo,
   TrendingUp,
   Layers,
   Zap,
   Circle,
   Tag,
+  Paperclip,
+  Pencil,
+  Eye,
+  Download,
   ChevronLeft,
   ChevronRight,
   User,
@@ -27,6 +32,30 @@ import Usersidebar from "./components/Usersidebar";
 type TaskStatus = "Pending" | "In Progress" | "Completed";
 type TaskPriority = "Low" | "Medium" | "High";
 
+interface TaskAttachment {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  dataUrl: string;
+}
+
+type CompletionVisibility = "leader-required" | "manager-only";
+type CompletionApprovalStatus = "Pending" | "Approved" | "Rejected";
+
+interface TaskCompletionRequest {
+  status: CompletionApprovalStatus;
+  requestedAt: string;
+  requestedBy?: string;
+  requestedById?: number;
+  note: string;
+  attachments: TaskAttachment[];
+  visibility: CompletionVisibility;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  reviewedById?: number;
+}
+
 interface Task {
   id: number;
   title: string;
@@ -41,6 +70,11 @@ interface Task {
   assignedById?: number;
   projectId?: number;
   tags?: string[];
+  attachments?: TaskAttachment[];
+  completionRequest?: TaskCompletionRequest;
+  completedAt?: string;
+  completedBy?: string;
+  completedById?: number;
 }
 
 interface Project {
@@ -60,9 +94,28 @@ interface Account {
   assignedProjects?: number[];
 }
 
+interface PendingStatusChange {
+  taskId: number;
+  nextStatus: TaskStatus;
+}
+
+interface TaskDraftPayload {
+  title: string;
+  description: string;
+  priority: TaskPriority;
+  dueDate: string;
+  assignedTo: string;
+  assignedToId: number;
+  projectId: number;
+  tags: string[];
+  attachments: TaskAttachment[];
+}
+
 const TASKS_KEY = "worktime_tasks_v1";
 const PROJECTS_KEY = "worktime_projects_v1";
 const TASKS_PER_PAGE = 5;
+const MAX_ATTACHMENT_SIZE = 1024 * 1024;
+const MAX_ATTACHMENTS = 3;
 
 const priorityConfig: Record<TaskPriority, { color: string; dot: string; bg: string }> = {
   High:   { color: "text-[#E97638]", dot: "bg-[#E97638]", bg: "bg-[#FFF4EE]" },
@@ -105,6 +158,92 @@ function TagBadge({ tag }: { tag: string }) {
   );
 }
 
+function getAllowedStatusTransitions(status: TaskStatus): TaskStatus[] {
+  if (status === "Pending") return ["Pending", "In Progress"];
+  if (status === "In Progress") return ["Pending", "In Progress", "Completed"];
+  return ["In Progress", "Completed"];
+}
+
+function formatAttachmentSize(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function prepareTaskAttachments(files: FileList | null, existing: TaskAttachment[]) {
+  if (!files?.length) return existing;
+
+  const selectedFiles = Array.from(files);
+  if (existing.length + selectedFiles.length > MAX_ATTACHMENTS) {
+    throw new Error(`You can attach up to ${MAX_ATTACHMENTS} files per task.`);
+  }
+
+  const prepared = await Promise.all(
+    selectedFiles.map(async (file) => {
+      if (file.size > MAX_ATTACHMENT_SIZE) {
+        throw new Error(`${file.name} is larger than ${formatAttachmentSize(MAX_ATTACHMENT_SIZE)}.`);
+      }
+
+      return {
+        id: `${file.name}-${file.size}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        dataUrl: await readFileAsDataUrl(file),
+      } satisfies TaskAttachment;
+    })
+  );
+
+  return [...existing, ...prepared];
+}
+
+function getCompletionVisibilityLabel(visibility: CompletionVisibility) {
+  return visibility === "leader-required" ? "Project leader review required" : "Manager approval only";
+}
+
+function getAttachmentExtension(name: string) {
+  const parts = name.toLowerCase().split(".");
+  return parts.length > 1 ? parts.pop() ?? "" : "";
+}
+
+function canPreviewAttachment(attachment: TaskAttachment) {
+  const type = attachment.type.toLowerCase();
+  const ext = getAttachmentExtension(attachment.name);
+  return (
+    type.startsWith("image/") ||
+    type === "application/pdf" ||
+    type.startsWith("text/") ||
+    ["pdf", "txt", "md", "json", "csv", "log"].includes(ext)
+  );
+}
+
+function getAttachmentPreviewMode(attachment: TaskAttachment): "image" | "pdf" | "text" | "unsupported" {
+  const type = attachment.type.toLowerCase();
+  const ext = getAttachmentExtension(attachment.name);
+  if (type.startsWith("image/")) return "image";
+  if (type === "application/pdf" || ext === "pdf") return "pdf";
+  if (type.startsWith("text/") || ["txt", "md", "json", "csv", "log"].includes(ext)) return "text";
+  return "unsupported";
+}
+
+function decodeAttachmentText(dataUrl: string) {
+  const [, data = ""] = dataUrl.split(",", 2);
+  try {
+    return decodeURIComponent(escape(window.atob(data)));
+  } catch {
+    return "Preview is not available for this file.";
+  }
+}
+
 // ─── Status Popover ────────────────────────────────────────────────────────────
 function StatusPopover({
   task,
@@ -125,6 +264,7 @@ function StatusPopover({
   }, []);
 
   const sCfg = statusConfig[task.status];
+  const allowedTransitions = getAllowedStatusTransitions(task.status);
 
   const dotColor: Record<TaskStatus, string> = {
     Pending: "bg-slate-300",
@@ -152,19 +292,41 @@ function StatusPopover({
             transition={{ duration: 0.12 }}
             className="absolute right-0 top-full mt-1.5 z-30 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden min-w-[140px]"
           >
-            {STATUS_OPTIONS.map((s) => (
-              <button
-                key={s}
-                onClick={() => { onUpdate(task.id, s); setOpen(false); }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-left transition-colors hover:bg-slate-50 ${
-                  task.status === s ? "bg-[#EDF2FA] text-[#1F3C68]" : "text-slate-600"
-                }`}
-              >
-                <span className={`w-2 h-2 rounded-full ${dotColor[s]}`} />
-                {s}
-                {task.status === s && <CheckCircle2 className="w-3 h-3 ml-auto text-[#1F3C68]" />}
-              </button>
-            ))}
+            {STATUS_OPTIONS.map((s) => {
+              const isCurrent = task.status === s;
+              const isAllowed = allowedTransitions.includes(s);
+
+              return (
+                <button
+                  key={s}
+                  disabled={!isAllowed}
+                  onClick={() => {
+                    if (!isAllowed) return;
+                    onUpdate(task.id, s);
+                    setOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-left transition-colors ${
+                    isCurrent
+                      ? "bg-[#EDF2FA] text-[#1F3C68]"
+                      : isAllowed
+                        ? "text-slate-600 hover:bg-slate-50"
+                        : "bg-slate-50/70 text-slate-300 cursor-not-allowed"
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${dotColor[s]}`} />
+                  {s}
+                  {isCurrent && <CheckCircle2 className="w-3 h-3 ml-auto text-[#1F3C68]" />}
+                  {!isCurrent && !isAllowed && (
+                    <span className="ml-auto text-[9px] font-black uppercase tracking-wide">Locked</span>
+                  )}
+                </button>
+              );
+            })}
+            <div className="border-t border-slate-100 bg-slate-50 px-3 py-2">
+              <p className="text-[10px] font-semibold leading-relaxed text-slate-400">
+                Tasks must be started before completion, and completed work must be reopened before being changed.
+              </p>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -173,6 +335,315 @@ function StatusPopover({
 }
 
 // ─── Project Detail Modal ──────────────────────────────────────────────────────
+function CompleteTaskModal({
+  task,
+  onClose,
+  onConfirm,
+  initialRequest,
+}: {
+  task: Task;
+  onClose: () => void;
+  onConfirm: (payload: {
+    note: string;
+    attachments: TaskAttachment[];
+    visibility: CompletionVisibility;
+  }) => void;
+  initialRequest?: TaskCompletionRequest;
+}) {
+  const [confirmed, setConfirmed] = useState(false);
+  const [note, setNote] = useState(initialRequest?.note ?? "");
+  const [visibility, setVisibility] = useState<CompletionVisibility>(initialRequest?.visibility ?? "leader-required");
+  const [attachments, setAttachments] = useState<TaskAttachment[]>(initialRequest?.attachments ?? []);
+  const [fileError, setFileError] = useState("");
+
+  const addFiles = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setFileError("");
+
+    try {
+      setAttachments(await prepareTaskAttachments(files, attachments));
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "Unable to attach file.");
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-[60] flex items-center justify-center bg-[#1F3C68]/45 p-4 backdrop-blur-sm"
+        onClick={onClose}
+      >
+      <motion.div
+          initial={{ scale: 0.96, opacity: 0, y: 12 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.96, opacity: 0, y: 12 }}
+          transition={{ type: "spring", stiffness: 260, damping: 24 }}
+          onClick={(e) => e.stopPropagation()}
+          className="flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
+        >
+          <div className="bg-gradient-to-r from-[#1F3C68] to-[#2B4E82] px-6 py-5 text-white">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-white/60">Completion Submission</p>
+                <h2 className="mt-1 text-xl font-black">Send task for project leader approval</h2>
+                <p className="mt-1 text-sm text-white/75">Completed status is locked until a project leader approves this submission.</p>
+              </div>
+              <button onClick={onClose} className="rounded-xl bg-white/10 p-2 transition-colors hover:bg-white/20">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Task</p>
+              <h3 className="mt-1 text-base font-black text-[#1F3C68]">{task.title}</h3>
+              <p className="mt-1 text-sm text-slate-500">{task.description || "No task description provided."}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700">
+                  <Clock className="h-3 w-3" />
+                  Due {task.dueDate}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700">
+                  <User className="h-3 w-3" />
+                  {task.assignedTo}
+                </span>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-[#F28C28]/20 bg-[#FFF7F0] p-4 text-sm text-slate-600">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#E97638]" />
+                <p>Submit proof of completion here. The task stays in progress until a project leader reviews and approves it.</p>
+              </div>
+            </div>
+
+            <label className="block">
+              <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Completion Note</span>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={3}
+                className="mt-1.5 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#1F3C68]/20 resize-none"
+                placeholder="Summarize what was finished, tested, or handed off."
+              />
+            </label>
+
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Review Visibility</span>
+              <div className="mt-2 space-y-2">
+                {([
+                  {
+                    value: "leader-required",
+                    title: "Project leader must review it",
+                    description: "Use this when the finished output should be seen by the project leader before approval.",
+                  },
+                  {
+                    value: "manager-only",
+                    title: "Manager approval only",
+                    description: "Use this when completion can be approved without the project leader inspecting the output.",
+                  },
+                ] as const).map((option) => (
+                  <label
+                    key={option.value}
+                    className={`flex cursor-pointer items-start gap-3 rounded-2xl border px-4 py-3 transition-colors ${
+                      visibility === option.value
+                        ? "border-[#1F3C68] bg-[#EDF2FA]"
+                        : "border-slate-200 hover:border-[#1F3C68]/25"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="completion-visibility"
+                      value={option.value}
+                      checked={visibility === option.value}
+                      onChange={() => setVisibility(option.value)}
+                      className="mt-0.5 h-4 w-4 border-slate-300 text-[#1F3C68] focus:ring-[#1F3C68]"
+                    />
+                    <span>
+                      <span className="block text-sm font-bold text-[#1F3C68]">{option.title}</span>
+                      <span className="mt-1 block text-xs leading-5 text-slate-500">{option.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Completion Files</span>
+              <label className="mt-1.5 flex cursor-pointer items-center justify-between rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-500 transition-colors hover:border-[#1F3C68]/30 hover:bg-[#EDF2FA]/40">
+                <span className="inline-flex items-center gap-2 font-medium">
+                  <Paperclip className="h-4 w-4" />
+                  Upload finished output, screenshots, or handoff files
+                </span>
+                <span className="text-[11px] font-bold text-slate-400">Max {MAX_ATTACHMENTS} files</span>
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={async (e) => {
+                    await addFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              <p className="mt-1 text-[11px] text-slate-400">
+                These files can be used by the project leader to review the finished result.
+              </p>
+              {fileError && <p className="mt-2 text-xs font-semibold text-rose-500">{fileError}</p>}
+              {attachments.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {attachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-[#1F3C68]">{attachment.name}</p>
+                        <p className="text-[11px] text-slate-400">{formatAttachmentSize(attachment.size)}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setAttachments((prev) => prev.filter((item) => item.id !== attachment.id))}
+                        className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-500 hover:bg-slate-200"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 px-4 py-3 transition-colors hover:border-[#1F3C68]/25">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                onChange={(e) => setConfirmed(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#1F3C68] focus:ring-[#1F3C68]"
+              />
+              <span className="text-sm font-medium text-slate-600">
+                I confirm this task is finished and should be submitted for approval.
+              </span>
+            </label>
+
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                onClick={onClose}
+                className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-500 transition-colors hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => onConfirm({ note: note.trim(), attachments, visibility })}
+                disabled={!confirmed}
+                className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-all ${
+                  confirmed
+                    ? "bg-[#1F3C68] text-white shadow-sm hover:bg-[#173254]"
+                    : "cursor-not-allowed bg-slate-200 text-slate-400"
+                }`}
+              >
+                Submit for Approval
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
+function AttachmentPreviewModal({
+  attachment,
+  onClose,
+}: {
+  attachment: TaskAttachment;
+  onClose: () => void;
+}) {
+  const previewMode = getAttachmentPreviewMode(attachment);
+  const textContent = previewMode === "text" ? decodeAttachmentText(attachment.dataUrl) : "";
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-[70] flex items-center justify-center bg-[#1F3C68]/50 p-4 backdrop-blur-sm"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ scale: 0.97, opacity: 0, y: 12 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.97, opacity: 0, y: 12 }}
+          transition={{ type: "spring", stiffness: 260, damping: 24 }}
+          onClick={(e) => e.stopPropagation()}
+          className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
+        >
+          <div className="flex items-start justify-between gap-4 border-b border-slate-100 bg-white px-6 py-4">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Attachment Preview</p>
+              <h2 className="mt-1 truncate text-lg font-black text-[#1F3C68]">{attachment.name}</h2>
+              <p className="mt-1 text-xs text-slate-400">{formatAttachmentSize(attachment.size)}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <a
+                href={attachment.dataUrl}
+                download={attachment.name}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 hover:border-[#1F3C68]/20 hover:text-[#1F3C68]"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download
+              </a>
+              <button
+                onClick={onClose}
+                className="rounded-xl bg-slate-100 p-2 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-auto bg-slate-100 p-4 sm:p-6">
+            {previewMode === "image" && (
+              <div className="flex min-h-full items-center justify-center">
+                <img src={attachment.dataUrl} alt={attachment.name} className="max-h-full rounded-2xl border border-slate-200 bg-white shadow-sm" />
+              </div>
+            )}
+
+            {previewMode === "pdf" && (
+              <iframe
+                title={attachment.name}
+                src={attachment.dataUrl}
+                className="h-[72vh] w-full rounded-2xl border border-slate-200 bg-white"
+              />
+            )}
+
+            {previewMode === "text" && (
+              <pre className="min-h-[72vh] whitespace-pre-wrap rounded-2xl border border-slate-200 bg-white p-5 text-sm leading-6 text-slate-700">
+                {textContent}
+              </pre>
+            )}
+
+            {previewMode === "unsupported" && (
+              <div className="flex min-h-[50vh] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center">
+                <Paperclip className="mb-3 h-8 w-8 text-slate-300" />
+                <h3 className="text-base font-black text-[#1F3C68]">Preview not available</h3>
+                <p className="mt-2 max-w-md text-sm text-slate-500">
+                  This file type cannot be previewed directly in the browser yet. You can still download it.
+                </p>
+              </div>
+            )}
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
 function ProjectModal({
   project,
   tasks,
@@ -209,10 +680,10 @@ function ProjectModal({
           exit={{ scale: 0.95, opacity: 0, y: 16 }}
           transition={{ type: "spring", stiffness: 260, damping: 24 }}
           onClick={(e) => e.stopPropagation()}
-          className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-slate-100 overflow-hidden"
+          className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl"
         >
           {/* Header */}
-          <div className="bg-primary px-6 py-5 relative overflow-hidden">
+          <div className="relative overflow-hidden bg-primary px-4 py-5 sm:px-6">
             <div className="absolute -top-6 -right-6 w-28 h-28 rounded-full bg-white/5" />
             <div className="relative z-10 flex items-start justify-between gap-4">
               <div>
@@ -231,7 +702,7 @@ function ProjectModal({
             </div>
           </div>
 
-          <div className="px-6 py-5 space-y-5">
+          <div className="space-y-5 px-4 py-5 sm:px-6">
             {/* Progress */}
             <div>
               <div className="flex justify-between items-center mb-1.5">
@@ -249,7 +720,7 @@ function ProjectModal({
             </div>
 
             {/* Task Stats */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {[
                 { label: "Total", value: total, color: "text-[#1F3C68]", bg: "bg-[#EDF2FA]" },
                 { label: "In Progress", value: inProgress, color: "text-[#F28C28]", bg: "bg-[#FFF4EE]" },
@@ -322,7 +793,7 @@ function ProjectModal({
   );
 }
 
-function ProjectManagementCard({
+export function ProjectManagementCard({
   project,
   leaderName,
   tasks,
@@ -461,34 +932,32 @@ function AssignTaskModal({
   membersByProject,
   onClose,
   onSave,
+  initialTask,
 }: {
   projects: Project[];
   membersByProject: Map<number, Account[]>;
   onClose: () => void;
-  onSave: (payload: {
-    title: string;
-    description: string;
-    priority: TaskPriority;
-    dueDate: string;
-    assignedTo: string;
-    assignedToId: number;
-    projectId: number;
-    tags: string[];
-  }) => void;
+  onSave: (payload: TaskDraftPayload) => void;
+  initialTask?: Task | null;
 }) {
-  const [projectId, setProjectId] = useState<number>(projects[0]?.id ?? 0);
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState<TaskPriority>("Medium");
-  const [dueDate, setDueDate] = useState("");
+  const [projectId, setProjectId] = useState<number>(initialTask?.projectId ?? projects[0]?.id ?? 0);
+  const [title, setTitle] = useState(initialTask?.title ?? "");
+  const [description, setDescription] = useState(initialTask?.description ?? "");
+  const [priority, setPriority] = useState<TaskPriority>(initialTask?.priority ?? "Medium");
+  const [dueDate, setDueDate] = useState(initialTask?.dueDate ?? "");
   const [tagInput, setTagInput] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>(initialTask?.tags ?? []);
+  const [attachments, setAttachments] = useState<TaskAttachment[]>(initialTask?.attachments ?? []);
+  const [fileError, setFileError] = useState("");
 
   const availableMembers = projectId ? membersByProject.get(projectId) ?? [] : [];
-  const [assigneeId, setAssigneeId] = useState<number>(availableMembers[0]?.id ?? 0);
+  const [assigneeId, setAssigneeId] = useState<number>(initialTask?.assignedToId ?? availableMembers[0]?.id ?? 0);
 
   useEffect(() => {
-    setAssigneeId(availableMembers[0]?.id ?? 0);
+    setAssigneeId((current) => {
+      if (availableMembers.some((member) => member.id === current)) return current;
+      return availableMembers[0]?.id ?? 0;
+    });
   }, [projectId, availableMembers]);
 
   const addTag = () => {
@@ -496,6 +965,17 @@ function AssignTaskModal({
     if (!clean) return;
     if (!tags.includes(clean)) setTags((prev) => [...prev, clean]);
     setTagInput("");
+  };
+
+  const addFiles = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setFileError("");
+
+    try {
+      setAttachments(await prepareTaskAttachments(files, attachments));
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "Unable to attach file.");
+    }
   };
 
   const submit = () => {
@@ -511,6 +991,7 @@ function AssignTaskModal({
       assignedToId: selectedMember.id,
       projectId,
       tags,
+      attachments,
     });
   };
 
@@ -529,20 +1010,26 @@ function AssignTaskModal({
           exit={{ scale: 0.96, opacity: 0, y: 16 }}
           transition={{ type: "spring", stiffness: 260, damping: 24 }}
           onClick={(e) => e.stopPropagation()}
-          className="bg-white rounded-2xl shadow-2xl w-full max-w-lg border border-slate-100 overflow-hidden"
+          className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl"
         >
-          <div className="bg-primary px-6 py-5 flex items-start justify-between gap-4">
+          <div className="flex items-start justify-between gap-4 bg-primary px-6 py-5">
             <div>
               <p className="text-[10px] font-bold uppercase tracking-widest text-white/60 mb-1">Leader Action</p>
-              <h2 className="text-xl font-black text-white leading-tight">Assign Team Task</h2>
-              <p className="text-sm text-white/70 mt-1">Create a task for a member in one of your projects.</p>
+              <h2 className="text-xl font-black text-white leading-tight">
+                {initialTask ? "Edit Team Task" : "Assign Team Task"}
+              </h2>
+              <p className="text-sm text-white/70 mt-1">
+                {initialTask
+                  ? "Update task details and supporting files for your project."
+                  : "Create a task for a member in one of your projects."}
+              </p>
             </div>
             <button onClick={onClose} className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors flex-shrink-0">
               <X className="w-4 h-4 text-white" />
             </button>
           </div>
 
-          <div className="px-6 py-5 space-y-4">
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <label className="block">
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Project</span>
@@ -660,9 +1147,55 @@ function AssignTaskModal({
                 </div>
               )}
             </div>
+
+            <div>
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Supporting Files</span>
+              <label className="mt-1.5 flex cursor-pointer items-center justify-between rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-500 transition-colors hover:border-[#1F3C68]/30 hover:bg-[#EDF2FA]/40">
+                <span className="inline-flex items-center gap-2 font-medium">
+                  <Paperclip className="w-4 h-4" />
+                  Add files for instructions, briefs, or references
+                </span>
+                <span className="text-[11px] font-bold text-slate-400">Max {MAX_ATTACHMENTS} files</span>
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={async (e) => {
+                    await addFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              <p className="mt-1 text-[11px] text-slate-400">
+                Keep each file under {formatAttachmentSize(MAX_ATTACHMENT_SIZE)} because tasks are stored locally in the browser.
+              </p>
+              {fileError && <p className="mt-2 text-xs font-semibold text-rose-500">{fileError}</p>}
+              {attachments.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {attachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-[#1F3C68]">{attachment.name}</p>
+                        <p className="text-[11px] text-slate-400">{formatAttachmentSize(attachment.size)}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setAttachments((prev) => prev.filter((item) => item.id !== attachment.id))}
+                        className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-500 hover:bg-slate-200"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
-          <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 bg-slate-50/60">
+          <div className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50/95 px-6 py-4">
             <button onClick={onClose} className="px-4 py-2 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-500 hover:bg-slate-50">
               Cancel
             </button>
@@ -671,7 +1204,7 @@ function AssignTaskModal({
               disabled={!projectId || !assigneeId || !title.trim() || !dueDate}
               className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Assign Task
+              {initialTask ? "Save Changes" : "Assign Task"}
             </button>
           </div>
         </motion.div>
@@ -688,15 +1221,15 @@ function StatCard({ label, value, icon: Icon, accent, delay }: {
       initial={{ y: 20, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ delay, type: "spring", stiffness: 200, damping: 20 }}
-      className="relative overflow-hidden bg-white rounded-2xl border border-slate-100 p-5 shadow-sm group hover:shadow-md transition-shadow duration-300"
+      className="relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-4 shadow-sm transition-shadow duration-300 group hover:shadow-md sm:p-5"
     >
       <div className={`absolute top-0 left-0 right-0 h-[3px] ${accent}`} />
       <div className="flex items-start justify-between">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-3">{label}</p>
-          <p className="text-4xl font-black text-[#1F3C68] tabular-nums leading-none">{value}</p>
+          <p className="text-3xl font-black leading-none tabular-nums text-[#1F3C68] sm:text-4xl">{value}</p>
         </div>
-        <div className="p-2.5 rounded-xl bg-slate-50">
+        <div className="rounded-xl bg-slate-50 p-2 sm:p-2.5">
           <Icon className="w-5 h-5 text-slate-400 group-hover:text-[#1F3C68] transition-colors" />
         </div>
       </div>
@@ -726,13 +1259,13 @@ function Pagination({
   };
 
   return (
-    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-6 py-4 border-t border-slate-100 bg-slate-50/60">
-      <p className="text-xs text-slate-400 font-medium">
+    <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50/60 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <p className="text-center text-xs font-medium text-slate-400 sm:text-left">
         {totalItems === 0 ? "No tasks to show" : (
           <>Showing <span className="font-bold text-[#1F3C68]">{startItem}–{endItem}</span> of <span className="font-bold text-[#1F3C68]">{totalItems}</span> tasks</>
         )}
       </p>
-      <div className="flex items-center gap-1.5">
+      <div className="flex flex-wrap items-center justify-center gap-1.5">
         <motion.button
           whileHover={currentPage > 1 ? { scale: 1.05 } : {}}
           whileTap={currentPage > 1 ? { scale: 0.95 } : {}}
@@ -745,7 +1278,7 @@ function Pagination({
         >
           <ChevronLeft className="w-3.5 h-3.5" /> Prev
         </motion.button>
-        <div className="flex items-center gap-1">
+        <div className="flex max-w-full flex-wrap items-center justify-center gap-1">
           {totalPages === 0 ? (
             <span className="w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold bg-[#1F3C68] text-white shadow-md">1</span>
           ) : (
@@ -797,6 +1330,9 @@ function TaskPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assigningProjectId, setAssigningProjectId] = useState<number | null>(null);
+  const [pendingStatusChange, setPendingStatusChange] = useState<PendingStatusChange | null>(null);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<TaskAttachment | null>(null);
 
   // ── Project modal state ──────────────────────────────────────────────────
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
@@ -911,6 +1447,14 @@ function TaskPage() {
     return { totalProjects, totalTasks, completedTasks, inProgressTasks, pendingTasks, overallProgress };
   }, [managedProjects]);
 
+  const isTaskAssignee = (task: Task) => {
+    const matchId = task.assignedToId !== undefined && String(task.assignedToId) === String(user?.id);
+    const matchName = !!user?.name && task.assignedTo?.trim().toLowerCase() === user.name.trim().toLowerCase();
+    return matchId || matchName;
+  };
+
+  const canReviewTaskCompletion = (task: Task) => !!task.projectId && userProjectIds.has(task.projectId);
+
   const saveTasks = (updated: Task[]) => {
     setTasks(updated);
     localStorage.setItem(TASKS_KEY, JSON.stringify(updated));
@@ -951,12 +1495,120 @@ function TaskPage() {
     return m;
   }, [projects]);
 
+  const pendingCompletionTask = useMemo(
+    () => tasks.find((task) => task.id === pendingStatusChange?.taskId) ?? null,
+    [tasks, pendingStatusChange]
+  );
+
   // ── Status update (any direction) ─────────────────────────────────────────
-  const updateStatus = (id: number, status: TaskStatus) => {
-    saveTasks(tasks.map((t) => (t.id === id ? { ...t, status } : t)));
+  const applyStatusUpdate = (id: number, status: TaskStatus) => {
+    saveTasks(tasks.map((t) => {
+      if (t.id !== id) return t;
+      if (status === "Completed") {
+        return {
+          ...t,
+          status,
+          completedAt: new Date().toISOString(),
+          completedBy: user?.name,
+          completedById: user?.id,
+        };
+      }
+
+      return {
+        ...t,
+        status,
+        completionRequest: undefined,
+        completedAt: undefined,
+        completedBy: undefined,
+        completedById: undefined,
+      };
+    }));
   };
 
-  const assignTaskToMember = ({
+  const submitCompletionRequest = (
+    id: number,
+    payload: { note: string; attachments: TaskAttachment[]; visibility: CompletionVisibility }
+  ) => {
+    saveTasks(tasks.map((task) => (
+      task.id === id
+        ? {
+            ...task,
+            status: "In Progress",
+            completionRequest: {
+              status: "Pending",
+              requestedAt: new Date().toISOString(),
+              requestedBy: user?.name,
+              requestedById: user?.id,
+              note: payload.note,
+              attachments: payload.attachments,
+              visibility: payload.visibility,
+              reviewedAt: undefined,
+              reviewedBy: undefined,
+              reviewedById: undefined,
+            },
+            completedAt: undefined,
+            completedBy: undefined,
+            completedById: undefined,
+          }
+        : task
+    )));
+  };
+
+  const reviewCompletionRequest = (id: number, decision: Exclude<CompletionApprovalStatus, "Pending">) => {
+    saveTasks(tasks.map((task) => {
+      if (task.id !== id || !task.completionRequest) return task;
+
+      const reviewedRequest: TaskCompletionRequest = {
+        ...task.completionRequest,
+        status: decision,
+        reviewedAt: new Date().toISOString(),
+        reviewedBy: user?.name,
+        reviewedById: user?.id,
+      };
+
+      if (decision === "Approved") {
+        return {
+          ...task,
+          status: "Completed",
+          completionRequest: reviewedRequest,
+          completedAt: new Date().toISOString(),
+          completedBy: user?.name,
+          completedById: user?.id,
+        };
+      }
+
+      return {
+        ...task,
+        status: "In Progress",
+        completionRequest: reviewedRequest,
+        completedAt: undefined,
+        completedBy: undefined,
+        completedById: undefined,
+      };
+    }));
+  };
+
+  const updateStatus = (id: number, status: TaskStatus) => {
+    const task = tasks.find((item) => item.id === id);
+    if (!task) return;
+
+    const allowedTransitions = getAllowedStatusTransitions(task.status);
+    if (!allowedTransitions.includes(status) || task.status === status) return;
+
+    if (status === "Completed") {
+      if (task.completionRequest?.status === "Pending" && canReviewTaskCompletion(task)) {
+        reviewCompletionRequest(id, "Approved");
+        return;
+      }
+
+      setPendingStatusChange({ taskId: id, nextStatus: status });
+      return;
+    }
+
+    applyStatusUpdate(id, status);
+  };
+
+  const saveTaskDraft = ({
     title,
     description,
     priority,
@@ -965,16 +1617,31 @@ function TaskPage() {
     assignedToId,
     projectId,
     tags,
-  }: {
-    title: string;
-    description: string;
-    priority: TaskPriority;
-    dueDate: string;
-    assignedTo: string;
-    assignedToId: number;
-    projectId: number;
-    tags: string[];
-  }) => {
+    attachments,
+  }: TaskDraftPayload) => {
+    if (editingTask) {
+      saveTasks(tasks.map((task) => (
+        task.id === editingTask.id
+          ? {
+              ...task,
+              title,
+              description,
+              priority,
+              dueDate,
+              assignedTo,
+              assignedToId,
+              projectId,
+              tags,
+              attachments,
+            }
+          : task
+      )));
+      setEditingTask(null);
+      setShowAssignModal(false);
+      setAssigningProjectId(null);
+      return;
+    }
+
     const newTask: Task = {
       id: Date.now(),
       title,
@@ -989,6 +1656,7 @@ function TaskPage() {
       assignedById: user?.id,
       projectId,
       tags,
+      attachments,
     };
 
     saveTasks([newTask, ...tasks]);
@@ -1001,7 +1669,7 @@ function TaskPage() {
   const handleLogout = () => { localStorage.removeItem("currentUser"); navigate("/"); };
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] flex font-sans">
+    <div className="flex min-h-screen font-sans bg-[#F8FAFC]">
       <aside className="hidden md:flex w-64 bg-white shadow-md flex-col border-r border-slate-100">
         <Usersidebar navigate={navigate} logout={handleLogout} />
       </aside>
@@ -1031,77 +1699,105 @@ function TaskPage() {
         />
       )}
 
+      {pendingCompletionTask && pendingStatusChange?.nextStatus === "Completed" && (
+        <CompleteTaskModal
+          task={pendingCompletionTask}
+          initialRequest={pendingCompletionTask.completionRequest}
+          onClose={() => setPendingStatusChange(null)}
+          onConfirm={(payload) => {
+            submitCompletionRequest(pendingCompletionTask.id, payload);
+            setPendingStatusChange(null);
+          }}
+        />
+      )}
+
+      {previewAttachment && (
+        <AttachmentPreviewModal
+          attachment={previewAttachment}
+          onClose={() => setPreviewAttachment(null)}
+        />
+      )}
+
       {showAssignModal && (
         <AssignTaskModal
-          projects={assigningProjectId ? userProjects.filter((project) => project.id === assigningProjectId) : userProjects}
+          projects={
+            editingTask?.projectId
+              ? userProjects.filter((project) => project.id === editingTask.projectId)
+              : assigningProjectId
+                ? userProjects.filter((project) => project.id === assigningProjectId)
+                : userProjects
+          }
           membersByProject={membersByProject}
           onClose={() => {
             setShowAssignModal(false);
             setAssigningProjectId(null);
+            setEditingTask(null);
           }}
-          onSave={assignTaskToMember}
+          onSave={saveTaskDraft}
+          initialTask={editingTask}
         />
       )}
 
-      <main className="flex-1 p-4 md:p-8 overflow-auto">
+      <main className="min-w-0 flex-1 overflow-auto p-3 sm:p-4 md:p-6 xl:p-8">
 
         {/* Header */}
         <motion.div initial={{ y: -16, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
           transition={{ type: "spring", stiffness: 200, damping: 22 }}
-          className="flex justify-between items-center mb-8 bg-white px-6 py-5 rounded-2xl shadow-sm border border-slate-100">
-          <div className="flex items-center gap-4">
+          className="mb-6 flex flex-col gap-4 rounded-2xl border border-slate-100 bg-white px-4 py-4 shadow-sm sm:px-6 sm:py-5 lg:mb-8 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3 sm:gap-4">
             <button className="md:hidden p-2 hover:bg-slate-100 rounded-xl transition-colors" onClick={() => setMenuOpen(true)}>
               <Menu className="text-[#1F3C68]" />
             </button>
             <div className="min-w-0">
-              <h1 className="text-lg sm:text-2xl md:text-3xl font-bold text-[#1F3C68] truncate">
+              <h1 className="text-lg font-bold text-[#1F3C68] sm:text-2xl md:text-3xl">
                 {viewMode === "manage" && userProjects.length > 0
                   ? "Manage Projects"
                   : viewMode === "team" && userProjects.length > 0
                     ? "Team Tasks"
                     : "My Tasks"}
               </h1>
-              <p className="text-xs sm:text-sm text-[#1E293B] mt-1 font-medium truncate">
+              <p className="mt-1 text-xs font-medium text-[#1E293B] sm:text-sm">
                 {currentTime.toLocaleDateString("en-US", { weekday: "short", year: "numeric", month: "long", day: "numeric" })}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center lg:justify-end">
             {userProjects.length > 0 && (
-              <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
+              <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 sm:flex sm:flex-wrap sm:items-center">
                 <button onClick={() => setViewMode("my")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${viewMode === "my" ? "bg-primary text-white shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
-                  <User className="w-3.5 h-3.5 inline mr-1" /> My Tasks
+                  className={`inline-flex items-center justify-center gap-1 rounded-lg px-2 py-2 text-[11px] font-bold transition-all sm:px-3 sm:py-1.5 sm:text-xs ${viewMode === "my" ? "bg-primary text-white shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+                  <User className="h-3.5 w-3.5" /> <span className="truncate">My Tasks</span>
                 </button>
                 <button onClick={() => setViewMode("team")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${viewMode === "team" ? "bg-primary text-white shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
-                  <Users className="w-3.5 h-3.5 inline mr-1" /> Team
+                  className={`inline-flex items-center justify-center gap-1 rounded-lg px-2 py-2 text-[11px] font-bold transition-all sm:px-3 sm:py-1.5 sm:text-xs ${viewMode === "team" ? "bg-primary text-white shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+                  <Users className="h-3.5 w-3.5" /> <span className="truncate">Team</span>
                 </button>
                 <button onClick={() => setViewMode("manage")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${viewMode === "manage" ? "bg-primary text-white shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
-                  <Settings2 className="w-3.5 h-3.5 inline mr-1" /> Manage
+                  className={`inline-flex items-center justify-center gap-1 rounded-lg px-2 py-2 text-[11px] font-bold transition-all sm:px-3 sm:py-1.5 sm:text-xs ${viewMode === "manage" ? "bg-primary text-white shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+                  <Settings2 className="h-3.5 w-3.5" /> <span className="truncate">Manage</span>
                 </button>
               </div>
             )}
             {viewMode !== "my" && leaderCanAssign && (
               <button
                 onClick={() => {
+                  setEditingTask(null);
                   setAssigningProjectId(null);
                   setShowAssignModal(true);
                 }}
-                className="inline-flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl shadow-sm text-xs font-bold hover:opacity-95 transition-opacity"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-white shadow-sm transition-opacity hover:opacity-95 sm:w-auto"
               >
                 <Plus className="w-3.5 h-3.5" />
                 Assign Task
               </button>
             )}
-            <div className="hidden md:flex lg:hidden items-center gap-2 bg-primary text-white px-3 py-2 rounded-lg shadow-lg md:w-[92px]">
+            <div className="hidden items-center gap-2 self-start rounded-lg bg-primary px-3 py-2 text-white shadow-lg md:flex lg:hidden">
               <Clock className="w-4 h-4" />
               <p className="font-bold text-xs tabular-nums">
                 {currentTime.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
               </p>
             </div>
-            <div className="hidden lg:flex items-center gap-3 bg-primary text-white px-6 py-3 rounded-xl shadow-lg">
+            <div className="hidden items-center gap-3 self-start rounded-xl bg-primary px-4 py-3 text-white shadow-lg lg:flex">
               <Clock className="w-5 h-5" />
               <p className="font-bold text-lg tabular-nums">
                 {currentTime.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
@@ -1112,7 +1808,7 @@ function TaskPage() {
 
         {viewMode !== "manage" ? (
           <>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 sm:gap-4">
               <StatCard label="Total"       value={total}      icon={Layers}       accent="bg-primary"   delay={0.05} />
               <StatCard label="Completed"   value={completed}  icon={CheckCircle2} accent="bg-secondary" delay={0.1}  />
               <StatCard label="In Progress" value={inProgress} icon={Zap}          accent="bg-primary"   delay={0.15} />
@@ -1120,7 +1816,7 @@ function TaskPage() {
             </div>
 
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.22 }}
-              className="bg-primary text-white rounded-2xl px-6 py-5 mb-6 shadow-md relative overflow-hidden">
+              className="relative mb-6 overflow-hidden rounded-2xl bg-primary px-4 py-5 text-white shadow-md sm:px-6">
               <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full bg-white/5" />
               <div className="absolute -bottom-6 right-24 w-24 h-24 rounded-full bg-[#F28C28]/20" />
               <div className="relative z-10 flex flex-col sm:flex-row sm:items-center gap-4">
@@ -1130,7 +1826,7 @@ function TaskPage() {
                   </div>
                   <div>
                     <p className="text-[11px] font-bold uppercase tracking-widest text-white/80">Overall Progress</p>
-                    <p className="text-3xl font-black tabular-nums leading-tight">
+                    <p className="text-2xl font-black leading-tight tabular-nums sm:text-3xl">
                       {progress}<span className="text-lg font-semibold text-white/60 ml-0.5">%</span>
                     </p>
                   </div>
@@ -1150,8 +1846,8 @@ function TaskPage() {
               className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
 
           {/* Panel header + filters */}
-          <div className="flex flex-wrap justify-between items-center gap-4 px-6 py-5 border-b border-slate-100">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-4 border-b border-slate-100 px-4 py-4 sm:px-6 sm:py-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
               <div className="p-3 bg-[#E0F2FE] rounded-xl">
                 <ListTodo className="w-6 h-6 text-[#1F3C68]" />
               </div>
@@ -1163,11 +1859,11 @@ function TaskPage() {
                 </p>
               </div>
             </div>
-            <div className="flex gap-2 flex-wrap items-center">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
               {(["All", "Pending", "In Progress", "Completed"] as const).map((s) => (
                 <button key={s}
                   onClick={() => handleFilterChange(() => setActiveStatus(s))}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 ${
+                  className={`w-full rounded-lg px-3 py-2 text-xs font-bold transition-all duration-150 sm:w-auto sm:py-1.5 ${
                     activeStatus === s ? "bg-primary text-white shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                   }`}>
                   {s}
@@ -1175,7 +1871,7 @@ function TaskPage() {
               ))}
               <select value={priorityFilter}
                 onChange={(e) => handleFilterChange(() => setPriorityFilter(e.target.value as "All" | TaskPriority))}
-                className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-[#1F3C68]/30">
+                className="w-full rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#1F3C68]/30 sm:w-auto sm:py-1.5">
                 <option value="All">All Priority</option>
                 <option value="Low">Low</option>
                 <option value="Medium">Medium</option>
@@ -1186,7 +1882,7 @@ function TaskPage() {
 
           {/* Tag Filter Strip */}
           {allTags.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 px-6 py-3 border-b border-slate-50 bg-slate-50/60">
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-50 bg-slate-50/60 px-4 py-3 sm:px-6">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
                 <Tag className="w-3 h-3" /> Tags
               </span>
@@ -1215,7 +1911,7 @@ function TaskPage() {
           )}
 
           {/* Task rows */}
-          <div className="divide-y divide-slate-50 px-4 py-2 min-h-[200px]">
+          <div className="min-h-[200px] divide-y divide-slate-50 px-3 py-2 sm:px-4">
             <AnimatePresence mode="popLayout">
               {paginatedTasks.length === 0 ? (
                 <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -1229,8 +1925,17 @@ function TaskPage() {
                   const pCfg = priorityConfig[task.priority];
                   const sCfg = statusConfig[task.status];
                   const hasTags = (task.tags ?? []).length > 0;
+                  const hasAttachments = (task.attachments ?? []).length > 0;
+                  const completionRequest = task.completionRequest;
+                  const completionAttachments = completionRequest?.attachments ?? [];
+                  const hasCompletionAttachments = completionAttachments.length > 0;
                   const project = task.projectId ? projectById.get(task.projectId) : null;
                   const isTeamView = viewMode === "team" && userProjects.length > 0;
+                  const canEditTask = !!task.projectId && userProjectIds.has(task.projectId);
+                  const canReviewCompletion = canReviewTaskCompletion(task);
+                  const isAssignee = isTaskAssignee(task);
+                  const isAwaitingApproval = completionRequest?.status === "Pending";
+                  const wasReturned = completionRequest?.status === "Rejected";
 
                   return (
                     <motion.div key={task.id} layout
@@ -1238,20 +1943,48 @@ function TaskPage() {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, x: -20 }}
                       transition={{ delay: index * 0.04 }}
-                      className={`group flex items-start justify-between gap-4 py-4 px-2 rounded-xl my-1 transition-all duration-200 hover:bg-slate-50 ${
-                        task.status === "Completed" ? "opacity-60" : ""
+                      className={`group my-2 flex flex-col gap-4 rounded-2xl border px-3 py-4 transition-all duration-200 sm:px-4 lg:flex-row lg:items-start lg:justify-between ${
+                        task.status === "Completed"
+                          ? "border-slate-200 bg-slate-50/80"
+                          : "border-slate-200 bg-white shadow-sm hover:-translate-y-0.5 hover:border-[#1F3C68]/15 hover:shadow-md"
                       }`}>
                       <div className="flex items-start gap-3 min-w-0 flex-1">
-                        <div className={`mt-2 w-1.5 h-1.5 rounded-full flex-shrink-0 ${sCfg.bar}`} />
+                        <div className={`mt-1.5 h-10 w-1 rounded-full flex-shrink-0 ${sCfg.bar}`} />
                         <div className="min-w-0 flex-1">
-                          <h3 className={`font-bold text-[#1F3C68] text-sm truncate ${task.status === "Completed" ? "line-through text-slate-400" : ""}`}>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${
+                              task.status === "Completed" ? "bg-[#EDF2FA] text-[#1F3C68]" : "bg-slate-100 text-slate-500"
+                            }`}>
+                              <span className={`h-1.5 w-1.5 rounded-full ${sCfg.bar}`} />
+                              {task.status}
+                            </span>
+                            {isAwaitingApproval && (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">
+                                <AlertCircle className="h-3 w-3" />
+                                Awaiting project leader approval
+                              </span>
+                            )}
+                            {wasReturned && (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-rose-700">
+                                <AlertCircle className="h-3 w-3" />
+                                Returned for update
+                              </span>
+                            )}
+                            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300">
+                              Task #{task.id}
+                            </span>
+                          </div>
+                          <h3 className={`mt-2 text-sm font-black text-[#1F3C68] sm:text-[15px] ${task.status === "Completed" ? "line-through text-slate-400" : ""}`}>
                             {task.title}
                           </h3>
-                          <p className="text-xs text-slate-400 truncate mt-0.5">{task.description}</p>
-                          <div className="flex flex-wrap items-center gap-2 mt-1">
-                            <p className="text-[10px] text-slate-300 font-medium">Due&nbsp;{task.dueDate}</p>
+                          <p className="mt-1 text-xs leading-5 text-slate-400">{task.description}</p>
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500">
+                              <Clock className="w-3 h-3" />
+                              Due {task.dueDate}
+                            </span>
                             {task.assignedBy && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200">
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
                                 <User className="w-2.5 h-2.5" /> Assigned by {task.assignedBy}
                               </span>
                             )}
@@ -1260,7 +1993,7 @@ function TaskPage() {
                             {isTeamView && project ? (
                               <button
                                 onClick={() => setSelectedProject(project)}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-100 text-violet-700 border border-violet-200 hover:bg-violet-200 transition-colors cursor-pointer"
+                                className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-violet-200 bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700 transition-colors hover:bg-violet-200"
                               >
                                 <Layers className="w-2.5 h-2.5" />
                                 {project.name}
@@ -1268,34 +2001,164 @@ function TaskPage() {
                             ) : project ? (
                               <button
                                 onClick={() => setSelectedProject(project)}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-100 text-violet-700 border border-violet-200 hover:bg-violet-200 transition-colors cursor-pointer"
+                                className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-violet-200 bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700 transition-colors hover:bg-violet-200"
                               >
                                 <Layers className="w-2.5 h-2.5" />
                                 {project.name}
                               </button>
                             ) : null}
 
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 border border-blue-200">
+                            <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">
                               <User className="w-2.5 h-2.5" /> {task.assignedTo}
                             </span>
                           </div>
                           {hasTags && (
-                            <div className="flex flex-wrap gap-1 mt-1.5">
+                            <div className="mt-2 flex flex-wrap gap-1">
                               {(task.tags ?? []).map((tag) => <TagBadge key={tag} tag={tag} />)}
+                            </div>
+                          )}
+                          {hasAttachments && (
+                            <div className="mt-3 space-y-2">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Supporting Files</p>
+                              <div className="flex flex-wrap gap-2">
+                                {(task.attachments ?? []).map((attachment) => (
+                                  <div
+                                    key={attachment.id}
+                                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] font-bold text-slate-600"
+                                  >
+                                    <Paperclip className="w-3 h-3" />
+                                    <span className="max-w-[110px] truncate sm:max-w-[140px]">{attachment.name}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setPreviewAttachment(attachment)}
+                                      className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[10px] font-black text-[#1F3C68] transition-colors hover:bg-[#EDF2FA]"
+                                    >
+                                      <Eye className="h-3 w-3" />
+                                      {canPreviewAttachment(attachment) ? "View" : "Preview"}
+                                    </button>
+                                    <a
+                                      href={attachment.dataUrl}
+                                      download={attachment.name}
+                                      className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[10px] font-black text-slate-500 transition-colors hover:bg-slate-200"
+                                    >
+                                      <Download className="h-3 w-3" />
+                                      Download
+                                    </a>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {(completionRequest || hasCompletionAttachments) && (
+                            <div className="mt-3 space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Completion Output</p>
+                                {completionRequest && (
+                                  <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                                    {getCompletionVisibilityLabel(completionRequest.visibility)}
+                                  </span>
+                                )}
+                              </div>
+                              {completionRequest?.note && (
+                                <p className="text-xs leading-5 text-slate-500">{completionRequest.note}</p>
+                              )}
+                              {completionRequest && (
+                                <p className="text-[11px] text-slate-400">
+                                  Submitted by {completionRequest.requestedBy ?? task.assignedTo}
+                                  {completionRequest.reviewedBy ? ` - Reviewed by ${completionRequest.reviewedBy}` : ""}
+                                </p>
+                              )}
+                              {hasCompletionAttachments && (
+                                <div className="flex flex-wrap gap-2">
+                                  {completionAttachments.map((attachment) => (
+                                    <div
+                                      key={attachment.id}
+                                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-bold text-slate-600"
+                                    >
+                                      <Paperclip className="w-3 h-3" />
+                                      <span className="max-w-[110px] truncate sm:max-w-[140px]">{attachment.name}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setPreviewAttachment(attachment)}
+                                        className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-1 text-[10px] font-black text-[#1F3C68] transition-colors hover:bg-[#EDF2FA]"
+                                      >
+                                        <Eye className="h-3 w-3" />
+                                        {canPreviewAttachment(attachment) ? "View" : "Preview"}
+                                      </button>
+                                      <a
+                                        href={attachment.dataUrl}
+                                        download={attachment.name}
+                                        className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-1 text-[10px] font-black text-slate-500 transition-colors hover:bg-slate-200"
+                                      >
+                                        <Download className="h-3 w-3" />
+                                        Download
+                                      </a>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
                       </div>
 
                       {/* ── Right side: priority + status popover ── */}
-                      <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
-                        <span className={`hidden sm:inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-lg ${pCfg.bg} ${pCfg.color}`}>
+                      <div className="mt-0.5 flex w-full flex-col items-stretch gap-2 lg:w-auto lg:min-w-[180px] lg:items-end">
+                        <span className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] font-bold ${pCfg.bg} ${pCfg.color} lg:self-end`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${pCfg.dot}`} />
                           {task.priority}
                         </span>
 
                         {/* Status dropdown — replaces the old advance button */}
-                        <StatusPopover task={task} onUpdate={updateStatus} />
+                        <div className="lg:self-end">
+                          <StatusPopover task={task} onUpdate={updateStatus} />
+                        </div>
+                        <p className="text-left text-[10px] font-medium leading-relaxed text-slate-400 lg:max-w-[180px] lg:text-right">
+                          {task.status === "Pending"
+                            ? "Start the task first before completion becomes available."
+                            : task.status === "In Progress"
+                              ? isAwaitingApproval
+                                ? "Completion was submitted and is waiting for project manager approval."
+                                : wasReturned
+                                  ? "The last completion request was returned. Update the output and resubmit."
+                                  : "Completion now submits proof for approval instead of closing the task immediately."
+                              : "This task was only marked completed after approval."}
+                        </p>
+                        {canReviewCompletion && isAwaitingApproval && (
+                          <>
+                            <button
+                              onClick={() => reviewCompletionRequest(task.id, "Approved")}
+                              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#1F3C68] px-3 py-2 text-[11px] font-bold text-white shadow-sm hover:bg-[#173254]"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Approve Completion
+                            </button>
+                            <button
+                              onClick={() => reviewCompletionRequest(task.id, "Rejected")}
+                              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-bold text-rose-700 transition-colors hover:bg-rose-100"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              Return to Member
+                            </button>
+                          </>
+                        )}
+                        {!canReviewCompletion && isAssignee && isAwaitingApproval && (
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[10px] font-bold leading-relaxed text-amber-700 lg:text-right">
+                            Waiting for project leader approval.
+                          </div>
+                        )}
+                        {canEditTask && (
+                          <button
+                            onClick={() => {
+                              setEditingTask(task);
+                              setShowAssignModal(true);
+                            }}
+                            className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-bold text-slate-600 transition-colors hover:border-[#1F3C68]/20 hover:text-[#1F3C68]"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                            Edit Task
+                          </button>
+                        )}
                       </div>
                     </motion.div>
                   );
@@ -1315,7 +2178,7 @@ function TaskPage() {
           </>
         ) : (
           <>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 sm:gap-4">
               <StatCard label="Projects"    value={manageStats.totalProjects}  icon={Layers}       accent="bg-primary"   delay={0.05} />
               <StatCard label="All Tasks"   value={manageStats.totalTasks}     icon={ListTodo}     accent="bg-secondary" delay={0.1} />
               <StatCard label="In Progress" value={manageStats.inProgressTasks} icon={Zap}         accent="bg-primary"   delay={0.15} />
@@ -1323,7 +2186,7 @@ function TaskPage() {
             </div>
 
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.22 }}
-              className="bg-primary text-white rounded-2xl px-6 py-5 mb-6 shadow-md relative overflow-hidden">
+              className="relative mb-6 overflow-hidden rounded-2xl bg-primary px-4 py-5 text-white shadow-md sm:px-6">
               <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full bg-white/5" />
               <div className="absolute -bottom-6 right-24 w-24 h-24 rounded-full bg-[#F28C28]/20" />
               <div className="relative z-10 flex flex-col sm:flex-row sm:items-center gap-4">
@@ -1333,7 +2196,7 @@ function TaskPage() {
                   </div>
                   <div>
                     <p className="text-[11px] font-bold uppercase tracking-widest text-white/80">Leadership Progress</p>
-                    <p className="text-3xl font-black tabular-nums leading-tight">
+                    <p className="text-2xl font-black leading-tight tabular-nums sm:text-3xl">
                       {manageStats.overallProgress}<span className="text-lg font-semibold text-white/60 ml-0.5">%</span>
                     </p>
                   </div>
@@ -1353,8 +2216,8 @@ function TaskPage() {
 
             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.27 }}
               className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-              <div className="flex flex-wrap justify-between items-center gap-4 px-6 py-5 border-b border-slate-100">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col gap-4 border-b border-slate-100 px-4 py-4 sm:px-6 sm:py-5 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex min-w-0 items-center gap-3">
                   <div className="p-3 bg-[#E0F2FE] rounded-xl">
                     <Settings2 className="w-6 h-6 text-[#1F3C68]" />
                   </div>
@@ -1367,7 +2230,7 @@ function TaskPage() {
                 </div>
               </div>
 
-              <div className="divide-y divide-slate-50 px-4 py-2 min-h-[220px]">
+              <div className="min-h-[220px] divide-y divide-slate-50 px-3 py-2 sm:px-4">
                 <AnimatePresence mode="popLayout">
                   {managedProjects.length === 0 ? (
                     <motion.div
@@ -1395,7 +2258,7 @@ function TaskPage() {
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, x: -20 }}
                           transition={{ delay: index * 0.04 }}
-                          className="group flex items-start justify-between gap-4 py-4 px-2 rounded-xl my-1 transition-all duration-200 hover:bg-slate-50"
+                          className="group my-1 flex flex-col gap-4 rounded-xl px-2 py-4 transition-all duration-200 hover:bg-slate-50 lg:flex-row lg:items-start lg:justify-between"
                         >
                           <div className="flex items-start gap-3 min-w-0 flex-1">
                             <div className="mt-2 w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#1F3C68]" />
@@ -1473,19 +2336,20 @@ function TaskPage() {
                             </div>
                           </div>
 
-                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
+                          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center lg:w-auto lg:flex-shrink-0">
                             <button
                               onClick={() => setSelectedProject(project)}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 text-slate-500 hover:bg-slate-200 transition-all"
+                              className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-500 transition-all hover:bg-slate-200"
                             >
                               View
                             </button>
                             <button
                               onClick={() => {
+                                setEditingTask(null);
                                 setAssigningProjectId(project.id);
                                 setShowAssignModal(true);
                               }}
-                              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-primary text-white shadow-sm"
+                              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-white shadow-sm"
                             >
                               <Plus className="w-3 h-3" />
                               Assign
