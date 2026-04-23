@@ -97,6 +97,24 @@ function formatMinutes(minutes: number): string {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
+function hasAttendanceTime(
+  record: { timeIn?: string | null; timeOut?: string | null; lunchOut?: string | null; lunchIn?: string | null } | null | undefined
+): boolean {
+  return !!record?.timeIn || !!record?.timeOut || !!record?.lunchOut || !!record?.lunchIn;
+}
+
+function isWeekdayISO(dateStr: string): boolean {
+  const day = new Date(`${dateStr}T12:00:00`).getDay();
+  return day !== 0 && day !== 6;
+}
+
+function isPastDayISO(dateStr: string): boolean {
+  const target = new Date(`${dateStr}T00:00:00`);
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return target.getTime() < startOfToday.getTime();
+}
+
 // ─── Skeleton Loading Component ───────────────────────────────────────────────
 function LogSkeleton() {
   return (
@@ -164,6 +182,8 @@ function DayDetailModal({ dateStr, record, leaveType, onClose }: DayDetailProps)
   const lateMinutes = getLateMinutes(record?.timeIn ?? null, isToday ? now : undefined);
   const leaveCfg = leaveType ? getLeaveConfig(leaveType) : null;
   const date = new Date(dateStr + "T12:00:00");
+  const hasAnyAttendance = hasAttendanceTime(record);
+  const isAbsent = isWeekdayISO(dateStr) && isPastDayISO(dateStr) && !leaveType && !hasAnyAttendance;
 
   const totalHours = record?.hours ?? 0;
   const regularHours = Math.min(totalHours, 9);
@@ -199,10 +219,13 @@ function DayDetailModal({ dateStr, record, leaveType, onClose }: DayDetailProps)
             {date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
           </h2>
           <div className="flex gap-2 mt-3 flex-wrap">
-            {!record?.timeIn && !leaveType && (
+            {isAbsent && (
+              <span className="px-3 py-1 bg-rose-400/30 text-rose-100 rounded-full text-xs font-bold">Absent</span>
+            )}
+            {!hasAnyAttendance && !leaveType && !isAbsent && (
               <span className="px-3 py-1 bg-slate-500/40 rounded-full text-xs font-bold">No Record</span>
             )}
-            {record?.timeIn && (
+            {hasAnyAttendance && (
               <span className={`px-3 py-1 rounded-full text-xs font-bold ${lateMinutes > 0 ? "bg-red-400/30 text-red-200" : "bg-green-400/30 text-green-200"}`}>
                 {lateMinutes > 0 ? `Late ${formatMinutes(lateMinutes)}` : "On Time"}
               </span>
@@ -222,7 +245,7 @@ function DayDetailModal({ dateStr, record, leaveType, onClose }: DayDetailProps)
 
         {/* Time breakdown */}
         <div className="p-5 space-y-3">
-          {record?.timeIn ? (
+          {hasAnyAttendance ? (
             <>
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-green-50 border border-green-200 rounded-2xl p-3">
@@ -328,7 +351,7 @@ function DayDetailModal({ dateStr, record, leaveType, onClose }: DayDetailProps)
               ) : (
                 <>
                   <Calendar className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                  <p className="text-sm font-medium">No attendance recorded</p>
+                  <p className="text-sm font-medium">{isAbsent ? "Absent (no attendance recorded)" : "No attendance recorded"}</p>
                 </>
               )}
             </div>
@@ -456,7 +479,8 @@ function AttendanceApp() {
       const isToday = todayStr === dateStr;
       const leaveType = approvedLeaveMap.get(dateStr);
       const leaveCfg = leaveType ? getLeaveConfig(leaveType) : null;
-      const hasRecord = !!record?.timeIn;
+      const hasRecord = hasAttendanceTime(record);
+      const isAbsent = isWeekdayISO(dateStr) && isPastDayISO(dateStr) && !leaveType && !hasRecord;
 
       days.push(
         <motion.div
@@ -467,6 +491,8 @@ function AttendanceApp() {
           className={`h-16 sm:h-20 md:h-24 border p-1.5 sm:p-2 cursor-pointer transition-all relative overflow-hidden group ${
             leaveType
               ? `${leaveCfg!.bg} ${leaveCfg!.border} hover:brightness-95`
+              : isAbsent
+              ? "bg-rose-50 border-rose-200 hover:bg-rose-100/60"
               : isToday
               ? "bg-orange-50 border-[#F28C28]/40 hover:bg-orange-100/50"
               : hasRecord
@@ -475,7 +501,7 @@ function AttendanceApp() {
           }`}
         >
           <span className={`text-xs sm:text-sm font-bold ${
-            isToday ? "text-[#F28C28]" : leaveType ? leaveCfg!.text : hasRecord ? "text-[#1F3C68]" : "text-slate-400"
+            isToday ? "text-[#F28C28]" : leaveType ? leaveCfg!.text : isAbsent ? "text-rose-700" : hasRecord ? "text-[#1F3C68]" : "text-slate-400"
           }`}>
             {day}
           </span>
@@ -483,6 +509,12 @@ function AttendanceApp() {
           {leaveType && leaveCfg && (
             <div className={`mt-0.5 text-[8px] sm:text-[9px] font-bold ${leaveCfg.text} leading-tight`}>
               {leaveCfg.short}
+            </div>
+          )}
+
+          {isAbsent && (
+            <div className="mt-0.5 text-[8px] sm:text-[9px] font-bold text-rose-700 leading-tight">
+              Absent
             </div>
           )}
 
@@ -704,6 +736,8 @@ function AttendanceApp() {
                         const leaveCfg = leaveType ? getLeaveConfig(leaveType) : null;
                         const isRecordToday = record.date === new Date().toLocaleDateString("en-CA");
                         const late = getLateMinutes(record.timeIn ?? null, isRecordToday ? currentTime : undefined);
+                        const hasRecord = hasAttendanceTime(record);
+                        const isAbsent = isWeekdayISO(record.date) && isPastDayISO(record.date) && !leaveType && !hasRecord;
                         
                         return (
                           <motion.div
@@ -728,6 +762,11 @@ function AttendanceApp() {
                                   {leaveType && leaveCfg && (
                                     <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${leaveCfg.bg} ${leaveCfg.text} ${leaveCfg.border}`}>
                                       {leaveCfg.short}
+                                    </span>
+                                  )}
+                                  {isAbsent && (
+                                    <span className="text-[9px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded-full">
+                                      Absent
                                     </span>
                                   )}
                                 </div>
