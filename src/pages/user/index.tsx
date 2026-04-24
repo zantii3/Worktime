@@ -1,9 +1,10 @@
+import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Eye, EyeOff, Mail, Lock } from "lucide-react";
-import picture from "/logo.png";
-import accounts from "../data/accounts.json";
+import staticAccounts from "../data/accounts.json";
+import { resolveMergedAccounts } from "../data/resolveAccounts";
 import { showError, showSuccess } from "./utils/toast";
+import picture from "/logo.png";
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -15,23 +16,27 @@ function Login() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    const user = accounts.find((u) => u.email === email && u.password === password);
+    // Merge static JSON + localStorage-created accounts + edits - deleted IDs.
+    const accounts = resolveMergedAccounts(staticAccounts, "user");
+
+    const user = accounts.find(
+      (u) => u.email === email && u.password === password,
+    );
 
     if (user) {
-      // ✅ ADDED: Block login if this user is deactivated
+      // Block login if this user is deactivated.
       try {
         const statusMap = JSON.parse(
-          localStorage.getItem("worktime_account_status_v1") || "{}"
+          localStorage.getItem("worktime_account_status_v1") || "{}",
         ) as Record<string, "Active" | "Inactive">;
 
-        const key = `user:${user.id}`;
-        if (statusMap[key] === "Inactive") {
+        if (statusMap[`user:${user.id}`] === "Inactive") {
           setError("");
           showError("This account is deactivated.");
           return;
         }
       } catch {
-        // fail-open for demo if storage is corrupted
+        // Fail-open for demo if storage is corrupted.
       }
 
       setError("");

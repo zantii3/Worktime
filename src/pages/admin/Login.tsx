@@ -1,38 +1,28 @@
+import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { notifyError, notifySuccess } from "./utils/toast";
-import { Mail, Lock, Eye, EyeOff } from "lucide-react";
 import picture from "/logo.png";
 
-// ✅ Import your admin accounts JSON
-import adminAccounts from "./data/adminAccounts.json";
+import { resolveMergedAccounts } from "../data/resolveAccounts";
+import staticAdminAccounts from "./data/adminAccounts.json";
 
 type FormState = {
-  email: string;
+  email:    string;
   password: string;
-};
-
-type AdminAccount = {
-  id: number;
-  email: string;
-  password: string;
-  name: string;
 };
 
 export default function AdminLogin() {
   const navigate = useNavigate();
 
-  const [form, setForm] = useState<FormState>({ email: "", password: "" });
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showPw, setShowPw] = useState(false);
+  const [form, setForm]             = useState<FormState>({ email: "", password: "" });
+  const [isSubmitting, setSubmitting] = useState(false);
+  const [showPw, setShowPw]         = useState(false);
 
-  const canSubmit = useMemo(() => {
-    return (
-      form.email.trim().length > 0 &&
-      form.password.trim().length > 0 &&
-      !isSubmitting
-    );
-  }, [form.email, form.password, isSubmitting]);
+  const canSubmit = useMemo(
+    () => form.email.trim().length > 0 && form.password.trim().length > 0 && !isSubmitting,
+    [form.email, form.password, isSubmitting],
+  );
 
   const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -42,55 +32,53 @@ export default function AdminLogin() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const email = form.email.trim().toLowerCase();
-    const password = form.password;
-
-    if (!email || !password.trim()) {
+    if (!form.email.trim() || !form.password.trim()) {
       notifyError("Please enter your email and password.");
       return;
     }
 
-    setIsSubmitting(true);
+    setSubmitting(true);
 
-    // Mock “API delay”
+    // Simulate a short network delay.
     await new Promise((r) => setTimeout(r, 500));
 
-    const accounts = adminAccounts as AdminAccount[];
+    // Merge static adminAccounts.json + localStorage-created admin accounts
+    // + edits + deleted-ID tombstones.
+    const accounts = resolveMergedAccounts(staticAdminAccounts, "admin");
 
     const match = accounts.find(
-      (acc) =>
-        acc.email.toLowerCase() === form.email.trim().toLowerCase() &&
-        acc.password === form.password
+      (a) =>
+        a.email.toLowerCase() === form.email.trim().toLowerCase() &&
+        a.password === form.password,
     );
 
     if (!match) {
-      setIsSubmitting(false);
+      setSubmitting(false);
       notifyError("Invalid admin credentials.");
       return;
     }
 
-    // ✅ ADDED: Block login if this admin is deactivated
+    // Block login if this admin is deactivated.
     try {
       const statusMap = JSON.parse(
-        localStorage.getItem("worktime_account_status_v1") || "{}"
+        localStorage.getItem("worktime_account_status_v1") || "{}",
       ) as Record<string, "Active" | "Inactive">;
 
-      const key = `admin:${match.id}`;
-      if (statusMap[key] === "Inactive") {
-        setIsSubmitting(false);
+      if (statusMap[`admin:${match.id}`] === "Inactive") {
+        setSubmitting(false);
         notifyError("This admin account is deactivated.");
         return;
       }
     } catch {
-      // if parsing fails, allow login (fail-open for demo)
+      // Fail-open for demo if storage is corrupted.
     }
 
-    localStorage.setItem("admin_token", "demo_token");
-    localStorage.setItem("admin_email", match.email);
-    localStorage.setItem("currentAdmin", JSON.stringify(match));
+    localStorage.setItem("admin_token",    "demo_token");
+    localStorage.setItem("admin_email",    match.email);
+    localStorage.setItem("currentAdmin",   JSON.stringify(match));
 
     notifySuccess(`Welcome back, ${match.name}!`);
-    setIsSubmitting(false);
+    setSubmitting(false);
     navigate("/admin", { replace: true });
   };
 
@@ -153,11 +141,7 @@ export default function AdminLogin() {
                 className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition"
                 aria-label={showPw ? "Hide password" : "Show password"}
               >
-                {showPw ? (
-                  <EyeOff className="w-4 h-4" />
-                ) : (
-                  <Eye className="w-4 h-4" />
-                )}
+                {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
 
