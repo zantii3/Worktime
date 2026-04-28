@@ -20,7 +20,6 @@ type Props = {
   onPrevMonth: () => void;
   onNextMonth: () => void;
   recordsForMonth: AttendanceRecord[];
-  // ── NEW ──────────────────────────────────────────────────────────────
   leaveDatesForMonth?: Map<string, "Pending" | "Approved">;
 };
 
@@ -78,7 +77,6 @@ export default function AdminAttendanceCalendar({
   const rows = useMemo(() => {
     const first = startOfMonth(viewMonth);
 
-    // 6 rows × 7 cols month grid
     const firstDow = first.getDay();
     const gridStart = new Date(first);
     gridStart.setDate(first.getDate() - firstDow);
@@ -165,13 +163,12 @@ export default function AdminAttendanceCalendar({
             <div className="w-2 h-2 rounded-full bg-rose-500" />
             Absent (Weekday)
           </div>
-          {/* ── NEW ── */}
           <div className="flex items-center gap-1">
-            <div className="w-2 h-2 rounded-full bg-yellow-400" />
+            <div className="w-2.5 h-2.5 rounded-sm bg-yellow-400 border border-yellow-500" />
             Leave (Pending)
           </div>
           <div className="flex items-center gap-1">
-            <div className="w-2 h-2 rounded-full bg-blue-500" />
+            <div className="w-2.5 h-2.5 rounded-sm bg-blue-500 border border-blue-600" />
             Leave (Approved)
           </div>
         </div>
@@ -207,14 +204,53 @@ export default function AdminAttendanceCalendar({
             const tIn = formatTime(rec?.timeIn ?? null);
             const tOut = formatTime(rec?.timeOut ?? null);
 
-            // ── NEW ──────────────────────────────────────────────────────
             const leaveStatus = inMonth
               ? (leaveDatesForMonth?.get(iso) ?? null)
               : null;
             const onLeavePending = leaveStatus === "Pending";
             const onLeaveApproved = leaveStatus === "Approved";
             const onLeave = onLeavePending || onLeaveApproved;
-            // ─────────────────────────────────────────────────────────────
+
+            // ── Tile background / border classes ──────────────────────────
+            let tileCls = "";
+            if (!inMonth) {
+              tileCls = "bg-slate-50/30 border-slate-100 opacity-60";
+            } else if (onLeaveApproved) {
+              tileCls = "bg-blue-50 border-blue-300 hover:bg-blue-100/80";
+            } else if (onLeavePending) {
+              tileCls = "bg-yellow-50 border-yellow-300 hover:bg-yellow-100/80";
+            } else if (absent) {
+              tileCls = "bg-rose-50 border-rose-200 hover:bg-rose-100/60";
+            } else if (today) {
+              tileCls = "bg-orange-50 border-[#F28C28]/40 hover:bg-orange-100/50";
+            } else if (rec) {
+              tileCls = "bg-white border-slate-200 hover:border-[#1F3C68]/30 hover:bg-blue-50/20";
+            } else {
+              tileCls = "bg-white border-slate-100 hover:bg-slate-50";
+            }
+
+            // ── Selected state ring — layered on top of tile bg ───────────
+            // Use a strong inset ring so it's visible regardless of tile color
+            const selectedCls = isSelected
+              ? onLeaveApproved
+                ? "ring-2 ring-inset ring-blue-600 z-10 shadow-md"
+                : onLeavePending
+                ? "ring-2 ring-inset ring-yellow-500 z-10 shadow-md"
+                : absent
+                ? "ring-2 ring-inset ring-rose-500 z-10 shadow-md"
+                : today
+                ? "ring-2 ring-inset ring-[#F28C28] z-10 shadow-md"
+                : "ring-2 ring-inset ring-primary z-10 shadow-md"
+              : "";
+
+            // ── Date number color ─────────────────────────────────────────
+            let dateCls = "";
+            if (today) dateCls = "text-[#F28C28] font-extrabold";
+            else if (onLeaveApproved) dateCls = "text-blue-700 font-bold";
+            else if (onLeavePending) dateCls = "text-yellow-700 font-bold";
+            else if (absent) dateCls = "text-rose-700 font-bold";
+            else if (rec) dateCls = "text-[#1F3C68] font-bold";
+            else dateCls = "text-slate-400";
 
             return (
               <motion.button
@@ -225,53 +261,31 @@ export default function AdminAttendanceCalendar({
                 type="button"
                 className={cx(
                   "h-16 sm:h-20 md:h-24 border p-1.5 sm:p-2 text-left transition-all relative overflow-hidden group",
-                  !inMonth
-                    ? "bg-slate-50/30 border-slate-100 opacity-60"
-                    // ── NEW: leave states take priority over absent/no-record ──
-                    : onLeaveApproved
-                    ? "bg-blue-50 border-blue-300 hover:bg-blue-100/60"
-                    : onLeavePending
-                    ? "bg-yellow-50 border-yellow-300 hover:bg-yellow-100/60"
-                    // ── existing states ──────────────────────────────────────
-                    : absent
-                    ? "bg-rose-50 border-rose-200 hover:bg-rose-100/60"
-                    : today
-                    ? "bg-orange-50 border-[#F28C28]/40 hover:bg-orange-100/50"
-                    : rec
-                    ? "bg-white border-slate-200 hover:border-[#1F3C68]/30 hover:bg-blue-50/20"
-                    : "bg-white border-slate-100 hover:bg-slate-50",
-                  isSelected ? "ring-2 ring-primary/40 z-10" : ""
+                  tileCls,
+                  selectedCls
                 )}
                 aria-current={isSelected ? "date" : undefined}
               >
-                <span
-                  className={cx(
-                    "text-xs sm:text-sm font-bold",
-                    today
-                      ? "text-[#F28C28]"
-                      : onLeaveApproved
-                      ? "text-blue-700"
-                      : onLeavePending
-                      ? "text-yellow-700"
-                      : absent
-                      ? "text-rose-700"
-                      : rec
-                      ? "text-[#1F3C68]"
-                      : "text-slate-400"
-                  )}
-                >
+                {/* Selected indicator dot top-right */}
+                {isSelected && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-primary opacity-80" />
+                )}
+
+                <span className={cx("text-xs sm:text-sm", dateCls)}>
                   {d.getDate()}
                 </span>
 
-                {/* ── NEW: leave label ── */}
+                {/* Leave label */}
                 {onLeave && (
                   <div
                     className={cx(
-                      "mt-0.5 text-[8px] sm:text-[9px] font-bold leading-tight",
-                      onLeaveApproved ? "text-blue-700" : "text-yellow-700"
+                      "mt-0.5 text-[8px] sm:text-[9px] font-bold leading-tight px-1 py-0.5 rounded w-fit",
+                      onLeaveApproved
+                        ? "bg-blue-200/60 text-blue-800"
+                        : "bg-yellow-200/60 text-yellow-800"
                     )}
                   >
-                    {onLeaveApproved ? "On Leave" : "Leave (Pending)"}
+                    {onLeaveApproved ? "On Leave" : "Pending Leave"}
                   </div>
                 )}
 
@@ -303,6 +317,7 @@ export default function AdminAttendanceCalendar({
                   </div>
                 )}
 
+                {/* Hover indicator */}
                 <div className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <div className="w-3 h-3 bg-[#1F3C68]/10 rounded-full flex items-center justify-center">
                     <div className="w-1.5 h-1.5 bg-[#1F3C68]/40 rounded-full" />

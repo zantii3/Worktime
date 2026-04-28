@@ -33,6 +33,9 @@ import {
   UserPlus,
   Users,
   X,
+  ZoomIn,
+  ZoomOut,
+  RotateCw,
 } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -75,8 +78,7 @@ function getFileCategory(file: ProjectFile): FileCategory {
   if (b.startsWith("data:image/")) return "image";
   if (b.startsWith("data:application/pdf")) return "pdf";
   const ext = file.name.toLowerCase().split(".").pop() ?? "";
-  if (["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp"].includes(ext))
-    return "image";
+  if (["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp"].includes(ext)) return "image";
   if (ext === "pdf") return "pdf";
   return "other";
 }
@@ -104,6 +106,184 @@ function formatUploadDate(iso: string) {
 
 const userAccounts = accounts as Account[];
 
+// ─── File Preview Modal ────────────────────────────────────────────────────────
+// Unified modal for all file types. Rendered at the root level so it is never
+// trapped inside the files modal's own stacking context or AnimatePresence.
+
+function FilePreviewModal({
+  file,
+  onClose,
+}: {
+  file: ProjectFile;
+  onClose: () => void;
+}) {
+  const cat = getFileCategory(file);
+  const [imgScale, setImgScale] = useState(1);
+  const [imgRotation, setImgRotation] = useState(0);
+
+  // Close on Escape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-[70] flex flex-col bg-black/95"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
+    >
+      {/* ── Top bar ── */}
+      <div className="flex items-center justify-between gap-4 px-5 py-3 border-b border-white/10 bg-black/60 backdrop-blur-sm shrink-0">
+        {/* File info */}
+        <div className="flex items-center gap-3 min-w-0">
+          {cat === "image" ? (
+            <FileImage className="w-5 h-5 text-white/60 shrink-0" />
+          ) : (
+            <FileText className="w-5 h-5 text-white/60 shrink-0" />
+          )}
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-white truncate">{file.name}</p>
+            <p className="text-xs text-white/50">
+              Uploaded {formatUploadDate(file.uploadedAt)} · {file.uploadedBy}
+            </p>
+          </div>
+        </div>
+
+        {/* Controls */}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Image-specific controls */}
+          {cat === "image" && (
+            <>
+              <button
+                onClick={() => setImgScale((s) => Math.max(0.25, s - 0.25))}
+                type="button"
+                title="Zoom out"
+                className="h-8 w-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition"
+              >
+                <ZoomOut className="w-4 h-4 text-white" />
+              </button>
+              <span className="text-xs text-white/60 tabular-nums w-10 text-center">
+                {Math.round(imgScale * 100)}%
+              </span>
+              <button
+                onClick={() => setImgScale((s) => Math.min(4, s + 0.25))}
+                type="button"
+                title="Zoom in"
+                className="h-8 w-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition"
+              >
+                <ZoomIn className="w-4 h-4 text-white" />
+              </button>
+              <button
+                onClick={() => setImgRotation((r) => (r + 90) % 360)}
+                type="button"
+                title="Rotate"
+                className="h-8 w-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition"
+              >
+                <RotateCw className="w-4 h-4 text-white" />
+              </button>
+              <div className="w-px h-5 bg-white/20 mx-1" />
+            </>
+          )}
+
+          <button
+            onClick={() => triggerDownload(file)}
+            type="button"
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download
+          </button>
+
+          <button
+            onClick={onClose}
+            type="button"
+            className="h-8 w-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition"
+          >
+            <X className="w-4 h-4 text-white" />
+          </button>
+        </div>
+      </div>
+
+      {/* ── Content area ── */}
+      <div
+        className="flex-1 overflow-auto flex items-center justify-center p-4"
+        onClick={onClose} // click outside content to close
+      >
+        {cat === "image" && (
+          <motion.img
+            src={file.base64}
+            alt={file.name}
+            initial={{ scale: 0.92, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ duration: 0.2 }}
+            style={{
+              transform: `scale(${imgScale}) rotate(${imgRotation}deg)`,
+              transition: "transform 0.2s ease",
+              maxWidth: "100%",
+              maxHeight: "100%",
+              objectFit: "contain",
+              borderRadius: 8,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        )}
+
+        {cat === "pdf" && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+            className="w-full h-full rounded-xl overflow-hidden border border-white/10"
+            style={{ minHeight: "70vh" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <iframe
+              src={file.base64}
+              title={file.name}
+              className="w-full h-full"
+              style={{ minHeight: "70vh", border: "none" }}
+            />
+          </motion.div>
+        )}
+
+        {cat === "other" && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.2 }}
+            className="flex flex-col items-center gap-5 text-center p-8 rounded-2xl border border-white/10 bg-white/5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="h-16 w-16 rounded-2xl bg-white/10 flex items-center justify-center">
+              <FileText className="w-8 h-8 text-white/50" />
+            </div>
+            <div>
+              <p className="text-white font-semibold text-lg">{file.name}</p>
+              <p className="text-white/50 text-sm mt-1">
+                This file type can't be previewed directly in the browser.
+              </p>
+            </div>
+            <button
+              onClick={() => triggerDownload(file)}
+              type="button"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold hover:opacity-90 transition"
+            >
+              <Download className="w-4 h-4" />
+              Download to view
+            </button>
+          </motion.div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
 function FileCategoryIcon({
@@ -130,10 +310,7 @@ function MemberAvatar({
     .join("")
     .slice(0, 2)
     .toUpperCase();
-  const sz =
-    size === "md"
-      ? "h-9 w-9 text-xs"
-      : "h-7 w-7 text-[10px]";
+  const sz = size === "md" ? "h-9 w-9 text-xs" : "h-7 w-7 text-[10px]";
   return (
     <div
       className={cx(
@@ -147,7 +324,6 @@ function MemberAvatar({
   );
 }
 
-// KPI card — matches Admindashboard style
 function StatCard({
   title,
   value,
@@ -164,12 +340,8 @@ function StatCard({
       <div className="bg-primary p-4 text-white">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-[11px] font-extrabold tracking-wide opacity-90">
-              {title}
-            </div>
-            <div className="mt-2 text-4xl font-extrabold leading-none">
-              {value}
-            </div>
+            <div className="text-[11px] font-extrabold tracking-wide opacity-90">{title}</div>
+            <div className="mt-2 text-4xl font-extrabold leading-none">{value}</div>
           </div>
           <span className="h-10 w-10 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
             <Icon className="w-5 h-5 text-white" />
@@ -183,7 +355,6 @@ function StatCard({
   );
 }
 
-// Project grid card
 function ProjectCard({
   project,
   tasks,
@@ -206,12 +377,8 @@ function ProjectCard({
   onDelete: () => void;
 }) {
   const projectTasks = tasks.filter((t) => t.projectId === project.id);
-  const completed = projectTasks.filter(
-    (t) => t.status === "Completed"
-  ).length;
-  const inProgress = projectTasks.filter(
-    (t) => t.status === "In Progress"
-  ).length;
+  const completed = projectTasks.filter((t) => t.status === "Completed").length;
+  const inProgress = projectTasks.filter((t) => t.status === "In Progress").length;
   const progress = projectTasks.length
     ? Math.round((completed / projectTasks.length) * 100)
     : 0;
@@ -231,20 +398,15 @@ function ProjectCard({
       onClick={onClick}
       className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden cursor-pointer group flex flex-col"
     >
-      {/* Top accent bar */}
       <div className="h-1.5 bg-gradient-to-r from-primary to-primary/60" />
 
-      {/* Body */}
       <div className="p-5 flex-1 space-y-4">
-        {/* Title row */}
         <div className="flex items-start gap-3">
           <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0 group-hover:bg-primary/15 transition-colors">
             <FolderKanban className="w-5 h-5 text-primary" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="font-bold text-text-heading leading-snug line-clamp-1">
-              {project.name}
-            </div>
+            <div className="font-bold text-text-heading leading-snug line-clamp-1">{project.name}</div>
             <div className="text-xs text-text-primary/60 line-clamp-2 mt-0.5 leading-relaxed">
               {project.description || "No description."}
             </div>
@@ -252,7 +414,6 @@ function ProjectCard({
           <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-secondary transition-colors shrink-0 mt-1" />
         </div>
 
-        {/* Leader + due date */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">
             <UserCircle2 className="w-3 h-3" />
@@ -272,7 +433,6 @@ function ProjectCard({
           )}
         </div>
 
-        {/* Tags */}
         {tags.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {tags.slice(0, 4).map((tag) => (
@@ -292,15 +452,10 @@ function ProjectCard({
           </div>
         )}
 
-        {/* Progress */}
         <div>
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] font-bold text-text-primary/60 uppercase tracking-wide">
-              Progress
-            </span>
-            <span className="text-[10px] font-extrabold text-primary">
-              {progress}%
-            </span>
+            <span className="text-[10px] font-bold text-text-primary/60 uppercase tracking-wide">Progress</span>
+            <span className="text-[10px] font-extrabold text-primary">{progress}%</span>
           </div>
           <div className="h-1.5 bg-soft rounded-full overflow-hidden border border-slate-200">
             <motion.div
@@ -315,14 +470,11 @@ function ProjectCard({
               {completed}/{projectTasks.length} tasks
             </span>
             {inProgress > 0 && (
-              <span className="text-[10px] text-secondary font-semibold">
-                {inProgress} in progress
-              </span>
+              <span className="text-[10px] text-secondary font-semibold">{inProgress} in progress</span>
             )}
           </div>
         </div>
 
-        {/* Members row */}
         {members.length > 0 && (
           <div className="flex items-center gap-2">
             <div className="flex -space-x-2">
@@ -342,7 +494,6 @@ function ProjectCard({
         )}
       </div>
 
-      {/* Action buttons — stop propagation so card click doesn't fire */}
       <div
         className="px-5 pb-4 pt-1 flex items-center gap-2 flex-wrap border-t border-slate-100 bg-slate-50/60"
         onClick={(e) => e.stopPropagation()}
@@ -393,19 +544,18 @@ export default function ProjectList() {
   const [now, setNow] = useState<Date>(new Date());
   const [query, setQuery] = useState("");
 
-  // Modal visibility — store only the ID, derive live data from context
   const [summaryId, setSummaryId] = useState<number | null>(null);
   const [filesId, setFilesId] = useState<number | null>(null);
   const [membersId, setMembersId] = useState<number | null>(null);
   const [editId, setEditId] = useState<number | null>(null);
 
-  // Image lightbox
+  // ── Unified file preview state ──────────────────────────────────────────
+  // Single state drives the new FilePreviewModal. Replaces the old split
+  // previewFile (lightbox) + window.open (PDF) approach.
   const [previewFile, setPreviewFile] = useState<ProjectFile | null>(null);
 
-  // Members modal local state
   const [memberSearch, setMemberSearch] = useState("");
 
-  // Edit form
   const [editForm, setEditForm] = useState<EditForm>({
     name: "",
     description: "",
@@ -413,15 +563,12 @@ export default function ProjectList() {
     dueDate: "",
   });
 
-  // File upload ref
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
-
-  // ── Live modal project derivation (avoids stale refs) ─────────────────────
 
   const summaryProject = useMemo(
     () => projects.find((p) => p.id === summaryId) ?? null,
@@ -440,8 +587,6 @@ export default function ProjectList() {
     [projects, editId]
   );
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-
   const getLeaderName = (leaderId: number): string =>
     userAccounts.find((a) => a.id === leaderId)?.name ?? "Unknown";
 
@@ -455,14 +600,9 @@ export default function ProjectList() {
     return userAccounts.filter((a) => ids.has(a.id));
   };
 
-  // ── Stats ─────────────────────────────────────────────────────────────────
-
   const stats = useMemo(() => {
     const totalProjects = projects.length;
-    const totalFiles = projects.reduce(
-      (s, p) => s + (p.files?.length ?? 0),
-      0
-    );
+    const totalFiles = projects.reduce((s, p) => s + (p.files?.length ?? 0), 0);
     const memberIds = new Set<number>();
     projects.forEach((p) => {
       (p.memberIds ?? []).forEach((id) => memberIds.add(id));
@@ -471,13 +611,9 @@ export default function ProjectList() {
         .forEach((t) => memberIds.add(t.assignedToId!));
     });
     const totalMembers = memberIds.size;
-    const totalTasks = tasks.filter((t) =>
-      projects.some((p) => p.id === t.projectId)
-    ).length;
+    const totalTasks = tasks.filter((t) => projects.some((p) => p.id === t.projectId)).length;
     return { totalProjects, totalFiles, totalMembers, totalTasks };
   }, [projects, tasks]);
-
-  // ── Filtered project list ─────────────────────────────────────────────────
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -487,15 +623,11 @@ export default function ProjectList() {
     );
   }, [projects, query]);
 
-  // ── Delete ────────────────────────────────────────────────────────────────
-
   const deleteProject = (projectId: number) => {
     if (!window.confirm("Delete this project and all its tasks?")) return;
     setProjects((prev) => prev.filter((p) => p.id !== projectId));
     notifySuccess("Project deleted.");
   };
-
-  // ── Edit ──────────────────────────────────────────────────────────────────
 
   const openEdit = (project: Project) => {
     setEditForm({
@@ -509,22 +641,14 @@ export default function ProjectList() {
 
   const saveEdit = () => {
     if (!editId) return;
-    if (!editForm.name.trim()) {
-      notifyError("Project name is required.");
-      return;
-    }
-    if (!editForm.leaderId) {
-      notifyError("Please select a project leader.");
-      return;
-    }
+    if (!editForm.name.trim()) { notifyError("Project name is required."); return; }
+    if (!editForm.leaderId) { notifyError("Please select a project leader."); return; }
     setProjects((prev) =>
       prev.map((p) => (p.id === editId ? { ...p, ...editForm } : p))
     );
     notifySuccess("Project updated.");
     setEditId(null);
   };
-
-  // ── Members ───────────────────────────────────────────────────────────────
 
   const addMember = (userId: number) => {
     if (!membersId) return;
@@ -542,26 +666,18 @@ export default function ProjectList() {
     setProjects((prev) =>
       prev.map((p) =>
         p.id === membersId
-          ? {
-              ...p,
-              memberIds: (p.memberIds ?? []).filter((id) => id !== userId),
-            }
+          ? { ...p, memberIds: (p.memberIds ?? []).filter((id) => id !== userId) }
           : p
       )
     );
   };
 
-  // ── Files ─────────────────────────────────────────────────────────────────
-
   const handleFileUpload = (file: File) => {
     if (!filesId) return;
-    if (file.size > 1024 * 1024) {
-      notifyError("File exceeds 1 MB limit.");
-      return;
-    }
+    if (file.size > 1024 * 1024) { notifyError("File exceeds 1 MB limit."); return; }
     const reader = new FileReader();
     reader.onload = () => {
-      const newFile: import("./context/AdminTypes").ProjectFile = {
+      const newFile: ProjectFile = {
         id: Date.now(),
         name: file.name,
         base64: reader.result as string,
@@ -571,9 +687,7 @@ export default function ProjectList() {
       };
       setProjects((prev) =>
         prev.map((p) =>
-          p.id === filesId
-            ? { ...p, files: [...(p.files ?? []), newFile] }
-            : p
+          p.id === filesId ? { ...p, files: [...(p.files ?? []), newFile] } : p
         )
       );
       notifySuccess("File uploaded.");
@@ -583,6 +697,8 @@ export default function ProjectList() {
 
   const deleteFile = (fileId: number) => {
     if (!filesId) return;
+    // If the currently previewed file is being deleted, close the preview.
+    if (previewFile?.id === fileId) setPreviewFile(null);
     setProjects((prev) =>
       prev.map((p) =>
         p.id === filesId
@@ -593,17 +709,12 @@ export default function ProjectList() {
     notifySuccess("File deleted.");
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
-
-  // Members available to add (not yet in the project)
   const membersToAdd = useMemo(() => {
     if (!membersProject) return [];
     const current = new Set<number>([
       ...(membersProject.memberIds ?? []),
       ...tasks
-        .filter(
-          (t) => t.projectId === membersProject.id && t.assignedToId != null
-        )
+        .filter((t) => t.projectId === membersProject.id && t.assignedToId != null)
         .map((t) => t.assignedToId as number),
     ]);
     const q = memberSearch.trim().toLowerCase();
@@ -621,12 +732,21 @@ export default function ProjectList() {
       transition={{ duration: 0.25 }}
       className="space-y-6"
     >
+      {/* ── File Preview Modal — rendered at root level, above everything ── */}
+      <AnimatePresence>
+        {previewFile && (
+          <FilePreviewModal
+            key={previewFile.id}
+            file={previewFile}
+            onClose={() => setPreviewFile(null)}
+          />
+        )}
+      </AnimatePresence>
+
       {/* ── Header ── */}
       <div className="bg-card border border-slate-200 rounded-2xl shadow-sm p-5 flex items-center justify-between gap-4">
         <div>
-          <div className="text-2xl font-bold text-text-heading">
-            Project List
-          </div>
+          <div className="text-2xl font-bold text-text-heading">Project List</div>
           <div className="text-sm text-text-primary/70">
             Manage project files, members, and progress.
           </div>
@@ -645,30 +765,10 @@ export default function ProjectList() {
 
       {/* ── Stats ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          title="Total Projects"
-          value={stats.totalProjects}
-          subtitle="Across all teams"
-          icon={FolderKanban}
-        />
-        <StatCard
-          title="Uploaded Files"
-          value={stats.totalFiles}
-          subtitle="Stored in projects"
-          icon={Files}
-        />
-        <StatCard
-          title="Active Members"
-          value={stats.totalMembers}
-          subtitle="Across all projects"
-          icon={Users}
-        />
-        <StatCard
-          title="Total Tasks"
-          value={stats.totalTasks}
-          subtitle="Linked to projects"
-          icon={CheckCircle2}
-        />
+        <StatCard title="Total Projects" value={stats.totalProjects} subtitle="Across all teams" icon={FolderKanban} />
+        <StatCard title="Uploaded Files" value={stats.totalFiles} subtitle="Stored in projects" icon={Files} />
+        <StatCard title="Active Members" value={stats.totalMembers} subtitle="Across all projects" icon={Users} />
+        <StatCard title="Total Tasks" value={stats.totalTasks} subtitle="Linked to projects" icon={CheckCircle2} />
       </div>
 
       {/* ── Search bar ── */}
@@ -702,13 +802,9 @@ export default function ProjectList() {
           <div className="h-16 w-16 rounded-2xl bg-soft border border-slate-200 flex items-center justify-center mb-4">
             <FolderOpen className="w-8 h-8 text-text-primary/30" />
           </div>
-          <div className="text-lg font-bold text-text-heading">
-            No projects found
-          </div>
+          <div className="text-lg font-bold text-text-heading">No projects found</div>
           <div className="text-sm text-text-primary/60 mt-1 max-w-xs">
-            {query
-              ? "Try a different search term."
-              : "Create your first project in Project Management."}
+            {query ? "Try a different search term." : "Create your first project in Project Management."}
           </div>
         </div>
       ) : (
@@ -727,10 +823,7 @@ export default function ProjectList() {
                 members={getProjectMembers(project)}
                 onClick={() => setSummaryId(project.id)}
                 onFiles={() => setFilesId(project.id)}
-                onMembers={() => {
-                  setMemberSearch("");
-                  setMembersId(project.id);
-                }}
+                onMembers={() => { setMemberSearch(""); setMembersId(project.id); }}
                 onEdit={() => openEdit(project)}
                 onDelete={() => deleteProject(project.id)}
               />
@@ -759,7 +852,6 @@ export default function ProjectList() {
               className="w-full max-w-2xl max-h-[90vh] rounded-3xl overflow-hidden border border-primary/20 shadow-2xl bg-card flex flex-col"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Header */}
               <div className="bg-primary px-6 py-6 text-white shrink-0">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-start gap-4 min-w-0">
@@ -770,9 +862,7 @@ export default function ProjectList() {
                       <div className="text-[11px] font-bold uppercase tracking-widest text-white/60 mb-1">
                         Project Overview
                       </div>
-                      <div className="text-2xl font-extrabold leading-tight">
-                        {summaryProject.name}
-                      </div>
+                      <div className="text-2xl font-extrabold leading-tight">{summaryProject.name}</div>
                       {summaryProject.description && (
                         <div className="text-sm text-white/80 mt-1 line-clamp-2">
                           {summaryProject.description}
@@ -788,8 +878,6 @@ export default function ProjectList() {
                     <X className="w-4 h-4" />
                   </button>
                 </div>
-
-                {/* Meta pills */}
                 <div className="flex flex-wrap gap-2 mt-4">
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-white/15">
                     <UserCircle2 className="w-3.5 h-3.5" />
@@ -802,42 +890,23 @@ export default function ProjectList() {
                     </span>
                   )}
                   {(summaryProject.tags ?? []).map((tag) => (
-                    <span
-                      key={tag}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-white/10"
-                    >
-                      <Tag className="w-3 h-3" />
-                      {tag}
+                    <span key={tag} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-white/10">
+                      <Tag className="w-3 h-3" />{tag}
                     </span>
                   ))}
                 </div>
               </div>
 
-              {/* Body */}
               <div className="p-6 overflow-y-auto space-y-6">
-                {/* Task stats grid */}
                 {(() => {
-                  const pt = tasks.filter(
-                    (t) => t.projectId === summaryProject.id
-                  );
-                  const done = pt.filter(
-                    (t) => t.status === "Completed"
-                  ).length;
-                  const wip = pt.filter(
-                    (t) => t.status === "In Progress"
-                  ).length;
-                  const pending = pt.filter(
-                    (t) => t.status === "Pending"
-                  ).length;
-                  const pct = pt.length
-                    ? Math.round((done / pt.length) * 100)
-                    : 0;
-
+                  const pt = tasks.filter((t) => t.projectId === summaryProject.id);
+                  const done = pt.filter((t) => t.status === "Completed").length;
+                  const wip = pt.filter((t) => t.status === "In Progress").length;
+                  const pending = pt.filter((t) => t.status === "Pending").length;
+                  const pct = pt.length ? Math.round((done / pt.length) * 100) : 0;
                   return (
                     <div>
-                      <div className="text-xs font-bold uppercase tracking-widest text-text-primary/50 mb-3">
-                        Task Progress
-                      </div>
+                      <div className="text-xs font-bold uppercase tracking-widest text-text-primary/50 mb-3">Task Progress</div>
                       <div className="grid grid-cols-4 gap-3 mb-4">
                         {[
                           { label: "Total", value: pt.length, color: "text-text-heading", bg: "bg-soft border-slate-200" },
@@ -845,32 +914,15 @@ export default function ProjectList() {
                           { label: "In Progress", value: wip, color: "text-primary", bg: "bg-primary/5 border-primary/20" },
                           { label: "Completed", value: done, color: "text-green-700", bg: "bg-green-50 border-green-200" },
                         ].map((s) => (
-                          <div
-                            key={s.label}
-                            className={cx(
-                              "rounded-xl border p-3 text-center",
-                              s.bg
-                            )}
-                          >
-                            <div
-                              className={cx(
-                                "text-2xl font-extrabold tabular-nums",
-                                s.color
-                              )}
-                            >
-                              {s.value}
-                            </div>
-                            <div className="text-[10px] font-bold text-text-primary/60 uppercase tracking-wide mt-1">
-                              {s.label}
-                            </div>
+                          <div key={s.label} className={cx("rounded-xl border p-3 text-center", s.bg)}>
+                            <div className={cx("text-2xl font-extrabold tabular-nums", s.color)}>{s.value}</div>
+                            <div className="text-[10px] font-bold text-text-primary/60 uppercase tracking-wide mt-1">{s.label}</div>
                           </div>
                         ))}
                       </div>
                       <div className="flex items-center justify-between text-xs font-semibold text-text-primary/60 mb-1.5">
                         <span>Overall Completion</span>
-                        <span className="font-extrabold text-primary">
-                          {pct}%
-                        </span>
+                        <span className="font-extrabold text-primary">{pct}%</span>
                       </div>
                       <div className="h-2.5 bg-soft rounded-full overflow-hidden border border-slate-200">
                         <motion.div
@@ -884,7 +936,6 @@ export default function ProjectList() {
                   );
                 })()}
 
-                {/* Members */}
                 {(() => {
                   const members = getProjectMembers(summaryProject);
                   return members.length > 0 ? (
@@ -894,18 +945,11 @@ export default function ProjectList() {
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {members.map((m) => (
-                          <div
-                            key={m.id}
-                            className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5"
-                          >
+                          <div key={m.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
                             <MemberAvatar name={m.name} size="md" />
                             <div className="min-w-0">
-                              <div className="text-sm font-semibold text-text-heading truncate">
-                                {m.name}
-                              </div>
-                              <div className="text-xs text-text-primary/60 truncate">
-                                {m.email}
-                              </div>
+                              <div className="text-sm font-semibold text-text-heading truncate">{m.name}</div>
+                              <div className="text-xs text-text-primary/60 truncate">{m.email}</div>
                             </div>
                           </div>
                         ))}
@@ -914,7 +958,6 @@ export default function ProjectList() {
                   ) : null;
                 })()}
 
-                {/* Files summary */}
                 {(summaryProject.files ?? []).length > 0 && (
                   <div>
                     <div className="text-xs font-bold uppercase tracking-widest text-text-primary/50 mb-3">
@@ -924,20 +967,10 @@ export default function ProjectList() {
                       {summaryProject.files.slice(0, 4).map((f) => {
                         const cat = getFileCategory(f);
                         return (
-                          <div
-                            key={f.id}
-                            className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2"
-                          >
-                            <FileCategoryIcon
-                              cat={cat}
-                              className="w-4 h-4 text-primary shrink-0"
-                            />
-                            <span className="text-sm text-text-heading truncate flex-1">
-                              {f.name}
-                            </span>
-                            <span className="text-xs text-text-primary/50 shrink-0">
-                              {formatUploadDate(f.uploadedAt)}
-                            </span>
+                          <div key={f.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                            <FileCategoryIcon cat={cat} className="w-4 h-4 text-primary shrink-0" />
+                            <span className="text-sm text-text-heading truncate flex-1">{f.name}</span>
+                            <span className="text-xs text-text-primary/50 shrink-0">{formatUploadDate(f.uploadedAt)}</span>
                           </div>
                         );
                       })}
@@ -951,30 +984,20 @@ export default function ProjectList() {
                 )}
               </div>
 
-              {/* Footer */}
               <div className="px-6 pb-5 shrink-0 flex gap-2">
                 <button
-                  onClick={() => {
-                    setSummaryId(null);
-                    setFilesId(summaryProject.id);
-                  }}
+                  onClick={() => { setSummaryId(null); setFilesId(summaryProject.id); }}
                   type="button"
                   className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-text-heading hover:bg-soft transition"
                 >
-                  <FileText className="w-4 h-4" />
-                  View Files
+                  <FileText className="w-4 h-4" />View Files
                 </button>
                 <button
-                  onClick={() => {
-                    setSummaryId(null);
-                    setMemberSearch("");
-                    setMembersId(summaryProject.id);
-                  }}
+                  onClick={() => { setSummaryId(null); setMemberSearch(""); setMembersId(summaryProject.id); }}
                   type="button"
                   className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-text-heading hover:bg-soft transition"
                 >
-                  <Users className="w-4 h-4" />
-                  Manage Members
+                  <Users className="w-4 h-4" />Manage Members
                 </button>
                 <button
                   onClick={() => setSummaryId(null)}
@@ -1017,12 +1040,8 @@ export default function ProjectList() {
                       <Files className="w-5 h-5" />
                     </div>
                     <div className="min-w-0">
-                      <div className="text-lg font-extrabold leading-tight">
-                        Project Files
-                      </div>
-                      <div className="text-sm text-white/70 truncate">
-                        {filesProject.name}
-                      </div>
+                      <div className="text-lg font-extrabold leading-tight">Project Files</div>
+                      <div className="text-sm text-white/70 truncate">{filesProject.name}</div>
                     </div>
                   </div>
                   <button
@@ -1062,9 +1081,7 @@ export default function ProjectList() {
                   <div className="py-12 flex flex-col items-center text-center text-text-primary/50">
                     <FileText className="w-10 h-10 mb-3 opacity-30" />
                     <div className="text-sm font-semibold">No files yet</div>
-                    <div className="text-xs mt-1">
-                      Upload a file using the zone above.
-                    </div>
+                    <div className="text-xs mt-1">Upload a file using the zone above.</div>
                   </div>
                 ) : (
                   (filesProject.files ?? []).map((file) => {
@@ -1085,44 +1102,30 @@ export default function ProjectList() {
                               className="h-full w-full object-cover"
                             />
                           ) : (
-                            <FileCategoryIcon
-                              cat={cat}
-                              className="w-5 h-5 text-text-primary/40"
-                            />
+                            <FileCategoryIcon cat={cat} className="w-5 h-5 text-text-primary/40" />
                           )}
                         </div>
 
                         {/* Info */}
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold text-text-heading truncate">
-                            {file.name}
-                          </div>
+                          <div className="text-sm font-semibold text-text-heading truncate">{file.name}</div>
                           <div className="text-xs text-text-primary/50 mt-0.5">
-                            {formatUploadDate(file.uploadedAt)} ·{" "}
-                            {file.uploadedBy}
+                            {formatUploadDate(file.uploadedAt)} · {file.uploadedBy}
                           </div>
                         </div>
 
                         {/* Actions */}
                         <div className="flex items-center gap-1.5 shrink-0">
-                          {/* View / Preview */}
+                          {/* ── View button — now always opens FilePreviewModal ── */}
                           <button
-                            onClick={() => {
-                              if (cat === "image") {
-                                setPreviewFile(file);
-                              } else if (cat === "pdf") {
-                                window.open(file.base64, "_blank");
-                              } else {
-                                triggerDownload(file);
-                              }
-                            }}
+                            onClick={() => setPreviewFile(file)}
                             type="button"
                             title={
                               cat === "image"
                                 ? "Preview image"
                                 : cat === "pdf"
-                                ? "Open PDF in new tab"
-                                : "Download"
+                                ? "Preview PDF"
+                                : "View file info"
                             }
                             className="h-8 w-8 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-text-primary/60 hover:text-primary hover:border-primary/30 transition"
                           >
@@ -1171,60 +1174,6 @@ export default function ProjectList() {
       </AnimatePresence>
 
       {/* ══════════════════════════════════════════════════════════════════════
-          IMAGE LIGHTBOX
-      ══════════════════════════════════════════════════════════════════════ */}
-      <AnimatePresence>
-        {previewFile && (
-          <motion.div
-            className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setPreviewFile(null)}
-          >
-            {/* Close */}
-            <button
-              onClick={() => setPreviewFile(null)}
-              type="button"
-              className="absolute top-5 right-5 h-10 w-10 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center transition"
-            >
-              <X className="w-5 h-5 text-white" />
-            </button>
-
-            {/* Image */}
-            <motion.img
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              src={previewFile.base64}
-              alt={previewFile.name}
-              className="max-w-full max-h-[80vh] object-contain rounded-xl"
-              onClick={(e) => e.stopPropagation()}
-            />
-
-            {/* Bottom bar */}
-            <div
-              className="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/60 backdrop-blur-sm rounded-2xl px-5 py-3"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <span className="text-white/80 text-sm font-semibold max-w-[240px] truncate">
-                {previewFile.name}
-              </span>
-              <button
-                onClick={() => triggerDownload(previewFile)}
-                type="button"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-white text-xs font-semibold transition"
-              >
-                <Download className="w-3.5 h-3.5" />
-                Download
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ══════════════════════════════════════════════════════════════════════
           MEMBERS MODAL
       ══════════════════════════════════════════════════════════════════════ */}
       <AnimatePresence>
@@ -1244,7 +1193,6 @@ export default function ProjectList() {
               className="w-full max-w-lg max-h-[90vh] rounded-3xl overflow-hidden border border-slate-200 shadow-2xl bg-card flex flex-col"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Header */}
               <div className="bg-primary px-6 py-5 text-white shrink-0">
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3 min-w-0">
@@ -1252,12 +1200,8 @@ export default function ProjectList() {
                       <Users className="w-5 h-5" />
                     </div>
                     <div className="min-w-0">
-                      <div className="text-lg font-extrabold">
-                        Project Members
-                      </div>
-                      <div className="text-sm text-white/70 truncate">
-                        {membersProject.name}
-                      </div>
+                      <div className="text-lg font-extrabold">Project Members</div>
+                      <div className="text-sm text-white/70 truncate">{membersProject.name}</div>
                     </div>
                   </div>
                   <button
@@ -1271,21 +1215,15 @@ export default function ProjectList() {
               </div>
 
               <div className="flex-1 overflow-y-auto p-5 space-y-5">
-                {/* Current members */}
                 {(() => {
                   const explicit = new Set(membersProject.memberIds ?? []);
                   const taskIds = new Set(
                     tasks
-                      .filter(
-                        (t) =>
-                          t.projectId === membersProject.id &&
-                          t.assignedToId != null
-                      )
+                      .filter((t) => t.projectId === membersProject.id && t.assignedToId != null)
                       .map((t) => t.assignedToId as number)
                   );
                   const allIds = new Set([...explicit, ...taskIds]);
                   const members = userAccounts.filter((a) => allIds.has(a.id));
-
                   return members.length > 0 ? (
                     <div>
                       <div className="text-xs font-bold uppercase tracking-widest text-text-primary/50 mb-2">
@@ -1294,21 +1232,13 @@ export default function ProjectList() {
                       <div className="space-y-2">
                         {members.map((m) => {
                           const isExplicit = explicit.has(m.id);
-                          const isTaskOnly =
-                            taskIds.has(m.id) && !explicit.has(m.id);
+                          const isTaskOnly = taskIds.has(m.id) && !explicit.has(m.id);
                           return (
-                            <div
-                              key={m.id}
-                              className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3"
-                            >
+                            <div key={m.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
                               <MemberAvatar name={m.name} size="md" />
                               <div className="min-w-0 flex-1">
-                                <div className="text-sm font-semibold text-text-heading truncate">
-                                  {m.name}
-                                </div>
-                                <div className="text-xs text-text-primary/60 truncate">
-                                  {m.email}
-                                </div>
+                                <div className="text-sm font-semibold text-text-heading truncate">{m.name}</div>
+                                <div className="text-xs text-text-primary/60 truncate">{m.email}</div>
                               </div>
                               {isTaskOnly && (
                                 <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-secondary/10 text-secondary border border-secondary/20 shrink-0">
@@ -1337,13 +1267,8 @@ export default function ProjectList() {
                   );
                 })()}
 
-                {/* Add members */}
                 <div>
-                  <div className="text-xs font-bold uppercase tracking-widest text-text-primary/50 mb-2">
-                    Add Members
-                  </div>
-
-                  {/* Search */}
+                  <div className="text-xs font-bold uppercase tracking-widest text-text-primary/50 mb-2">Add Members</div>
                   <div className="relative mb-3">
                     <Search className="w-4 h-4 text-text-primary/40 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
@@ -1353,28 +1278,18 @@ export default function ProjectList() {
                       className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm outline-none focus:ring-2 focus:ring-primary/30 text-text-heading"
                     />
                   </div>
-
                   {membersToAdd.length === 0 ? (
                     <div className="py-4 text-center text-sm text-text-primary/50">
-                      {memberSearch
-                        ? "No users match your search."
-                        : "All users are already members."}
+                      {memberSearch ? "No users match your search." : "All users are already members."}
                     </div>
                   ) : (
                     <div className="space-y-2 max-h-56 overflow-y-auto pr-0.5">
                       {membersToAdd.map((user) => (
-                        <div
-                          key={user.id}
-                          className="flex items-center gap-3 rounded-xl border border-slate-100 bg-soft px-4 py-3"
-                        >
+                        <div key={user.id} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-soft px-4 py-3">
                           <MemberAvatar name={user.name} size="md" />
                           <div className="min-w-0 flex-1">
-                            <div className="text-sm font-semibold text-text-heading truncate">
-                              {user.name}
-                            </div>
-                            <div className="text-xs text-text-primary/60 truncate">
-                              {user.email}
-                            </div>
+                            <div className="text-sm font-semibold text-text-heading truncate">{user.name}</div>
+                            <div className="text-xs text-text-primary/60 truncate">{user.email}</div>
                           </div>
                           <button
                             onClick={() => addMember(user.id)}
@@ -1391,7 +1306,6 @@ export default function ProjectList() {
                 </div>
               </div>
 
-              {/* Footer */}
               <div className="px-5 pb-5 shrink-0">
                 <button
                   onClick={() => setMembersId(null)}
@@ -1426,7 +1340,6 @@ export default function ProjectList() {
               className="w-full max-w-lg rounded-3xl overflow-hidden border border-slate-200 shadow-2xl bg-card"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Header */}
               <div className="bg-primary px-6 py-5 text-white">
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3">
@@ -1450,7 +1363,6 @@ export default function ProjectList() {
                 </div>
               </div>
 
-              {/* Form */}
               <div className="p-6 space-y-4">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-bold text-text-primary/60 uppercase tracking-wide">
@@ -1459,9 +1371,7 @@ export default function ProjectList() {
                   <input
                     type="text"
                     value={editForm.name}
-                    onChange={(e) =>
-                      setEditForm((p) => ({ ...p, name: e.target.value }))
-                    }
+                    onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))}
                     placeholder="Project name"
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30"
                   />
@@ -1473,12 +1383,7 @@ export default function ProjectList() {
                   </label>
                   <textarea
                     value={editForm.description}
-                    onChange={(e) =>
-                      setEditForm((p) => ({
-                        ...p,
-                        description: e.target.value,
-                      }))
-                    }
+                    onChange={(e) => setEditForm((p) => ({ ...p, description: e.target.value }))}
                     placeholder="Project description"
                     rows={3}
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30 resize-none"
@@ -1492,38 +1397,24 @@ export default function ProjectList() {
                     </label>
                     <select
                       value={editForm.leaderId}
-                      onChange={(e) =>
-                        setEditForm((p) => ({
-                          ...p,
-                          leaderId: Number(e.target.value),
-                        }))
-                      }
+                      onChange={(e) => setEditForm((p) => ({ ...p, leaderId: Number(e.target.value) }))}
                       className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm bg-white outline-none focus:ring-2 focus:ring-primary/30"
                     >
-                      <option value={0} disabled>
-                        Select leader…
-                      </option>
+                      <option value={0} disabled>Select leader…</option>
                       {userAccounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name}
-                        </option>
+                        <option key={a.id} value={a.id}>{a.name}</option>
                       ))}
                     </select>
                   </div>
 
                   <div className="space-y-1.5">
                     <label className="block text-xs font-bold text-text-primary/60 uppercase tracking-wide">
-                      Due Date{" "}
-                      <span className="font-normal normal-case text-text-primary/40">
-                        (optional)
-                      </span>
+                      Due Date <span className="font-normal normal-case text-text-primary/40">(optional)</span>
                     </label>
                     <input
                       type="date"
                       value={editForm.dueDate}
-                      onChange={(e) =>
-                        setEditForm((p) => ({ ...p, dueDate: e.target.value }))
-                      }
+                      onChange={(e) => setEditForm((p) => ({ ...p, dueDate: e.target.value }))}
                       className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30"
                     />
                   </div>

@@ -24,28 +24,70 @@ import adminAccounts from "./data/adminAccounts.json";
 type Account = { id: number; email: string; password: string; name: string };
 
 const ATTENDANCE_KEY = "worktime_attendance_v1";
-// ── NEW ──────────────────────────────────────────────────────────────────────
 const ALL_LEAVES_KEY = "all_leaves_v1";
-// ─────────────────────────────────────────────────────────────────────────────
 const MONTH_TARGET_HOURS = 160;
 
-// match user modal behavior
 const STANDARD_SHIFT_START = "08:00";
 const LATE_THRESHOLD_MINUTES = 0;
 
-// ── NEW: minimal leave types needed here ─────────────────────────────────────
-// Status is capitalized to match Leave.tsx: "Pending" | "Approved" | "Rejected"
 type StoredLeaveRequest = {
   id: number;
   employee: string;
   status: string;
+  type?: string;
   dateFrom?: string;
   dateTo?: string;
   startDate?: string;
   endDate?: string;
   date?: string;
 };
-// ─────────────────────────────────────────────────────────────────────────────
+
+// Maps leave type strings to display config
+const LEAVE_TYPE_CONFIG: Record<
+  string,
+  { label: string; bg: string; text: string; border: string; dot: string }
+> = {
+  "Vacation Leave": {
+    label: "Vacation Leave",
+    bg: "bg-sky-50",
+    text: "text-sky-700",
+    border: "border-sky-200",
+    dot: "bg-sky-500",
+  },
+  "Sick Leave": {
+    label: "Sick Leave",
+    bg: "bg-rose-50",
+    text: "text-rose-700",
+    border: "border-rose-200",
+    dot: "bg-rose-500",
+  },
+  "Emergency Leave": {
+    label: "Emergency Leave",
+    bg: "bg-orange-50",
+    text: "text-orange-700",
+    border: "border-orange-200",
+    dot: "bg-orange-500",
+  },
+  "Maternity/Paternity Leave": {
+    label: "Maternity/Paternity Leave",
+    bg: "bg-purple-50",
+    text: "text-purple-700",
+    border: "border-purple-200",
+    dot: "bg-purple-500",
+  },
+};
+
+function getLeaveTypeConfig(type: string) {
+  return (
+    LEAVE_TYPE_CONFIG[type] ?? {
+      label: type,
+      bg: "bg-slate-50",
+      text: "text-slate-700",
+      border: "border-slate-200",
+      dot: "bg-slate-400",
+    }
+  );
+}
 
 function toISODate(d: Date) {
   const y = d.getFullYear();
@@ -64,7 +106,6 @@ function isSameMonth(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
 }
 
-// normalize date comparisons to local midnight
 function isoToLocalMidnight(dateISO: string) {
   return new Date(dateISO + "T00:00:00");
 }
@@ -77,7 +118,7 @@ function isPastDayISO(dateISO: string) {
   const d = isoToLocalMidnight(dateISO).getTime();
   const today = new Date();
   const t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-  return d < t0; // strictly past, NOT today
+  return d < t0;
 }
 function isTodayISO(dateISO: string) {
   return dateISO === toISODate(new Date());
@@ -108,7 +149,6 @@ function minutesBetween(aISO: string | null, bISO: string | null) {
 }
 
 function computeWorkMinutes(r: AttendanceRecord) {
-  // (out - in) - (lunchIn - lunchOut)
   const gross = minutesBetween(r.timeIn ?? null, r.timeOut ?? null);
   const lunch = minutesBetween(r.lunchOut ?? null, r.lunchIn ?? null);
   return Math.max(0, gross - lunch);
@@ -125,7 +165,6 @@ function formatMinutes(minutes: number) {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
-// late calc copied behavior
 function getLateMinutes(timeIn: string | null, now?: Date): number {
   const [h, m] = STANDARD_SHIFT_START.split(":").map(Number);
 
@@ -159,7 +198,6 @@ function downloadCSV(filename: string, csv: string) {
   URL.revokeObjectURL(url);
 }
 
-// Convert ISO string -> input[type=datetime-local] value (local time)
 function isoToLocalInput(iso: string | null) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -173,7 +211,6 @@ function isoToLocalInput(iso: string | null) {
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
 
-// Convert datetime-local input -> ISO string
 function localInputToISO(val: string) {
   if (!val) return null;
   const d = new Date(val);
@@ -186,7 +223,6 @@ function cx(...classes: Array<string | false | undefined | null>) {
 }
 
 function isValidISODateText(s: string) {
-  // expects YYYY-MM-DD
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
   const d = new Date(s + "T00:00:00");
   return Number.isFinite(d.getTime()) && toISODate(d) === s;
@@ -205,7 +241,8 @@ function listMonthDatesISO(viewMonth: Date) {
   return out;
 }
 
-// ── NEW: leave helpers ────────────────────────────────────────────────────────
+// ── Leave helpers ─────────────────────────────────────────────────────────────
+
 function readLeaves(): StoredLeaveRequest[] {
   try {
     const raw = localStorage.getItem(ALL_LEAVES_KEY);
@@ -216,7 +253,6 @@ function readLeaves(): StoredLeaveRequest[] {
   }
 }
 
-/** Resolve the actual date-from/date-to regardless of which field shape was used. */
 function resolveLeaveRange(leave: StoredLeaveRequest): {
   dateFrom: string;
   dateTo: string;
@@ -227,7 +263,6 @@ function resolveLeaveRange(leave: StoredLeaveRequest): {
   };
 }
 
-/** Enumerate every YYYY-MM-DD between dateFrom and dateTo (inclusive). */
 function enumerateDateRange(dateFrom: string, dateTo: string): string[] {
   if (!dateFrom || !dateTo) return [];
   const dates: string[] = [];
@@ -240,7 +275,8 @@ function enumerateDateRange(dateFrom: string, dateTo: string): string[] {
   }
   return dates;
 }
-// ─────────────────────────────────────────────────────────────────────────────
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
 
 function ActionButton({
   variant = "default",
@@ -295,7 +331,6 @@ function Modal({
   );
 }
 
-// ─── Skeleton Loading (same UX pattern as user) ───────────────────────────────
 function LogSkeleton() {
   return (
     <div className="space-y-3">
@@ -332,17 +367,21 @@ function LogSkeleton() {
   );
 }
 
-// ─── Day detail modal ──────────────────────────────────────────────────────────
+// ── DayDetailModal ────────────────────────────────────────────────────────────
+
 function DayDetailModal({
   dateISO,
   record,
   now,
+  leaveInfo,
   onClose,
   onEdit,
 }: {
   dateISO: string;
   record: AttendanceRecord | null;
   now: Date;
+  /** Combined leave status + type for this date, if any */
+  leaveInfo: { status: "Pending" | "Approved"; type: string } | null;
   onClose: () => void;
   onEdit: () => void;
 }) {
@@ -359,7 +398,9 @@ function DayDetailModal({
   const hasAny =
     !!record?.timeIn || !!record?.timeOut || !!record?.lunchIn || !!record?.lunchOut;
 
-  const isAbsentPastWeekday = isWeekdayISO(dateISO) && isPastDayISO(dateISO) && !record;
+  const isAbsentPastWeekday = isWeekdayISO(dateISO) && isPastDayISO(dateISO) && !record && !leaveInfo;
+
+  const leaveCfg = leaveInfo ? getLeaveTypeConfig(leaveInfo.type) : null;
 
   return (
     <motion.div
@@ -412,6 +453,7 @@ function DayDetailModal({
             })}
           </h2>
 
+          {/* Status badges row */}
           <div className="flex gap-2 mt-3 flex-wrap">
             {isAbsentPastWeekday && (
               <span className="px-3 py-1 bg-rose-400/30 text-rose-100 rounded-full text-xs font-bold">
@@ -419,7 +461,7 @@ function DayDetailModal({
               </span>
             )}
 
-            {!record && !isAbsentPastWeekday && (
+            {!record && !isAbsentPastWeekday && !leaveInfo && (
               <span className="px-3 py-1 bg-slate-500/40 rounded-full text-xs font-bold">
                 No Record
               </span>
@@ -443,11 +485,91 @@ function DayDetailModal({
                 +{overtimeHours.toFixed(1)}h OT
               </span>
             )}
+
+            {/* Leave badge in header */}
+            {leaveInfo && (
+              <span
+                className={cx(
+                  "px-3 py-1 rounded-full text-xs font-bold border",
+                  leaveInfo.status === "Approved"
+                    ? "bg-blue-400/30 text-blue-100 border-blue-300/50"
+                    : "bg-yellow-400/30 text-yellow-100 border-yellow-300/50"
+                )}
+              >
+                {leaveInfo.status === "Approved" ? "✓ Approved Leave" : "⏳ Leave Pending"}
+              </span>
+            )}
           </div>
         </div>
 
         {/* Body */}
         <div className="p-5 space-y-3">
+          {/* ── Leave info card (shown regardless of attendance) ── */}
+          {leaveInfo && leaveCfg && (
+            <div
+              className={cx(
+                "rounded-2xl border p-4",
+                leaveInfo.status === "Approved"
+                  ? "bg-blue-50 border-blue-200"
+                  : "bg-yellow-50 border-yellow-200"
+              )}
+            >
+              <div className="flex items-start gap-3">
+                {/* Colored dot / icon */}
+                <div
+                  className={cx(
+                    "h-9 w-9 rounded-xl flex items-center justify-center shrink-0 text-white text-sm font-bold",
+                    leaveInfo.status === "Approved" ? "bg-blue-500" : "bg-yellow-500"
+                  )}
+                >
+                  {leaveInfo.status === "Approved" ? "✓" : "⏳"}
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <div
+                    className={cx(
+                      "text-xs font-bold uppercase tracking-wide mb-1",
+                      leaveInfo.status === "Approved"
+                        ? "text-blue-600"
+                        : "text-yellow-600"
+                    )}
+                  >
+                    {leaveInfo.status === "Approved"
+                      ? "Approved Leave"
+                      : "Pending Leave Request"}
+                  </div>
+
+                  {/* Leave type pill */}
+                  <span
+                    className={cx(
+                      "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border",
+                      leaveCfg.bg,
+                      leaveCfg.text,
+                      leaveCfg.border
+                    )}
+                  >
+                    <span
+                      className={cx("w-1.5 h-1.5 rounded-full", leaveCfg.dot)}
+                    />
+                    {leaveCfg.label}
+                  </span>
+
+                  {leaveInfo.status === "Pending" && (
+                    <p className="text-xs text-yellow-700/80 mt-2">
+                      This leave request is awaiting admin approval.
+                    </p>
+                  )}
+                  {leaveInfo.status === "Approved" && (
+                    <p className="text-xs text-blue-700/80 mt-2">
+                      Employee is on approved leave — no attendance required.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Attendance breakdown (shown if record exists) ── */}
           {record ? (
             <>
               <div className="grid grid-cols-2 gap-3">
@@ -576,17 +698,22 @@ function DayDetailModal({
               </div>
             </>
           ) : (
-            <div className="text-center py-8 text-slate-400">
-              <CalendarIcon className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm font-medium">
-                {isAbsentPastWeekday ? "Absent (no attendance recorded)" : "No attendance recorded"}
-              </p>
-              {!isAbsentPastWeekday && (
-                <p className="text-xs mt-2 text-slate-400">
-                  Future dates won't be marked absent until the day has passed.
+            /* No attendance record */
+            !leaveInfo && (
+              <div className="text-center py-8 text-slate-400">
+                <CalendarIcon className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                <p className="text-sm font-medium">
+                  {isAbsentPastWeekday
+                    ? "Absent (no attendance recorded)"
+                    : "No attendance recorded"}
                 </p>
-              )}
-            </div>
+                {!isAbsentPastWeekday && (
+                  <p className="text-xs mt-2 text-slate-400">
+                    Future dates won't be marked absent until the day has passed.
+                  </p>
+                )}
+              </div>
+            )
           )}
         </div>
       </motion.div>
@@ -594,8 +721,9 @@ function DayDetailModal({
   );
 }
 
+// ── Main Attendance Component ─────────────────────────────────────────────────
+
 export default function Attendance() {
-  // Employees: Admins + Users
   const employeeList = useMemo(() => {
     const admins = (adminAccounts as Account[]).map((a) => ({
       id: String(a.id),
@@ -624,7 +752,6 @@ export default function Attendance() {
     readAttendance()
   );
 
-  // persist on change
   useEffect(() => {
     try {
       localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(allRecords));
@@ -633,7 +760,6 @@ export default function Attendance() {
     }
   }, [allRecords]);
 
-  // live sync across tabs
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === ATTENDANCE_KEY) setAllRecords(readAttendance());
@@ -642,12 +768,11 @@ export default function Attendance() {
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  // ── NEW: leave state ─────────────────────────────────────────────────────────
+  // ── Leave state ───────────────────────────────────────────────────────────
   const [allLeaves, setAllLeaves] = useState<StoredLeaveRequest[]>(() =>
     readLeaves()
   );
 
-  // live sync across tabs for leaves
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === ALL_LEAVES_KEY) setAllLeaves(readLeaves());
@@ -655,7 +780,6 @@ export default function Attendance() {
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
-  // ─────────────────────────────────────────────────────────────────────────────
 
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(
     employeeList[0]?.id ?? ""
@@ -665,31 +789,25 @@ export default function Attendance() {
     toISODate(new Date())
   );
 
-  // day detail modal open/close
   const [detailOpen, setDetailOpen] = useState(false);
 
-  // Date search bar
   const [dateQuery, setDateQuery] = useState<string>(selectedDateISO);
   const [dateError, setDateError] = useState<string>("");
 
-  // realtime clock
   const [now, setNow] = useState<Date>(new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // Keep date search input synced
   useEffect(() => setDateQuery(selectedDateISO), [selectedDateISO]);
 
-  // If selected day not in viewed month, align month
   useEffect(() => {
     const d = new Date(selectedDateISO + "T00:00:00");
     if (!isSameMonth(d, viewMonth)) setViewMonth(d);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDateISO]);
 
-  // If employee list changes (rare)
   useEffect(() => {
     if (!employeeList.length) return;
     const exists = employeeList.some((e) => e.id === selectedEmployeeId);
@@ -722,12 +840,15 @@ export default function Attendance() {
     return recordByDate.get(selectedDateISO) ?? null;
   }, [recordByDate, selectedDateISO]);
 
-  // ── NEW: build leave date map for the viewed month ────────────────────────
+  // ── Leave date maps ───────────────────────────────────────────────────────
+
+  /**
+   * leaveDatesForMonth — passed to the calendar for tile coloring.
+   * Only "Pending" and "Approved" are shown; "Rejected" is ignored.
+   */
   const leaveDatesForMonth = useMemo(() => {
     const map = new Map<string, "Pending" | "Approved">();
 
-    // Strip the " (Admin)" / " (User)" suffix that Attendance.tsx appends,
-    // since leave requests store the bare employee name.
     const baseName =
       selectedEmployee?.name.replace(/ \((Admin|User)\)$/, "") ?? "";
 
@@ -738,8 +859,6 @@ export default function Attendance() {
 
     for (const leave of allLeaves) {
       if (leave.employee !== baseName) continue;
-
-      // Only "Pending" and "Approved" are visualized; skip "Rejected" etc.
       if (leave.status !== "Pending" && leave.status !== "Approved") continue;
 
       const { dateFrom, dateTo } = resolveLeaveRange(leave);
@@ -749,7 +868,6 @@ export default function Attendance() {
         const t = new Date(dateISO + "T00:00:00").getTime();
         if (t < monthStart || t > monthEnd) continue;
 
-        // "Approved" wins over "Pending" if the same date appears in multiple requests
         if (map.get(dateISO) !== "Approved") {
           map.set(dateISO, leave.status as "Pending" | "Approved");
         }
@@ -758,14 +876,55 @@ export default function Attendance() {
 
     return map;
   }, [allLeaves, selectedEmployee, viewMonth]);
-  // ─────────────────────────────────────────────────────────────────────────────
 
-  // Total minutes (month)
+  /**
+   * leaveTypeForDate — maps each date to its leave type string so the modal
+   * can display "Vacation Leave", "Sick Leave", etc.
+   */
+  const leaveTypeForDate = useMemo(() => {
+    const map = new Map<string, string>();
+
+    const baseName =
+      selectedEmployee?.name.replace(/ \((Admin|User)\)$/, "") ?? "";
+
+    if (!baseName) return map;
+
+    for (const leave of allLeaves) {
+      if (leave.employee !== baseName) continue;
+      if (leave.status !== "Pending" && leave.status !== "Approved") continue;
+      if (!leave.type) continue;
+
+      const { dateFrom, dateTo } = resolveLeaveRange(leave);
+      if (!dateFrom || !dateTo) continue;
+
+      for (const dateISO of enumerateDateRange(dateFrom, dateTo)) {
+        // "Approved" wins if multiple leaves overlap on the same date
+        const existingStatus = leaveDatesForMonth.get(dateISO);
+        if (!map.has(dateISO) || existingStatus === "Approved") {
+          map.set(dateISO, leave.type);
+        }
+      }
+    }
+
+    return map;
+  }, [allLeaves, selectedEmployee, leaveDatesForMonth]);
+
+  /** Derive the combined leave info for a given date. */
+  function getLeaveInfoForDate(
+    dateISO: string
+  ): { status: "Pending" | "Approved"; type: string } | null {
+    const status = leaveDatesForMonth.get(dateISO);
+    const type = leaveTypeForDate.get(dateISO);
+    if (!status) return null;
+    return { status, type: type ?? "Leave" };
+  }
+
+  // ── Month stats ───────────────────────────────────────────────────────────
+
   const monthTotalMinutes = useMemo(() => {
     return recordsForMonth.reduce((sum, r) => sum + computeWorkMinutes(r), 0);
   }, [recordsForMonth]);
 
-  // Overview: Absent = weekday that is already past and has no record (or record is empty)
   const monthOverview = useMemo(() => {
     const dates = listMonthDatesISO(viewMonth).filter(isWeekdayISO);
 
@@ -807,7 +966,8 @@ export default function Attendance() {
     Math.round((monthTotalMinutes / targetMinutes) * 100)
   );
 
-  // Month navigation
+  // ── Month navigation ──────────────────────────────────────────────────────
+
   function prevMonth() {
     setViewMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1));
   }
@@ -815,7 +975,6 @@ export default function Attendance() {
     setViewMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1));
   }
 
-  // Date search
   function goToDate() {
     const q = dateQuery.trim();
     if (!isValidISODateText(q)) {
@@ -827,7 +986,8 @@ export default function Attendance() {
     setDetailOpen(true);
   }
 
-  // Month log items
+  // ── Month log items ───────────────────────────────────────────────────────
+
   type MonthLogItem =
     | { kind: "present"; dateISO: string; record: AttendanceRecord; minutes: number }
     | { kind: "incomplete"; dateISO: string; record: AttendanceRecord; minutes: number }
@@ -865,7 +1025,6 @@ export default function Attendance() {
     return items;
   }, [viewMonth, recordByDate]);
 
-  // Skeleton loading like user page
   const [logsLoading, setLogsLoading] = useState(true);
   useEffect(() => {
     const t = setTimeout(() => setLogsLoading(false), 700);
@@ -878,7 +1037,8 @@ export default function Attendance() {
     return () => clearTimeout(t);
   }, [viewMonth, selectedEmployeeId]);
 
-  // Export CSV (Month)
+  // ── Export / Print ────────────────────────────────────────────────────────
+
   function exportMonthCSV() {
     const monthLabel = viewMonth.toLocaleDateString("en-US", {
       month: "short",
@@ -905,37 +1065,11 @@ export default function Attendance() {
       .filter((i) => i.kind !== "weekend")
       .map((i) => {
         if (i.kind === "absent") {
-          return [
-            selectedEmployeeId,
-            selectedEmployee?.name ?? "",
-            monthLabel,
-            i.dateISO,
-            "Absent",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "0.0",
-          ];
+          return [selectedEmployeeId, selectedEmployee?.name ?? "", monthLabel, i.dateISO, "Absent", "", "", "", "", "", "0.0"];
         }
-
         if (i.kind === "upcoming") {
-          return [
-            selectedEmployeeId,
-            selectedEmployee?.name ?? "",
-            monthLabel,
-            i.dateISO,
-            "Upcoming",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "0.0",
-          ];
+          return [selectedEmployeeId, selectedEmployee?.name ?? "", monthLabel, i.dateISO, "Upcoming", "", "", "", "", "", "0.0"];
         }
-
         const r = i.record;
         const status = i.kind === "present" ? "Present" : "Incomplete";
         return [
@@ -966,7 +1100,8 @@ export default function Attendance() {
     window.print();
   }
 
-  // Admin Edit Modal
+  // ── Edit modal state ──────────────────────────────────────────────────────
+
   const [editOpen, setEditOpen] = useState(false);
   const [editDraft, setEditDraft] = useState<{
     dateISO: string;
@@ -986,7 +1121,6 @@ export default function Attendance() {
 
   function openEditModal() {
     const r = selectedDayRecord;
-
     setEditDraft({
       dateISO: selectedDateISO,
       source: (r?.source ?? "") as string,
@@ -995,15 +1129,12 @@ export default function Attendance() {
       lunchIn: isoToLocalInput(r?.lunchIn ?? null),
       timeOut: isoToLocalInput(r?.timeOut ?? null),
     });
-
     setEditOpen(true);
   }
 
   function handleEditDate(dateISO: string) {
     setSelectedDateISO(dateISO);
-
     const r = recordByDate.get(dateISO) ?? null;
-
     setEditDraft({
       dateISO,
       source: (r?.source ?? "") as string,
@@ -1012,13 +1143,11 @@ export default function Attendance() {
       lunchIn: isoToLocalInput(r?.lunchIn ?? null),
       timeOut: isoToLocalInput(r?.timeOut ?? null),
     });
-
     setEditOpen(true);
   }
 
   function saveEdit() {
     const dateISO = editDraft.dateISO;
-
     const next: AttendanceRecord = {
       id: `${selectedEmployeeId}_${dateISO}`,
       employeeId: selectedEmployeeId,
@@ -1046,6 +1175,8 @@ export default function Attendance() {
     setDetailOpen(true);
   }
 
+  // ── Render ────────────────────────────────────────────────────────────────
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -1060,6 +1191,7 @@ export default function Attendance() {
             dateISO={selectedDateISO}
             record={selectedDayRecord}
             now={now}
+            leaveInfo={getLeaveInfoForDate(selectedDateISO)}
             onClose={() => setDetailOpen(false)}
             onEdit={() => {
               setDetailOpen(false);
@@ -1079,7 +1211,6 @@ export default function Attendance() {
             {formatFullDate(selectedDateISO)}
           </div>
 
-          {/* Employee selector + Date Search + Actions */}
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <label className="text-xs font-semibold text-text-primary/70">
               Employee
@@ -1199,25 +1330,19 @@ export default function Attendance() {
             <div className="p-5 space-y-4">
               <div className="grid grid-cols-3 gap-3">
                 <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <div className="text-[10px] font-bold text-slate-500">
-                    PRESENT
-                  </div>
+                  <div className="text-[10px] font-bold text-slate-500">PRESENT</div>
                   <div className="text-xl font-extrabold text-emerald-700">
                     {monthOverview.presentDays}
                   </div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <div className="text-[10px] font-bold text-slate-500">
-                    ABSENT
-                  </div>
+                  <div className="text-[10px] font-bold text-slate-500">ABSENT</div>
                   <div className="text-xl font-extrabold text-rose-700">
                     {monthOverview.absentDays}
                   </div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <div className="text-[10px] font-bold text-slate-500">
-                    INCOMPLETE
-                  </div>
+                  <div className="text-[10px] font-bold text-slate-500">INCOMPLETE</div>
                   <div className="text-xl font-extrabold text-amber-700">
                     {monthOverview.incompleteDays}
                   </div>
@@ -1230,9 +1355,7 @@ export default function Attendance() {
                     <div className="text-xs font-semibold text-text-heading">
                       Total Work Hours
                     </div>
-                    <div className="text-xs text-text-primary/70">
-                      This Month
-                    </div>
+                    <div className="text-xs text-text-primary/70">This Month</div>
                   </div>
                   <div className="h-9 w-9 rounded-xl bg-white/60 flex items-center justify-center">
                     <Timer className="h-4 w-4 text-text-primary/70" />
@@ -1269,9 +1392,7 @@ export default function Attendance() {
                   <History className="w-6 h-6 text-white" />
                 </div>
                 <div className="flex-1">
-                  <h2 className="text-lg font-bold text-[#F2F2F2]">
-                    Daily Logs
-                  </h2>
+                  <h2 className="text-lg font-bold text-[#F2F2F2]">Daily Logs</h2>
                   <p className="text-xs text-slate-300">
                     Click a date on calendar or a row below
                   </p>
@@ -1340,6 +1461,7 @@ export default function Attendance() {
                   >
                     {monthLogItems.map((item, idx) => {
                       const isSelected = item.dateISO === selectedDateISO;
+                      const leaveInfo = getLeaveInfoForDate(item.dateISO);
 
                       const dateLabel = new Date(item.dateISO + "T00:00:00").toLocaleDateString(
                         "en-US",
@@ -1356,11 +1478,7 @@ export default function Attendance() {
                             initial={{ opacity: 0, y: 8 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: idx * 0.02 }}
-                            className={cx(
-                              baseRow,
-                              "bg-slate-50 border-slate-100 hover:border-slate-200",
-                              selectedRing
-                            )}
+                            className={cx(baseRow, "bg-slate-50 border-slate-100 hover:border-slate-200", selectedRing)}
                           >
                             <div className="flex justify-between items-center gap-3">
                               <button
@@ -1379,7 +1497,6 @@ export default function Attendance() {
                                 <div className="bg-slate-200/70 px-3 py-1 rounded-full text-xs font-bold text-slate-600">
                                   —
                                 </div>
-
                                 <button
                                   onClick={() => handleEditDate(item.dateISO)}
                                   className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-text-heading hover:bg-white transition"
@@ -1403,7 +1520,12 @@ export default function Attendance() {
                             transition={{ delay: idx * 0.02 }}
                             className={cx(
                               baseRow,
-                              "bg-rose-50 border-rose-200 hover:border-rose-300",
+                              // If on leave, override absent styling with leave colour
+                              leaveInfo?.status === "Approved"
+                                ? "bg-blue-50 border-blue-200 hover:border-blue-300"
+                                : leaveInfo?.status === "Pending"
+                                ? "bg-yellow-50 border-yellow-200 hover:border-yellow-300"
+                                : "bg-rose-50 border-rose-200 hover:border-rose-300",
                               selectedRing
                             )}
                           >
@@ -1417,26 +1539,69 @@ export default function Attendance() {
                                 type="button"
                               >
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <p className="font-bold text-rose-700 text-sm">{dateLabel}</p>
-                                  <span className="text-[9px] font-bold text-rose-700 bg-white/60 border border-rose-200 px-1.5 py-0.5 rounded-full">
-                                    Absent
-                                  </span>
+                                  <p className={cx(
+                                    "font-bold text-sm",
+                                    leaveInfo?.status === "Approved"
+                                      ? "text-blue-700"
+                                      : leaveInfo?.status === "Pending"
+                                      ? "text-yellow-700"
+                                      : "text-rose-700"
+                                  )}>
+                                    {dateLabel}
+                                  </p>
+                                  {leaveInfo ? (
+                                    <span className={cx(
+                                      "text-[9px] font-bold px-1.5 py-0.5 rounded-full border",
+                                      leaveInfo.status === "Approved"
+                                        ? "bg-blue-100 text-blue-700 border-blue-200"
+                                        : "bg-yellow-100 text-yellow-700 border-yellow-200"
+                                    )}>
+                                      {leaveInfo.status === "Approved" ? "On Leave" : "Pending Leave"}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] font-bold text-rose-700 bg-white/60 border border-rose-200 px-1.5 py-0.5 rounded-full">
+                                      Absent
+                                    </span>
+                                  )}
                                 </div>
-                                <div className="flex items-center gap-3 mt-1">
-                                  <span className="text-xs text-slate-400 font-semibold">——</span>
-                                  <span className="text-slate-300 text-xs">→</span>
-                                  <span className="text-xs text-slate-400 font-semibold">——</span>
-                                </div>
+                                {leaveInfo && (
+                                  <p className={cx(
+                                    "text-xs mt-1 font-medium",
+                                    leaveInfo.status === "Approved" ? "text-blue-600" : "text-yellow-600"
+                                  )}>
+                                    {leaveInfo.type}
+                                  </p>
+                                )}
+                                {!leaveInfo && (
+                                  <div className="flex items-center gap-3 mt-1">
+                                    <span className="text-xs text-slate-400 font-semibold">——</span>
+                                    <span className="text-slate-300 text-xs">→</span>
+                                    <span className="text-xs text-slate-400 font-semibold">——</span>
+                                  </div>
+                                )}
                               </button>
 
                               <div className="flex items-center gap-2">
-                                <div className="bg-rose-600 px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
-                                  0.0 hrs
+                                <div className={cx(
+                                  "px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm",
+                                  leaveInfo?.status === "Approved"
+                                    ? "bg-blue-500"
+                                    : leaveInfo?.status === "Pending"
+                                    ? "bg-yellow-500"
+                                    : "bg-rose-600"
+                                )}>
+                                  {leaveInfo ? (leaveInfo.status === "Approved" ? "Leave" : "Pending") : "0.0 hrs"}
                                 </div>
-
                                 <button
                                   onClick={() => handleEditDate(item.dateISO)}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white/70 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-white transition"
+                                  className={cx(
+                                    "inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold transition",
+                                    leaveInfo?.status === "Approved"
+                                      ? "border-blue-200 bg-white/70 text-blue-700 hover:bg-white"
+                                      : leaveInfo?.status === "Pending"
+                                      ? "border-yellow-200 bg-white/70 text-yellow-700 hover:bg-white"
+                                      : "border-rose-200 bg-white/70 text-rose-700 hover:bg-white"
+                                  )}
                                   type="button"
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
@@ -1457,7 +1622,11 @@ export default function Attendance() {
                             transition={{ delay: idx * 0.02 }}
                             className={cx(
                               baseRow,
-                              "bg-slate-50 border-slate-100 hover:border-slate-200",
+                              leaveInfo?.status === "Approved"
+                                ? "bg-blue-50 border-blue-200 hover:border-blue-300"
+                                : leaveInfo?.status === "Pending"
+                                ? "bg-yellow-50 border-yellow-200 hover:border-yellow-300"
+                                : "bg-slate-50 border-slate-100 hover:border-slate-200",
                               selectedRing
                             )}
                           >
@@ -1471,23 +1640,52 @@ export default function Attendance() {
                                 type="button"
                               >
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <p className="font-bold text-slate-600 text-sm">{dateLabel}</p>
-                                  <span className="text-[9px] font-bold text-slate-600 bg-white/60 border border-slate-200 px-1.5 py-0.5 rounded-full">
-                                    Upcoming
-                                  </span>
+                                  <p className={cx(
+                                    "font-bold text-sm",
+                                    leaveInfo?.status === "Approved"
+                                      ? "text-blue-700"
+                                      : leaveInfo?.status === "Pending"
+                                      ? "text-yellow-700"
+                                      : "text-slate-600"
+                                  )}>
+                                    {dateLabel}
+                                  </p>
+                                  {leaveInfo ? (
+                                    <span className={cx(
+                                      "text-[9px] font-bold px-1.5 py-0.5 rounded-full border",
+                                      leaveInfo.status === "Approved"
+                                        ? "bg-blue-100 text-blue-700 border-blue-200"
+                                        : "bg-yellow-100 text-yellow-700 border-yellow-200"
+                                    )}>
+                                      {leaveInfo.status === "Approved" ? "On Leave" : "Pending Leave"}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] font-bold text-slate-600 bg-white/60 border border-slate-200 px-1.5 py-0.5 rounded-full">
+                                      Upcoming
+                                    </span>
+                                  )}
                                 </div>
-                                <div className="flex items-center gap-3 mt-1">
-                                  <span className="text-xs text-slate-400 font-semibold">——</span>
-                                  <span className="text-slate-300 text-xs">→</span>
-                                  <span className="text-xs text-slate-400 font-semibold">——</span>
-                                </div>
+                                {leaveInfo && (
+                                  <p className={cx(
+                                    "text-xs mt-1 font-medium",
+                                    leaveInfo.status === "Approved" ? "text-blue-600" : "text-yellow-600"
+                                  )}>
+                                    {leaveInfo.type}
+                                  </p>
+                                )}
                               </button>
 
                               <div className="flex items-center gap-2">
-                                <div className="bg-slate-700 px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
-                                  0.0 hrs
+                                <div className={cx(
+                                  "px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm",
+                                  leaveInfo?.status === "Approved"
+                                    ? "bg-blue-500"
+                                    : leaveInfo?.status === "Pending"
+                                    ? "bg-yellow-500"
+                                    : "bg-slate-700"
+                                )}>
+                                  {leaveInfo ? (leaveInfo.status === "Approved" ? "Leave" : "Pending") : "0.0 hrs"}
                                 </div>
-
                                 <button
                                   onClick={() => handleEditDate(item.dateISO)}
                                   className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-text-heading hover:bg-soft transition"
@@ -1502,6 +1700,7 @@ export default function Attendance() {
                         );
                       }
 
+                      // present / incomplete
                       const r = item.record;
                       const minutes = item.minutes;
                       const badge = item.kind === "present" ? "Present" : "Incomplete";
@@ -1533,26 +1732,27 @@ export default function Attendance() {
                             >
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className="font-bold text-[#1F3C68] text-sm">{dateLabel}</p>
-                                <span
-                                  className={cx(
-                                    "text-[9px] font-bold px-1.5 py-0.5 rounded-full border",
-                                    badgeClass
-                                  )}
-                                >
+                                <span className={cx("text-[9px] font-bold px-1.5 py-0.5 rounded-full border", badgeClass)}>
                                   {badge}
                                 </span>
+                                {/* Show leave badge alongside attendance if on leave */}
+                                {leaveInfo && (
+                                  <span className={cx(
+                                    "text-[9px] font-bold px-1.5 py-0.5 rounded-full border",
+                                    leaveInfo.status === "Approved"
+                                      ? "bg-blue-100 text-blue-700 border-blue-200"
+                                      : "bg-yellow-100 text-yellow-700 border-yellow-200"
+                                  )}>
+                                    {leaveInfo.status === "Approved" ? "On Leave" : "Pending Leave"}
+                                  </span>
+                                )}
                               </div>
 
                               <div className="flex items-center gap-3 mt-1">
-                                <span className="text-xs text-green-600 font-semibold">
-                                  {formatTime(r.timeIn)}
-                                </span>
+                                <span className="text-xs text-green-600 font-semibold">{formatTime(r.timeIn)}</span>
                                 <span className="text-slate-300 text-xs">→</span>
-                                <span className="text-xs text-red-600 font-semibold">
-                                  {formatTime(r.timeOut)}
-                                </span>
+                                <span className="text-xs text-red-600 font-semibold">{formatTime(r.timeOut)}</span>
                               </div>
-
                               <div className="text-[11px] text-slate-400 mt-1">• {r.source ?? "—"}</div>
                             </button>
 
@@ -1560,7 +1760,6 @@ export default function Attendance() {
                               <div className="bg-primary px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm">
                                 {formatHoursFromMinutes(minutes)} hrs
                               </div>
-
                               <button
                                 onClick={() => handleEditDate(item.dateISO)}
                                 className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-text-heading hover:bg-soft transition"
@@ -1613,9 +1812,7 @@ export default function Attendance() {
       {/* EDIT MODAL */}
       <Modal
         open={editOpen}
-        title={`Admin Edit • ${selectedEmployee?.name ?? selectedEmployeeId} • ${
-          editDraft.dateISO
-        }`}
+        title={`Admin Edit • ${selectedEmployee?.name ?? selectedEmployeeId} • ${editDraft.dateISO}`}
         onClose={() => setEditOpen(false)}
       >
         <div className="space-y-4">
@@ -1625,57 +1822,41 @@ export default function Attendance() {
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-600">
-                Time In
-              </label>
+              <label className="text-xs font-semibold text-slate-600">Time In</label>
               <input
                 type="datetime-local"
                 value={editDraft.timeIn}
-                onChange={(e) =>
-                  setEditDraft((p) => ({ ...p, timeIn: e.target.value }))
-                }
+                onChange={(e) => setEditDraft((p) => ({ ...p, timeIn: e.target.value }))}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-600">
-                Time Out
-              </label>
+              <label className="text-xs font-semibold text-slate-600">Time Out</label>
               <input
                 type="datetime-local"
                 value={editDraft.timeOut}
-                onChange={(e) =>
-                  setEditDraft((p) => ({ ...p, timeOut: e.target.value }))
-                }
+                onChange={(e) => setEditDraft((p) => ({ ...p, timeOut: e.target.value }))}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-600">
-                Lunch Out
-              </label>
+              <label className="text-xs font-semibold text-slate-600">Lunch Out</label>
               <input
                 type="datetime-local"
                 value={editDraft.lunchOut}
-                onChange={(e) =>
-                  setEditDraft((p) => ({ ...p, lunchOut: e.target.value }))
-                }
+                onChange={(e) => setEditDraft((p) => ({ ...p, lunchOut: e.target.value }))}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-600">
-                Lunch In
-              </label>
+              <label className="text-xs font-semibold text-slate-600">Lunch In</label>
               <input
                 type="datetime-local"
                 value={editDraft.lunchIn}
-                onChange={(e) =>
-                  setEditDraft((p) => ({ ...p, lunchIn: e.target.value }))
-                }
+                onChange={(e) => setEditDraft((p) => ({ ...p, lunchIn: e.target.value }))}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
@@ -1687,9 +1868,7 @@ export default function Attendance() {
             </label>
             <input
               value={editDraft.source}
-              onChange={(e) =>
-                setEditDraft((p) => ({ ...p, source: e.target.value }))
-              }
+              onChange={(e) => setEditDraft((p) => ({ ...p, source: e.target.value }))}
               placeholder="e.g. Admin correction"
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
             />
