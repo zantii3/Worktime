@@ -13,6 +13,10 @@ import Usersidebar from "./components/Usersidebar.tsx";
 const PROFILE_KEY = "worktime_profile_v1";
 const USERS_KEY   = "worktime_users_v1";
 
+// ── Keys that must stay in sync with Users.tsx ────────────────────────────────
+const EDITS_KEY   = "worktime_account_edits_v1";
+const CREATED_KEY = "worktime_created_accounts_v1";
+
 interface UserProfile {
   name: string;
   email: string;
@@ -24,6 +28,48 @@ interface UserProfile {
   startDate: string;
   bio: string;
   avatar: string | null;
+}
+
+// ── Read admin-assigned role & department for a given user id ─────────────────
+// Priority: editsMap override → created-accounts record → undefined
+// This mirrors the exact merge logic in Users.tsx `rows` useMemo.
+function readAdminAssignedFields(userId: number): {
+  roleLabel?: string;
+  department?: string;
+} {
+  try {
+    const editsRaw   = localStorage.getItem(EDITS_KEY);
+    const createdRaw = localStorage.getItem(CREATED_KEY);
+
+    const editsMap: Record<string, { roleLabel?: string; department?: string }> =
+      editsRaw ? JSON.parse(editsRaw) : {};
+    const createdList: Array<{
+      id: number; kind: string; roleLabel?: string; department?: string;
+    }> = createdRaw ? JSON.parse(createdRaw) : [];
+
+    const key = `user:${userId}`;
+
+    // editsMap overrides take precedence (same as Users.tsx)
+    const edit = editsMap[key];
+    if (edit?.roleLabel || edit?.department) {
+      return {
+        roleLabel:  edit.roleLabel,
+        department: edit.department,
+      };
+    }
+
+    // Fall back to the created-accounts record if this is a locally-created user
+    const created = createdList.find((a) => a.kind === "user" && a.id === userId);
+    if (created?.roleLabel || created?.department) {
+      return {
+        roleLabel:  created.roleLabel,
+        department: created.department,
+      };
+    }
+  } catch {
+    // Silently ignore storage / parse errors
+  }
+  return {};
 }
 
 // ── Avatar initials ────────────────────────────────────────────────────────────
@@ -91,7 +137,7 @@ function PhotoMenu({ hasPhoto, onAdd, onChange, onRemove, onClose }: {
 function PasswordInput({
   id, label, value, onChange, show, onToggle, placeholder,
 }: {
-  id: string; label: string; value: string; 
+  id: string; label: string; value: string;
   onChange: (v: string) => void;
   show: boolean; onToggle: () => void; placeholder?: string;
 }) {
@@ -416,12 +462,17 @@ function Profile() {
   const [showPwModal,   setShowPwModal]   = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Build default profile ─────────────────────────────────────────────────
+  // Pull admin-assigned role/department so they pre-populate the profile
+  // when the user hasn't manually set those fields yet.
+  const adminAssigned = user?.id ? readAdminAssignedFields(Number(user.id)) : {};
+
   const defaultProfile: UserProfile = {
     name:       user?.name       || "Employee",
     email:      user?.email      || "",
     phone:      "",
-    department: user?.department || "",
-    position:   user?.position   || user?.role || "",
+    department: adminAssigned.department || user?.department || "",
+    position:   adminAssigned.roleLabel  || user?.position   || user?.role || "",
     employeeId: user?.id ? `EMP-${String(user.id).padStart(4, "0")}` : "EMP-0001",
     location:   "Manila, Philippines",
     startDate:  "",
@@ -432,7 +483,21 @@ function Profile() {
   const [profile, setProfile] = useState<UserProfile>(() => {
     try {
       const raw = localStorage.getItem(`${PROFILE_KEY}_${user?.id}`);
-      return raw ? { ...defaultProfile, ...JSON.parse(raw) } : defaultProfile;
+      if (!raw) return defaultProfile;
+      const saved = JSON.parse(raw) as Partial<UserProfile>;
+
+      // Merge: admin-assigned values fill in ONLY if the user hasn't personally
+      // saved a non-empty value for that field.  User's own saved data wins.
+      return {
+        ...defaultProfile,
+        ...saved,
+        department: saved.department?.trim()
+          ? saved.department
+          : (adminAssigned.department || defaultProfile.department),
+        position: saved.position?.trim()
+          ? saved.position
+          : (adminAssigned.roleLabel || defaultProfile.position),
+      };
     } catch { return defaultProfile; }
   });
 

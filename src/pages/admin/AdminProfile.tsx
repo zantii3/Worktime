@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
   BarChart3,
+  Briefcase,
   CalendarDays,
   CheckCircle2,
   CircleDashed,
@@ -18,6 +19,7 @@ import {
   Mail,
   Pencil,
   Shield,
+  Tag,
   Timer,
   Trash2,
   TrendingUp,
@@ -95,12 +97,16 @@ type StoredAdminCredentials = {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const STATUS_KEY = "worktime_account_status_v1";
-const ATTENDANCE_KEY = "worktime_attendance_v1";
-const TASKS_KEY = "worktime_tasks_v1";
-const CURRENT_ADMIN_KEY = "currentAdmin";
-const ADMIN_EMAIL_KEY = "admin_email";
+const STATUS_KEY            = "worktime_account_status_v1";
+const ATTENDANCE_KEY        = "worktime_attendance_v1";
+const TASKS_KEY             = "worktime_tasks_v1";
+const CURRENT_ADMIN_KEY     = "currentAdmin";
+const ADMIN_EMAIL_KEY       = "admin_email";
 const ADMIN_CREDENTIALS_KEY = "worktime_admin_credentials_v1";
+
+// Must stay in sync with Users.tsx
+const EDITS_KEY   = "worktime_account_edits_v1";
+const CREATED_KEY = "worktime_created_accounts_v1";
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -149,6 +155,36 @@ function readStoredProfile(adminId: number | null | undefined): StoredAdminProfi
 
 function readStoredCredentials(): StoredAdminCredentials | null {
   return readJSON<StoredAdminCredentials | null>(ADMIN_CREDENTIALS_KEY, null);
+}
+
+// ── Read admin-assigned role & department for this admin account ──────────────
+// Mirrors the exact merge logic in Users.tsx `rows` useMemo.
+// Priority: editsMap override → created-accounts record → undefined
+function readAdminAssignedFields(adminId: number): {
+  roleLabel?: string;
+  department?: string;
+} {
+  try {
+    const editsMap: Record<string, { roleLabel?: string; department?: string }> =
+      readJSON(EDITS_KEY, {});
+    const createdList: Array<{
+      id: number; kind: string; roleLabel?: string; department?: string;
+    }> = readJSON(CREATED_KEY, []);
+
+    const key  = `admin:${adminId}`;
+    const edit = editsMap[key];
+    if (edit?.roleLabel || edit?.department) {
+      return { roleLabel: edit.roleLabel, department: edit.department };
+    }
+
+    const created = createdList.find((a) => a.kind === "admin" && a.id === adminId);
+    if (created?.roleLabel || created?.department) {
+      return { roleLabel: created.roleLabel, department: created.department };
+    }
+  } catch {
+    // Silently ignore
+  }
+  return {};
 }
 
 function formatTimeLocal(iso: string | null) {
@@ -361,6 +397,8 @@ export default function AdminProfile() {
         e.key === LEAVE_STORAGE_KEY ||
         e.key === TASKS_KEY ||
         e.key === CURRENT_ADMIN_KEY ||
+        e.key === EDITS_KEY ||
+        e.key === CREATED_KEY ||
         (currentAdmin?.id && e.key === `admin_profile_${currentAdmin.id}`)
       ) {
         refreshFromStorage();
@@ -393,6 +431,17 @@ export default function AdminProfile() {
     if (!currentAdmin) return "—";
     return statusMap[`admin:${currentAdmin.id}`] ?? "Active";
   }, [currentAdmin, statusMap]);
+
+  // Role and department assigned via Users.tsx (admin can edit other admins too)
+  const adminAssigned = useMemo(
+    () => (currentAdmin ? readAdminAssignedFields(currentAdmin.id) : {}),
+    // Re-derive whenever currentAdmin changes (covers re-login and profile refresh)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentAdmin?.id, statusMap] // statusMap changes on every Users.tsx save, piggyback on it
+  );
+
+  const adminRoleLabel   = adminAssigned.roleLabel  || "Administrator";
+  const adminDepartment  = adminAssigned.department || "";
 
   const adminAttendance = useMemo(() => {
     if (!currentAdmin) return [];
@@ -743,11 +792,22 @@ export default function AdminProfile() {
                     {adminStatus}
                   </span>
                 </div>
+
+                {/* Role / department row — shows admin-assigned values from Users.tsx */}
                 <div className="mt-1 flex items-center gap-3 text-white/75 text-sm flex-wrap">
                   <span className="flex items-center gap-1.5">
                     <Shield className="w-3.5 h-3.5" />
-                    Administrator
+                    {adminRoleLabel}
                   </span>
+                  {adminDepartment && (
+                    <>
+                      <span className="opacity-40">·</span>
+                      <span className="flex items-center gap-1.5">
+                        <Briefcase className="w-3.5 h-3.5" />
+                        {adminDepartment}
+                      </span>
+                    </>
+                  )}
                   <span className="opacity-40">·</span>
                   <span className="flex items-center gap-1.5">
                     <KeyRound className="w-3.5 h-3.5" />
@@ -759,6 +819,22 @@ export default function AdminProfile() {
                     {displayEmail}
                   </span>
                 </div>
+
+                {/* Role / department pills — visible at a glance */}
+                {(adminRoleLabel !== "Administrator" || adminDepartment) && (
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-white/15 border border-white/20 text-white">
+                      <Tag className="w-3 h-3" />
+                      {adminRoleLabel}
+                    </span>
+                    {adminDepartment && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-white/15 border border-white/20 text-white">
+                        <Briefcase className="w-3 h-3" />
+                        {adminDepartment}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1041,6 +1117,20 @@ export default function AdminProfile() {
                       <div className="text-sm text-white/75 mt-1">
                         Admin #{currentAdmin.id} · Update your info and credentials
                       </div>
+                      {/* Role/dept reminder inside modal */}
+                      {(adminRoleLabel !== "Administrator" || adminDepartment) && (
+                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/15 border border-white/20 text-white/90">
+                            <Tag className="w-2.5 h-2.5" />{adminRoleLabel}
+                          </span>
+                          {adminDepartment && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/15 border border-white/20 text-white/90">
+                              <Briefcase className="w-2.5 h-2.5" />{adminDepartment}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-white/50">Assigned by User Management</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <button
