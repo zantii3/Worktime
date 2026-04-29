@@ -80,13 +80,34 @@ const EDITS_KEY            = "worktime_account_edits_v1";
 const DEPARTMENTS = [
   "Engineering", "Design", "Product", "Marketing", "Sales",
   "Human Resources", "Finance", "Operations", "Legal", "Customer Support",
-];
+] as const;
 
-const EMPLOYEE_ROLES = [
+// Department → relevant roles mapping
+const DEPARTMENT_ROLES: Record<string, string[]> = {
+  "Engineering":      ["Developer", "DevOps Engineer", "QA Tester", "Technical Lead", "Scrum Master", "Data Analyst"],
+  "Design":           ["UI/UX Designer", "Technical Lead", "Business Analyst"],
+  "Product":          ["Product Manager", "Business Analyst", "Scrum Master", "Technical Lead", "Data Analyst"],
+  "Marketing":        ["Marketing Specialist", "Content Strategist", "Data Analyst", "Business Analyst"],
+  "Sales":            ["Sales Representative", "Account Manager", "Business Analyst", "Sales Manager"],
+  "Human Resources":  ["HR Specialist", "Recruiter", "HR Manager", "Business Analyst"],
+  "Finance":          ["Financial Analyst", "Accountant", "Finance Manager", "Data Analyst", "Business Analyst"],
+  "Operations":       ["DevOps Engineer", "Project Manager", "QA Tester", "Scrum Master", "Business Analyst", "Technical Lead"],
+  "Legal":            ["Legal Counsel", "Compliance Officer", "Paralegal", "Business Analyst"],
+  "Customer Support": ["Support Specialist", "QA Tester", "Technical Lead", "Business Analyst"],
+};
+
+// Generic fallback used when no department is selected yet
+const ALL_ROLES = [
   "Employee", "Developer", "Project Manager", "QA Tester",
   "UI/UX Designer", "Business Analyst", "DevOps Engineer",
   "Data Analyst", "Scrum Master", "Technical Lead",
 ];
+
+/** Returns the roles relevant to the given department.
+ *  Falls back to the full role list when dept is empty / unrecognised. */
+function getRolesForDept(dept: string): string[] {
+  return DEPARTMENT_ROLES[dept] ?? ALL_ROLES;
+}
 
 // ─── Storage types ────────────────────────────────────────────────────────────
 
@@ -430,7 +451,7 @@ export default function Users() {
 
   const defaultCreate: NewAccountForm = {
     kind: "user", name: "", email: "", password: "",
-    confirmPassword: "", roleLabel: "Employee", department: "",
+    confirmPassword: "", roleLabel: "", department: "",
   };
   const [createForm, setCreateForm] = useState<NewAccountForm>(defaultCreate);
 
@@ -444,10 +465,26 @@ export default function Users() {
 
   const setCreateField = (f: keyof NewAccountForm, v: string) => {
     if (f === "kind") {
+      // Switching account kind resets role; admin role is fixed
       setCreateForm((p) => ({
-        ...p, kind: v as AccountKind,
-        roleLabel: v === "admin" ? "Admin" : "Employee",
+        ...p,
+        kind: v as AccountKind,
+        roleLabel: v === "admin" ? "Admin" : "",
       }));
+    } else if (f === "department") {
+      // When department changes, reset roleLabel if the current role is not
+      // available in the newly selected department's role list
+      setCreateForm((p) => {
+        const availableRoles = getRolesForDept(v);
+        const roleStillValid = availableRoles.includes(p.roleLabel);
+        return {
+          ...p,
+          department: v,
+          roleLabel: roleStillValid ? p.roleLabel : availableRoles[0],
+        };
+      });
+      setCreateErrors((p) => ({ ...p, department: undefined, roleLabel: undefined }));
+      return;
     } else {
       setCreateForm((p) => ({ ...p, [f]: v }));
     }
@@ -518,6 +555,21 @@ export default function Users() {
   const closeEdit = () => { setEditTarget(null); setEditErrors({}); };
 
   const setEditField = (f: keyof EditAccountForm, v: string) => {
+    if (f === "department") {
+      // When department changes, reset roleLabel if the current role is not
+      // in the newly selected department's role list
+      setEditForm((p) => {
+        const availableRoles = getRolesForDept(v);
+        const roleStillValid = availableRoles.includes(p.roleLabel);
+        return {
+          ...p,
+          department: v,
+          roleLabel: roleStillValid ? p.roleLabel : availableRoles[0],
+        };
+      });
+      setEditErrors((p) => ({ ...p, department: undefined, roleLabel: undefined }));
+      return;
+    }
     setEditForm((p) => ({ ...p, [f]: v }));
     if (editErrors[f]) setEditErrors((p) => ({ ...p, [f]: undefined }));
   };
@@ -950,6 +1002,7 @@ export default function Users() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Department — always first so user picks it before role */}
                     <FormField label="Department" required error={createErrors.department}>
                       <div className="relative">
                         <Briefcase className="w-4 h-4 text-text-primary/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -965,6 +1018,7 @@ export default function Users() {
                       </div>
                     </FormField>
 
+                    {/* Role — filtered by selected department */}
                     <FormField label="Role" required error={createErrors.roleLabel}>
                       <div className="relative">
                         <Tag className="w-4 h-4 text-text-primary/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -972,14 +1026,29 @@ export default function Users() {
                           <input readOnly value="Admin"
                             className="w-full pl-9 pr-4 py-3 rounded-xl border border-slate-200 text-sm bg-slate-50 text-text-primary/60 cursor-not-allowed" />
                         ) : (
-                          <select value={createForm.roleLabel}
-                            onChange={(e) => setCreateField("roleLabel", e.target.value)}
-                            className={cx(
-                              "w-full pl-9 pr-4 py-3 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-primary/30 bg-white appearance-none",
-                              createErrors.roleLabel ? "border-rose-300" : "border-slate-200"
-                            )}>
-                            {EMPLOYEE_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
-                          </select>
+                          <>
+                            <select
+                              value={createForm.roleLabel}
+                              onChange={(e) => setCreateField("roleLabel", e.target.value)}
+                              disabled={!createForm.department}
+                              className={cx(
+                                "w-full pl-9 pr-4 py-3 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-primary/30 bg-white appearance-none transition",
+                                !createForm.department ? "opacity-50 cursor-not-allowed bg-slate-50" : "",
+                                createErrors.roleLabel ? "border-rose-300" : "border-slate-200"
+                              )}>
+                              {!createForm.department && (
+                                <option value="" disabled>Select a department first…</option>
+                              )}
+                              {getRolesForDept(createForm.department).map((role) => (
+                                <option key={role} value={role}>{role}</option>
+                              ))}
+                            </select>
+                            {!createForm.department && (
+                              <p className="text-[11px] text-text-primary/50 mt-1">
+                                Pick a department to see available roles.
+                              </p>
+                            )}
+                          </>
                         )}
                       </div>
                     </FormField>
@@ -1039,7 +1108,7 @@ export default function Users() {
                     </div>
                     <div className="flex gap-2 shrink-0 flex-wrap justify-end">
                       <Pill tone={createForm.kind === "admin" ? "secondary" : "primary"}>
-                        {createForm.roleLabel || (createForm.kind === "admin" ? "Admin" : "Employee")}
+                        {createForm.roleLabel || (createForm.kind === "admin" ? "Admin" : "Role…")}
                       </Pill>
                       {createForm.department && <Pill tone="slate">{createForm.department}</Pill>}
                     </div>
@@ -1141,6 +1210,7 @@ export default function Users() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Department — always pick first */}
                     <FormField label="Department" error={editErrors.department}>
                       <div className="relative">
                         <Briefcase className="w-4 h-4 text-text-primary/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -1153,6 +1223,7 @@ export default function Users() {
                       </div>
                     </FormField>
 
+                    {/* Role — filtered by selected department */}
                     <FormField label="Role" error={editErrors.roleLabel}>
                       <div className="relative">
                         <Tag className="w-4 h-4 text-text-primary/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -1166,15 +1237,29 @@ export default function Users() {
                             </p>
                           </>
                         ) : (
-                          <select value={editForm.roleLabel}
-                            onChange={(e) => setEditField("roleLabel", e.target.value)}
-                            className={cx(
-                              "w-full pl-9 pr-4 py-3 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-primary/30 bg-white appearance-none",
-                              editErrors.roleLabel ? "border-rose-300" : "border-slate-200"
-                            )}>
-                            <option value="" disabled>Select role…</option>
-                            {EMPLOYEE_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
-                          </select>
+                          <>
+                            <select
+                              value={editForm.roleLabel}
+                              onChange={(e) => setEditField("roleLabel", e.target.value)}
+                              disabled={!editForm.department}
+                              className={cx(
+                                "w-full pl-9 pr-4 py-3 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-primary/30 bg-white appearance-none transition",
+                                !editForm.department ? "opacity-50 cursor-not-allowed bg-slate-50" : "",
+                                editErrors.roleLabel ? "border-rose-300" : "border-slate-200"
+                              )}>
+                              {!editForm.department && (
+                                <option value="" disabled>Select a department first…</option>
+                              )}
+                              {getRolesForDept(editForm.department).map((role) => (
+                                <option key={role} value={role}>{role}</option>
+                              ))}
+                            </select>
+                            {!editForm.department && (
+                              <p className="text-[11px] text-text-primary/50 mt-1">
+                                Pick a department to see available roles.
+                              </p>
+                            )}
+                          </>
                         )}
                       </div>
                     </FormField>
