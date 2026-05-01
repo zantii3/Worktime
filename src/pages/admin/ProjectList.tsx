@@ -5,7 +5,7 @@ import { useAdmin } from "./context/AdminProvider";
 import type { Project, ProjectFile } from "./context/AdminTypes";
 import { notifyError, notifySuccess } from "./utils/toast";
 
-import accounts from "../data/accounts.json";
+import staticAccounts from "../data/accounts.json";
 
 import {
   ArrowRight,
@@ -21,6 +21,7 @@ import {
   FolderKanban,
   FolderOpen,
   Layers,
+  Paperclip,
   Pencil,
   PlayCircle,
   Plus,
@@ -38,14 +39,66 @@ import {
   RotateCw,
 } from "lucide-react";
 
+// ─── localStorage keys (must stay in sync with Users.tsx / resolveAccounts.ts) ─
+
+const CREATED_KEY = "worktime_created_accounts_v1";
+const DELETED_KEY = "worktime_deleted_account_ids_v1";
+const EDITS_KEY   = "worktime_account_edits_v1";
+const TASKS_KEY   = "worktime_tasks_v1";
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type Account = {
   id: number;
   email: string;
-  password: string;
+  password?: string;
   name: string;
   assignedProjects?: number[];
+};
+
+type CreatedAccount = {
+  id: number;
+  kind: "user" | "admin";
+  name: string;
+  email: string;
+  password: string;
+  roleLabel: string;
+  department: string;
+  createdAt: string;
+};
+
+type AccountEdit = {
+  name?: string;
+  email?: string;
+  password?: string;
+  roleLabel?: string;
+  department?: string;
+};
+
+type EditsMap = Record<string, AccountEdit>;
+
+// Task attachment shape (matches Tasks.tsx)
+type TaskAttachment = {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  dataUrl: string;
+};
+
+// Minimal task shape we need from localStorage
+type StoredTask = {
+  id: number;
+  projectId?: number;
+  assignedTo: string;
+  assignedToId?: number;
+  status: string;
+  attachments?: TaskAttachment[];
+  completionRequest?: {
+    attachments?: TaskAttachment[];
+    requestedBy?: string;
+    requestedAt?: string;
+  };
 };
 
 type ExtTask = {
@@ -67,14 +120,28 @@ type EditForm = {
 
 type FileCategory = "image" | "pdf" | "other";
 
+// A unified file entry that can come from project.files OR task attachments
+type MergedFile = {
+  // Common display fields
+  id: string;          // string so we can prefix "task-" to avoid collisions
+  name: string;
+  base64: string;      // for project files; dataUrl for task attachments — same content
+  uploadedBy: string;
+  uploadedAt: string;
+  projectId: number;
+  // Source tracking (used for delete logic — only project-owned files can be deleted)
+  source: "project" | "task-attachment" | "task-completion";
+  originalProjectFileId?: number; // set when source === "project"
+};
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function cx(...cls: Array<string | false | undefined | null>) {
   return cls.filter(Boolean).join(" ");
 }
 
-function getFileCategory(file: ProjectFile): FileCategory {
-  const b = file.base64 ?? "";
+function getFileCategory(file: MergedFile | ProjectFile): FileCategory {
+  const b = "base64" in file ? file.base64 : "";
   if (b.startsWith("data:image/")) return "image";
   if (b.startsWith("data:application/pdf")) return "pdf";
   const ext = file.name.toLowerCase().split(".").pop() ?? "";
@@ -83,10 +150,10 @@ function getFileCategory(file: ProjectFile): FileCategory {
   return "other";
 }
 
-function triggerDownload(file: ProjectFile) {
+function triggerDownload(name: string, base64: string) {
   const a = document.createElement("a");
-  a.href = file.base64;
-  a.download = file.name;
+  a.href = base64;
+  a.download = name;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -104,24 +171,134 @@ function formatUploadDate(iso: string) {
   }
 }
 
-const userAccounts = accounts as Account[];
+// ─── Resolve all user accounts from localStorage + static JSON ────────────────
+// Mirrors the logic in resolveAccounts.ts so ProjectList always sees
+// accounts created / edited / deleted via Users.tsx.
+
+function safeRead<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function resolveUserAccounts(): Account[] {
+  const deleted = new Set<string>(safeRead<string[]>(DELETED_KEY, []));
+  const edits   = safeRead<EditsMap>(EDITS_KEY, {});
+  const created = safeRead<CreatedAccount[]>(CREATED_KEY, []);
+
+  const result: Account[] = [];
+
+  // Static JSON user accounts
+  for (const a of staticAccounts as Account[]) {
+    const key = `user:${a.id}`;
+    if (deleted.has(key)) continue;
+    const edit = edits[key] ?? {};
+    result.push({
+      id:    a.id,
+      name:  edit.name  ?? a.name,
+      email: edit.email ?? a.email,
+    });
+  }
+
+  // Locally-created user accounts (kind === "user" only — admins aren't project members)
+  for (const a of created) {
+    if (a.kind !== "user") continue;
+    const key = `user:${a.id}`;
+    if (deleted.has(key)) continue;
+    const edit = edits[key] ?? {};
+    result.push({
+      id:    a.id,
+      name:  edit.name  ?? a.name,
+      email: edit.email ?? a.email,
+    });
+  }
+
+  return result;
+}
+
+// ─── Read raw tasks from localStorage ────────────────────────────────────────
+
+function readTasksFromStorage(): StoredTask[] {
+  try {
+    const raw = localStorage.getItem(TASKS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as StoredTask[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+// ─── Build merged file list for a project ────────────────────────────────────
+// Combines project.files (admin-uploaded) with task attachments
+// (user-uploaded task files + completion proof files).
+
+function buildMergedFiles(project: Project, storedTasks: StoredTask[]): MergedFile[] {
+  const merged: MergedFile[] = [];
+
+  // 1. Project-owned files (can be deleted by admin)
+  for (const f of project.files ?? []) {
+    merged.push({
+      id:                    `proj-${f.id}`,
+      name:                  f.name,
+      base64:                f.base64,
+      uploadedBy:            f.uploadedBy,
+      uploadedAt:            f.uploadedAt,
+      projectId:             f.projectId,
+      source:                "project",
+      originalProjectFileId: f.id,
+    });
+  }
+
+  // 2. Task-level supporting files (read-only — uploaded by user when assigning task)
+  const projectTasks = storedTasks.filter((t) => t.projectId === project.id);
+  for (const task of projectTasks) {
+    for (const att of task.attachments ?? []) {
+      merged.push({
+        id:          `task-att-${task.id}-${att.id}`,
+        name:        att.name,
+        base64:      att.dataUrl,
+        uploadedBy:  task.assignedTo || "Employee",
+        uploadedAt:  new Date().toISOString(), // attachments don't store uploadedAt
+        projectId:   project.id,
+        source:      "task-attachment",
+      });
+    }
+
+    // 3. Completion proof files (read-only — uploaded when submitting for approval)
+    for (const att of task.completionRequest?.attachments ?? []) {
+      merged.push({
+        id:          `task-compl-${task.id}-${att.id}`,
+        name:        att.name,
+        base64:      att.dataUrl,
+        uploadedBy:  task.completionRequest?.requestedBy ?? task.assignedTo ?? "Employee",
+        uploadedAt:  task.completionRequest?.requestedAt ?? new Date().toISOString(),
+        projectId:   project.id,
+        source:      "task-completion",
+      });
+    }
+  }
+
+  return merged;
+}
 
 // ─── File Preview Modal ────────────────────────────────────────────────────────
-// Unified modal for all file types. Rendered at the root level so it is never
-// trapped inside the files modal's own stacking context or AnimatePresence.
 
 function FilePreviewModal({
   file,
   onClose,
 }: {
-  file: ProjectFile;
+  file: MergedFile;
   onClose: () => void;
 }) {
   const cat = getFileCategory(file);
   const [imgScale, setImgScale] = useState(1);
   const [imgRotation, setImgRotation] = useState(0);
 
-  // Close on Escape
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -129,6 +306,20 @@ function FilePreviewModal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  const sourceLabel =
+    file.source === "project"
+      ? "Admin Upload"
+      : file.source === "task-completion"
+      ? "Completion Proof"
+      : "Task Attachment";
+
+  const sourceBadgeColor =
+    file.source === "project"
+      ? "bg-primary/15 text-primary"
+      : file.source === "task-completion"
+      ? "bg-green-500/15 text-green-700"
+      : "bg-amber-500/15 text-amber-700";
 
   return (
     <motion.div
@@ -138,9 +329,8 @@ function FilePreviewModal({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.15 }}
     >
-      {/* ── Top bar ── */}
+      {/* Top bar */}
       <div className="flex items-center justify-between gap-4 px-5 py-3 border-b border-white/10 bg-black/60 backdrop-blur-sm shrink-0">
-        {/* File info */}
         <div className="flex items-center gap-3 min-w-0">
           {cat === "image" ? (
             <FileImage className="w-5 h-5 text-white/60 shrink-0" />
@@ -148,16 +338,19 @@ function FilePreviewModal({
             <FileText className="w-5 h-5 text-white/60 shrink-0" />
           )}
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-white truncate">{file.name}</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-semibold text-white truncate">{file.name}</p>
+              <span className={cx("text-[10px] font-bold px-2 py-0.5 rounded-full", sourceBadgeColor)}>
+                {sourceLabel}
+              </span>
+            </div>
             <p className="text-xs text-white/50">
-              Uploaded {formatUploadDate(file.uploadedAt)} · {file.uploadedBy}
+              {formatUploadDate(file.uploadedAt)} · {file.uploadedBy}
             </p>
           </div>
         </div>
 
-        {/* Controls */}
         <div className="flex items-center gap-2 shrink-0">
-          {/* Image-specific controls */}
           {cat === "image" && (
             <>
               <button
@@ -192,7 +385,7 @@ function FilePreviewModal({
           )}
 
           <button
-            onClick={() => triggerDownload(file)}
+            onClick={() => triggerDownload(file.name, file.base64)}
             type="button"
             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition"
           >
@@ -210,10 +403,10 @@ function FilePreviewModal({
         </div>
       </div>
 
-      {/* ── Content area ── */}
+      {/* Content */}
       <div
         className="flex-1 overflow-auto flex items-center justify-center p-4"
-        onClick={onClose} // click outside content to close
+        onClick={onClose}
       >
         {cat === "image" && (
           <motion.img
@@ -270,7 +463,7 @@ function FilePreviewModal({
               </p>
             </div>
             <button
-              onClick={() => triggerDownload(file)}
+              onClick={() => triggerDownload(file.name, file.base64)}
               type="button"
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold hover:opacity-90 transition"
             >
@@ -286,11 +479,13 @@ function FilePreviewModal({
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
+type FileCat = FileCategory;
+
 function FileCategoryIcon({
   cat,
   className,
 }: {
-  cat: FileCategory;
+  cat: FileCat;
   className?: string;
 }) {
   if (cat === "image") return <FileImage className={className} />;
@@ -355,11 +550,30 @@ function StatCard({
   );
 }
 
+// Source badge shown in the file list rows
+function SourceBadge({ source }: { source: MergedFile["source"] }) {
+  if (source === "project") return null; // admin uploads need no badge — they're the default
+  if (source === "task-completion") {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-green-50 text-green-700 border border-green-200 shrink-0">
+        Completion Proof
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200 shrink-0">
+      <Paperclip className="w-2.5 h-2.5" />
+      Task File
+    </span>
+  );
+}
+
 function ProjectCard({
   project,
   tasks,
   leaderName,
   members,
+  mergedFileCount,
   onClick,
   onFiles,
   onMembers,
@@ -370,6 +584,7 @@ function ProjectCard({
   tasks: ExtTask[];
   leaderName: string;
   members: Account[];
+  mergedFileCount: number;
   onClick: () => void;
   onFiles: () => void;
   onMembers: () => void;
@@ -382,7 +597,6 @@ function ProjectCard({
   const progress = projectTasks.length
     ? Math.round((completed / projectTasks.length) * 100)
     : 0;
-  const fileCount = (project.files ?? []).length;
   const tags = project.tags ?? [];
 
   const stopProp = (fn: () => void) => (e: React.MouseEvent) => {
@@ -425,10 +639,10 @@ function ProjectCard({
               {project.dueDate}
             </span>
           )}
-          {fileCount > 0 && (
+          {mergedFileCount > 0 && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-secondary/10 text-secondary border border-secondary/20">
               <Files className="w-3 h-3" />
-              {fileCount} {fileCount === 1 ? "file" : "files"}
+              {mergedFileCount} {mergedFileCount === 1 ? "file" : "files"}
             </span>
           )}
         </div>
@@ -505,6 +719,11 @@ function ProjectCard({
         >
           <FileText className="w-3.5 h-3.5 text-primary" />
           Files
+          {mergedFileCount > 0 && (
+            <span className="inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-primary/10 text-primary text-[9px] font-bold">
+              {mergedFileCount}
+            </span>
+          )}
         </button>
         <button
           onClick={stopProp(onMembers)}
@@ -545,15 +764,11 @@ export default function ProjectList() {
   const [query, setQuery] = useState("");
 
   const [summaryId, setSummaryId] = useState<number | null>(null);
-  const [filesId, setFilesId] = useState<number | null>(null);
+  const [filesId,   setFilesId]   = useState<number | null>(null);
   const [membersId, setMembersId] = useState<number | null>(null);
-  const [editId, setEditId] = useState<number | null>(null);
+  const [editId,    setEditId]    = useState<number | null>(null);
 
-  // ── Unified file preview state ──────────────────────────────────────────
-  // Single state drives the new FilePreviewModal. Replaces the old split
-  // previewFile (lightbox) + window.open (PDF) approach.
-  const [previewFile, setPreviewFile] = useState<ProjectFile | null>(null);
-
+  const [previewFile, setPreviewFile] = useState<MergedFile | null>(null);
   const [memberSearch, setMemberSearch] = useState("");
 
   const [editForm, setEditForm] = useState<EditForm>({
@@ -565,27 +780,54 @@ export default function ProjectList() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Live task attachments from localStorage ──────────────────────────────
+  // Poll every 3 s so newly submitted task files appear without a page reload.
+  const [storedTasks, setStoredTasks] = useState<StoredTask[]>(() => readTasksFromStorage());
+
+  useEffect(() => {
+    const load = () => setStoredTasks(readTasksFromStorage());
+    load();
+    const interval = setInterval(load, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // ── Live user accounts (static JSON + localStorage created/edited/deleted) ─
+  const [userAccounts, setUserAccounts] = useState<Account[]>(() => resolveUserAccounts());
+
+  useEffect(() => {
+    // Refresh when Users.tsx writes to the relevant keys
+    const handleStorage = (e: StorageEvent) => {
+      if (
+        e.key === CREATED_KEY ||
+        e.key === DELETED_KEY ||
+        e.key === EDITS_KEY
+      ) {
+        setUserAccounts(resolveUserAccounts());
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  // Also poll so same-tab edits (Users.tsx in same window) are picked up.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setUserAccounts(resolveUserAccounts());
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  const summaryProject = useMemo(
-    () => projects.find((p) => p.id === summaryId) ?? null,
-    [projects, summaryId]
-  );
-  const filesProject = useMemo(
-    () => projects.find((p) => p.id === filesId) ?? null,
-    [projects, filesId]
-  );
-  const membersProject = useMemo(
-    () => projects.find((p) => p.id === membersId) ?? null,
-    [projects, membersId]
-  );
-  const editingProject = useMemo(
-    () => projects.find((p) => p.id === editId) ?? null,
-    [projects, editId]
-  );
+  // ── Derived data ─────────────────────────────────────────────────────────
+
+  const summaryProject  = useMemo(() => projects.find((p) => p.id === summaryId)  ?? null, [projects, summaryId]);
+  const filesProject    = useMemo(() => projects.find((p) => p.id === filesId)    ?? null, [projects, filesId]);
+  const membersProject  = useMemo(() => projects.find((p) => p.id === membersId)  ?? null, [projects, membersId]);
+  const editingProject  = useMemo(() => projects.find((p) => p.id === editId)     ?? null, [projects, editId]);
 
   const getLeaderName = (leaderId: number): string =>
     userAccounts.find((a) => a.id === leaderId)?.name ?? "Unknown";
@@ -600,9 +842,22 @@ export default function ProjectList() {
     return userAccounts.filter((a) => ids.has(a.id));
   };
 
+  // Per-project merged file lists (project files + task attachments)
+  const mergedFilesByProject = useMemo(() => {
+    const map = new Map<number, MergedFile[]>();
+    for (const p of projects) {
+      map.set(p.id, buildMergedFiles(p, storedTasks));
+    }
+    return map;
+  }, [projects, storedTasks]);
+
   const stats = useMemo(() => {
     const totalProjects = projects.length;
-    const totalFiles = projects.reduce((s, p) => s + (p.files?.length ?? 0), 0);
+    // Count total files including task attachments
+    const totalFiles = projects.reduce(
+      (s, p) => s + (mergedFilesByProject.get(p.id)?.length ?? 0),
+      0
+    );
     const memberIds = new Set<number>();
     projects.forEach((p) => {
       (p.memberIds ?? []).forEach((id) => memberIds.add(id));
@@ -613,7 +868,7 @@ export default function ProjectList() {
     const totalMembers = memberIds.size;
     const totalTasks = tasks.filter((t) => projects.some((p) => p.id === t.projectId)).length;
     return { totalProjects, totalFiles, totalMembers, totalTasks };
-  }, [projects, tasks]);
+  }, [projects, tasks, mergedFilesByProject]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -623,6 +878,14 @@ export default function ProjectList() {
     );
   }, [projects, query]);
 
+  // Current files modal merged list
+  const filesModalFiles = useMemo(
+    () => (filesProject ? (mergedFilesByProject.get(filesProject.id) ?? []) : []),
+    [filesProject, mergedFilesByProject]
+  );
+
+  // ── Actions ───────────────────────────────────────────────────────────────
+
   const deleteProject = (projectId: number) => {
     if (!window.confirm("Delete this project and all its tasks?")) return;
     setProjects((prev) => prev.filter((p) => p.id !== projectId));
@@ -631,18 +894,18 @@ export default function ProjectList() {
 
   const openEdit = (project: Project) => {
     setEditForm({
-      name: project.name,
+      name:        project.name,
       description: project.description,
-      leaderId: project.leaderId,
-      dueDate: project.dueDate ?? "",
+      leaderId:    project.leaderId,
+      dueDate:     project.dueDate ?? "",
     });
     setEditId(project.id);
   };
 
   const saveEdit = () => {
     if (!editId) return;
-    if (!editForm.name.trim()) { notifyError("Project name is required."); return; }
-    if (!editForm.leaderId) { notifyError("Please select a project leader."); return; }
+    if (!editForm.name.trim())  { notifyError("Project name is required."); return; }
+    if (!editForm.leaderId)     { notifyError("Please select a project leader."); return; }
     setProjects((prev) =>
       prev.map((p) => (p.id === editId ? { ...p, ...editForm } : p))
     );
@@ -672,18 +935,19 @@ export default function ProjectList() {
     );
   };
 
+  // Only project-owned files can be uploaded / deleted by admin
   const handleFileUpload = (file: File) => {
     if (!filesId) return;
     if (file.size > 1024 * 1024) { notifyError("File exceeds 1 MB limit."); return; }
     const reader = new FileReader();
     reader.onload = () => {
       const newFile: ProjectFile = {
-        id: Date.now(),
-        name: file.name,
-        base64: reader.result as string,
+        id:         Date.now(),
+        name:       file.name,
+        base64:     reader.result as string,
         uploadedBy: "Admin",
         uploadedAt: new Date().toISOString(),
-        projectId: filesId,
+        projectId:  filesId,
       };
       setProjects((prev) =>
         prev.map((p) =>
@@ -695,20 +959,25 @@ export default function ProjectList() {
     reader.readAsDataURL(file);
   };
 
-  const deleteFile = (fileId: number) => {
-    if (!filesId) return;
-    // If the currently previewed file is being deleted, close the preview.
-    if (previewFile?.id === fileId) setPreviewFile(null);
+  const deleteFile = (mergedFile: MergedFile) => {
+    if (mergedFile.source !== "project") {
+      notifyError("Task files can only be removed from the Tasks page.");
+      return;
+    }
+    if (!filesId || mergedFile.originalProjectFileId === undefined) return;
+    if (previewFile?.id === mergedFile.id) setPreviewFile(null);
+    const targetId = mergedFile.originalProjectFileId;
     setProjects((prev) =>
       prev.map((p) =>
         p.id === filesId
-          ? { ...p, files: p.files.filter((f) => f.id !== fileId) }
+          ? { ...p, files: p.files.filter((f) => f.id !== targetId) }
           : p
       )
     );
     notifySuccess("File deleted.");
   };
 
+  // Members to add: all resolved user accounts not already in the project
   const membersToAdd = useMemo(() => {
     if (!membersProject) return [];
     const current = new Set<number>([
@@ -721,9 +990,11 @@ export default function ProjectList() {
     return userAccounts.filter(
       (a) =>
         !current.has(a.id) &&
-        (!q || a.name.toLowerCase().includes(q) || a.email.toLowerCase().includes(q))
+        (!q ||
+          a.name.toLowerCase().includes(q) ||
+          (a.email ?? "").toLowerCase().includes(q))
     );
-  }, [membersProject, tasks, memberSearch]);
+  }, [membersProject, tasks, memberSearch, userAccounts]);
 
   return (
     <motion.div
@@ -732,7 +1003,7 @@ export default function ProjectList() {
       transition={{ duration: 0.25 }}
       className="space-y-6"
     >
-      {/* ── File Preview Modal — rendered at root level, above everything ── */}
+      {/* ── File Preview Modal ── */}
       <AnimatePresence>
         {previewFile && (
           <FilePreviewModal
@@ -765,10 +1036,10 @@ export default function ProjectList() {
 
       {/* ── Stats ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Projects" value={stats.totalProjects} subtitle="Across all teams" icon={FolderKanban} />
-        <StatCard title="Uploaded Files" value={stats.totalFiles} subtitle="Stored in projects" icon={Files} />
-        <StatCard title="Active Members" value={stats.totalMembers} subtitle="Across all projects" icon={Users} />
-        <StatCard title="Total Tasks" value={stats.totalTasks} subtitle="Linked to projects" icon={CheckCircle2} />
+        <StatCard title="Total Projects"  value={stats.totalProjects} subtitle="Across all teams"      icon={FolderKanban} />
+        <StatCard title="Uploaded Files"  value={stats.totalFiles}    subtitle="Including task files"  icon={Files} />
+        <StatCard title="Active Members"  value={stats.totalMembers}  subtitle="Across all projects"   icon={Users} />
+        <StatCard title="Total Tasks"     value={stats.totalTasks}    subtitle="Linked to projects"    icon={CheckCircle2} />
       </div>
 
       {/* ── Search bar ── */}
@@ -821,6 +1092,7 @@ export default function ProjectList() {
                 tasks={tasks}
                 leaderName={getLeaderName(project.leaderId)}
                 members={getProjectMembers(project)}
+                mergedFileCount={mergedFilesByProject.get(project.id)?.length ?? 0}
                 onClick={() => setSummaryId(project.id)}
                 onFiles={() => setFilesId(project.id)}
                 onMembers={() => { setMemberSearch(""); setMembersId(project.id); }}
@@ -900,19 +1172,19 @@ export default function ProjectList() {
               <div className="p-6 overflow-y-auto space-y-6">
                 {(() => {
                   const pt = tasks.filter((t) => t.projectId === summaryProject.id);
-                  const done = pt.filter((t) => t.status === "Completed").length;
-                  const wip = pt.filter((t) => t.status === "In Progress").length;
+                  const done    = pt.filter((t) => t.status === "Completed").length;
+                  const wip     = pt.filter((t) => t.status === "In Progress").length;
                   const pending = pt.filter((t) => t.status === "Pending").length;
-                  const pct = pt.length ? Math.round((done / pt.length) * 100) : 0;
+                  const pct     = pt.length ? Math.round((done / pt.length) * 100) : 0;
                   return (
                     <div>
                       <div className="text-xs font-bold uppercase tracking-widest text-text-primary/50 mb-3">Task Progress</div>
                       <div className="grid grid-cols-4 gap-3 mb-4">
                         {[
-                          { label: "Total", value: pt.length, color: "text-text-heading", bg: "bg-soft border-slate-200" },
-                          { label: "Pending", value: pending, color: "text-amber-700", bg: "bg-amber-50 border-amber-200" },
-                          { label: "In Progress", value: wip, color: "text-primary", bg: "bg-primary/5 border-primary/20" },
-                          { label: "Completed", value: done, color: "text-green-700", bg: "bg-green-50 border-green-200" },
+                          { label: "Total",       value: pt.length, color: "text-text-heading", bg: "bg-soft border-slate-200"         },
+                          { label: "Pending",     value: pending,   color: "text-amber-700",    bg: "bg-amber-50 border-amber-200"      },
+                          { label: "In Progress", value: wip,       color: "text-primary",      bg: "bg-primary/5 border-primary/20"    },
+                          { label: "Completed",   value: done,      color: "text-green-700",    bg: "bg-green-50 border-green-200"      },
                         ].map((s) => (
                           <div key={s.label} className={cx("rounded-xl border p-3 text-center", s.bg)}>
                             <div className={cx("text-2xl font-extrabold tabular-nums", s.color)}>{s.value}</div>
@@ -958,30 +1230,34 @@ export default function ProjectList() {
                   ) : null;
                 })()}
 
-                {(summaryProject.files ?? []).length > 0 && (
-                  <div>
-                    <div className="text-xs font-bold uppercase tracking-widest text-text-primary/50 mb-3">
-                      Files ({summaryProject.files.length})
-                    </div>
-                    <div className="space-y-1.5">
-                      {summaryProject.files.slice(0, 4).map((f) => {
-                        const cat = getFileCategory(f);
-                        return (
-                          <div key={f.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
-                            <FileCategoryIcon cat={cat} className="w-4 h-4 text-primary shrink-0" />
-                            <span className="text-sm text-text-heading truncate flex-1">{f.name}</span>
-                            <span className="text-xs text-text-primary/50 shrink-0">{formatUploadDate(f.uploadedAt)}</span>
+                {(() => {
+                  const mf = mergedFilesByProject.get(summaryProject.id) ?? [];
+                  return mf.length > 0 ? (
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-widest text-text-primary/50 mb-3">
+                        Files ({mf.length})
+                      </div>
+                      <div className="space-y-1.5">
+                        {mf.slice(0, 4).map((f) => {
+                          const cat = getFileCategory(f);
+                          return (
+                            <div key={f.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                              <FileCategoryIcon cat={cat} className="w-4 h-4 text-primary shrink-0" />
+                              <span className="text-sm text-text-heading truncate flex-1">{f.name}</span>
+                              <SourceBadge source={f.source} />
+                              <span className="text-xs text-text-primary/50 shrink-0">{formatUploadDate(f.uploadedAt)}</span>
+                            </div>
+                          );
+                        })}
+                        {mf.length > 4 && (
+                          <div className="text-xs text-text-primary/50 px-3">
+                            +{mf.length - 4} more files
                           </div>
-                        );
-                      })}
-                      {summaryProject.files.length > 4 && (
-                        <div className="text-xs text-text-primary/50 px-3">
-                          +{summaryProject.files.length - 4} more files
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  ) : null;
+                })()}
               </div>
 
               <div className="px-6 pb-5 shrink-0 flex gap-2">
@@ -1052,6 +1328,19 @@ export default function ProjectList() {
                     <X className="w-4 h-4" />
                   </button>
                 </div>
+
+                {/* Legend */}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-white/15">
+                    <Upload className="w-3 h-3" /> Admin uploads — can be deleted
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-400/20 text-amber-200">
+                    <Paperclip className="w-3 h-3" /> Task files — read-only
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-green-400/20 text-green-200">
+                    <CheckCircle2 className="w-3 h-3" /> Completion proofs — read-only
+                  </span>
+                </div>
               </div>
 
               {/* Upload zone */}
@@ -1077,15 +1366,16 @@ export default function ProjectList() {
 
               {/* File list */}
               <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2.5">
-                {(filesProject.files ?? []).length === 0 ? (
+                {filesModalFiles.length === 0 ? (
                   <div className="py-12 flex flex-col items-center text-center text-text-primary/50">
                     <FileText className="w-10 h-10 mb-3 opacity-30" />
                     <div className="text-sm font-semibold">No files yet</div>
-                    <div className="text-xs mt-1">Upload a file using the zone above.</div>
+                    <div className="text-xs mt-1">Upload a file above, or assign tasks with attachments.</div>
                   </div>
                 ) : (
-                  (filesProject.files ?? []).map((file) => {
+                  filesModalFiles.map((file) => {
                     const cat = getFileCategory(file);
+                    const canDelete = file.source === "project";
                     return (
                       <motion.div
                         key={file.id}
@@ -1108,7 +1398,10 @@ export default function ProjectList() {
 
                         {/* Info */}
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold text-text-heading truncate">{file.name}</div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="text-sm font-semibold text-text-heading truncate">{file.name}</div>
+                            <SourceBadge source={file.source} />
+                          </div>
                           <div className="text-xs text-text-primary/50 mt-0.5">
                             {formatUploadDate(file.uploadedAt)} · {file.uploadedBy}
                           </div>
@@ -1116,25 +1409,17 @@ export default function ProjectList() {
 
                         {/* Actions */}
                         <div className="flex items-center gap-1.5 shrink-0">
-                          {/* ── View button — now always opens FilePreviewModal ── */}
                           <button
                             onClick={() => setPreviewFile(file)}
                             type="button"
-                            title={
-                              cat === "image"
-                                ? "Preview image"
-                                : cat === "pdf"
-                                ? "Preview PDF"
-                                : "View file info"
-                            }
+                            title="Preview"
                             className="h-8 w-8 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-text-primary/60 hover:text-primary hover:border-primary/30 transition"
                           >
                             <Eye className="w-4 h-4" />
                           </button>
 
-                          {/* Download */}
                           <button
-                            onClick={() => triggerDownload(file)}
+                            onClick={() => triggerDownload(file.name, file.base64)}
                             type="button"
                             title="Download"
                             className="h-8 w-8 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-text-primary/60 hover:text-primary hover:border-primary/30 transition"
@@ -1142,15 +1427,19 @@ export default function ProjectList() {
                             <Download className="w-4 h-4" />
                           </button>
 
-                          {/* Delete */}
-                          <button
-                            onClick={() => deleteFile(file.id)}
-                            type="button"
-                            title="Delete"
-                            className="h-8 w-8 rounded-lg border border-rose-100 bg-white flex items-center justify-center text-rose-400 hover:text-rose-600 hover:border-rose-300 transition"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {canDelete ? (
+                            <button
+                              onClick={() => deleteFile(file)}
+                              type="button"
+                              title="Delete"
+                              className="h-8 w-8 rounded-lg border border-rose-100 bg-white flex items-center justify-center text-rose-400 hover:text-rose-600 hover:border-rose-300 transition"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          ) : (
+                            /* Placeholder to keep alignment consistent */
+                            <div className="h-8 w-8" />
+                          )}
                         </div>
                       </motion.div>
                     );
@@ -1215,14 +1504,15 @@ export default function ProjectList() {
               </div>
 
               <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                {/* Current members */}
                 {(() => {
                   const explicit = new Set(membersProject.memberIds ?? []);
-                  const taskIds = new Set(
+                  const taskIds  = new Set(
                     tasks
                       .filter((t) => t.projectId === membersProject.id && t.assignedToId != null)
                       .map((t) => t.assignedToId as number)
                   );
-                  const allIds = new Set([...explicit, ...taskIds]);
+                  const allIds  = new Set([...explicit, ...taskIds]);
                   const members = userAccounts.filter((a) => allIds.has(a.id));
                   return members.length > 0 ? (
                     <div>
@@ -1238,7 +1528,7 @@ export default function ProjectList() {
                               <MemberAvatar name={m.name} size="md" />
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-text-heading truncate">{m.name}</div>
-                                <div className="text-xs text-text-primary/60 truncate">{m.email}</div>
+                                <div className="text-xs text-text-primary/60 truncate">{m.email ?? "—"}</div>
                               </div>
                               {isTaskOnly && (
                                 <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-secondary/10 text-secondary border border-secondary/20 shrink-0">
@@ -1267,8 +1557,11 @@ export default function ProjectList() {
                   );
                 })()}
 
+                {/* Add members — now includes locally-created users */}
                 <div>
-                  <div className="text-xs font-bold uppercase tracking-widest text-text-primary/50 mb-2">Add Members</div>
+                  <div className="text-xs font-bold uppercase tracking-widest text-text-primary/50 mb-2">
+                    Add Members
+                  </div>
                   <div className="relative mb-3">
                     <Search className="w-4 h-4 text-text-primary/40 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
@@ -1289,7 +1582,7 @@ export default function ProjectList() {
                           <MemberAvatar name={user.name} size="md" />
                           <div className="min-w-0 flex-1">
                             <div className="text-sm font-semibold text-text-heading truncate">{user.name}</div>
-                            <div className="text-xs text-text-primary/60 truncate">{user.email}</div>
+                            <div className="text-xs text-text-primary/60 truncate">{user.email ?? "—"}</div>
                           </div>
                           <button
                             onClick={() => addMember(user.id)}
