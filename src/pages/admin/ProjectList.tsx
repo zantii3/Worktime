@@ -39,7 +39,7 @@ import {
   RotateCw,
 } from "lucide-react";
 
-// ─── localStorage keys (must stay in sync with Users.tsx / resolveAccounts.ts) ─
+// ─── localStorage keys ─────────────────────────────────────────────────────────
 
 const CREATED_KEY = "worktime_created_accounts_v1";
 const DELETED_KEY = "worktime_deleted_account_ids_v1";
@@ -77,7 +77,6 @@ type AccountEdit = {
 
 type EditsMap = Record<string, AccountEdit>;
 
-// Task attachment shape (matches Tasks.tsx)
 type TaskAttachment = {
   id: string;
   name: string;
@@ -86,7 +85,6 @@ type TaskAttachment = {
   dataUrl: string;
 };
 
-// Minimal task shape we need from localStorage
 type StoredTask = {
   id: number;
   projectId?: number;
@@ -120,18 +118,18 @@ type EditForm = {
 
 type FileCategory = "image" | "pdf" | "other";
 
-// A unified file entry that can come from project.files OR task attachments
 type MergedFile = {
-  // Common display fields
-  id: string;          // string so we can prefix "task-" to avoid collisions
+  id: string;
   name: string;
-  base64: string;      // for project files; dataUrl for task attachments — same content
+  base64: string;
   uploadedBy: string;
   uploadedAt: string;
   projectId: number;
-  // Source tracking (used for delete logic — only project-owned files can be deleted)
   source: "project" | "task-attachment" | "task-completion";
-  originalProjectFileId?: number; // set when source === "project"
+  originalProjectFileId?: number;
+  // For task files — used to delete from localStorage
+  taskId?: number;
+  attachmentId?: string;
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -171,10 +169,6 @@ function formatUploadDate(iso: string) {
   }
 }
 
-// ─── Resolve all user accounts from localStorage + static JSON ────────────────
-// Mirrors the logic in resolveAccounts.ts so ProjectList always sees
-// accounts created / edited / deleted via Users.tsx.
-
 function safeRead<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
@@ -192,35 +186,23 @@ function resolveUserAccounts(): Account[] {
 
   const result: Account[] = [];
 
-  // Static JSON user accounts
   for (const a of staticAccounts as Account[]) {
     const key = `user:${a.id}`;
     if (deleted.has(key)) continue;
     const edit = edits[key] ?? {};
-    result.push({
-      id:    a.id,
-      name:  edit.name  ?? a.name,
-      email: edit.email ?? a.email,
-    });
+    result.push({ id: a.id, name: edit.name ?? a.name, email: edit.email ?? a.email });
   }
 
-  // Locally-created user accounts (kind === "user" only — admins aren't project members)
   for (const a of created) {
     if (a.kind !== "user") continue;
     const key = `user:${a.id}`;
     if (deleted.has(key)) continue;
     const edit = edits[key] ?? {};
-    result.push({
-      id:    a.id,
-      name:  edit.name  ?? a.name,
-      email: edit.email ?? a.email,
-    });
+    result.push({ id: a.id, name: edit.name ?? a.name, email: edit.email ?? a.email });
   }
 
   return result;
 }
-
-// ─── Read raw tasks from localStorage ────────────────────────────────────────
 
 function readTasksFromStorage(): StoredTask[] {
   try {
@@ -233,14 +215,18 @@ function readTasksFromStorage(): StoredTask[] {
   }
 }
 
-// ─── Build merged file list for a project ────────────────────────────────────
-// Combines project.files (admin-uploaded) with task attachments
-// (user-uploaded task files + completion proof files).
+/** Write updated tasks back to localStorage */
+function writeTasksToStorage(tasks: StoredTask[]): void {
+  try {
+    localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+  } catch {
+    // ignore
+  }
+}
 
 function buildMergedFiles(project: Project, storedTasks: StoredTask[]): MergedFile[] {
   const merged: MergedFile[] = [];
 
-  // 1. Project-owned files (can be deleted by admin)
   for (const f of project.files ?? []) {
     merged.push({
       id:                    `proj-${f.id}`,
@@ -254,7 +240,6 @@ function buildMergedFiles(project: Project, storedTasks: StoredTask[]): MergedFi
     });
   }
 
-  // 2. Task-level supporting files (read-only — uploaded by user when assigning task)
   const projectTasks = storedTasks.filter((t) => t.projectId === project.id);
   for (const task of projectTasks) {
     for (const att of task.attachments ?? []) {
@@ -263,13 +248,14 @@ function buildMergedFiles(project: Project, storedTasks: StoredTask[]): MergedFi
         name:        att.name,
         base64:      att.dataUrl,
         uploadedBy:  task.assignedTo || "Employee",
-        uploadedAt:  new Date().toISOString(), // attachments don't store uploadedAt
+        uploadedAt:  new Date().toISOString(),
         projectId:   project.id,
         source:      "task-attachment",
+        taskId:      task.id,
+        attachmentId: att.id,
       });
     }
 
-    // 3. Completion proof files (read-only — uploaded when submitting for approval)
     for (const att of task.completionRequest?.attachments ?? []) {
       merged.push({
         id:          `task-compl-${task.id}-${att.id}`,
@@ -279,6 +265,8 @@ function buildMergedFiles(project: Project, storedTasks: StoredTask[]): MergedFi
         uploadedAt:  task.completionRequest?.requestedAt ?? new Date().toISOString(),
         projectId:   project.id,
         source:      "task-completion",
+        taskId:      task.id,
+        attachmentId: att.id,
       });
     }
   }
@@ -479,13 +467,11 @@ function FilePreviewModal({
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
-type FileCat = FileCategory;
-
 function FileCategoryIcon({
   cat,
   className,
 }: {
-  cat: FileCat;
+  cat: FileCategory;
   className?: string;
 }) {
   if (cat === "image") return <FileImage className={className} />;
@@ -550,9 +536,8 @@ function StatCard({
   );
 }
 
-// Source badge shown in the file list rows
 function SourceBadge({ source }: { source: MergedFile["source"] }) {
-  if (source === "project") return null; // admin uploads need no badge — they're the default
+  if (source === "project") return null;
   if (source === "task-completion") {
     return (
       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-green-50 text-green-700 border border-green-200 shrink-0">
@@ -780,8 +765,7 @@ export default function ProjectList() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ── Live task attachments from localStorage ──────────────────────────────
-  // Poll every 3 s so newly submitted task files appear without a page reload.
+  // ── Live task data from localStorage ─────────────────────────────────────
   const [storedTasks, setStoredTasks] = useState<StoredTask[]>(() => readTasksFromStorage());
 
   useEffect(() => {
@@ -791,17 +775,12 @@ export default function ProjectList() {
     return () => clearInterval(interval);
   }, []);
 
-  // ── Live user accounts (static JSON + localStorage created/edited/deleted) ─
+  // ── Live user accounts ──────────────────────────────────────────────────
   const [userAccounts, setUserAccounts] = useState<Account[]>(() => resolveUserAccounts());
 
   useEffect(() => {
-    // Refresh when Users.tsx writes to the relevant keys
     const handleStorage = (e: StorageEvent) => {
-      if (
-        e.key === CREATED_KEY ||
-        e.key === DELETED_KEY ||
-        e.key === EDITS_KEY
-      ) {
+      if (e.key === CREATED_KEY || e.key === DELETED_KEY || e.key === EDITS_KEY) {
         setUserAccounts(resolveUserAccounts());
       }
     };
@@ -809,11 +788,8 @@ export default function ProjectList() {
     return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
-  // Also poll so same-tab edits (Users.tsx in same window) are picked up.
   useEffect(() => {
-    const interval = setInterval(() => {
-      setUserAccounts(resolveUserAccounts());
-    }, 3000);
+    const interval = setInterval(() => setUserAccounts(resolveUserAccounts()), 3000);
     return () => clearInterval(interval);
   }, []);
 
@@ -822,7 +798,7 @@ export default function ProjectList() {
     return () => clearInterval(t);
   }, []);
 
-  // ── Derived data ─────────────────────────────────────────────────────────
+  // ── Derived data ──────────────────────────────────────────────────────────
 
   const summaryProject  = useMemo(() => projects.find((p) => p.id === summaryId)  ?? null, [projects, summaryId]);
   const filesProject    = useMemo(() => projects.find((p) => p.id === filesId)    ?? null, [projects, filesId]);
@@ -842,7 +818,6 @@ export default function ProjectList() {
     return userAccounts.filter((a) => ids.has(a.id));
   };
 
-  // Per-project merged file lists (project files + task attachments)
   const mergedFilesByProject = useMemo(() => {
     const map = new Map<number, MergedFile[]>();
     for (const p of projects) {
@@ -853,7 +828,6 @@ export default function ProjectList() {
 
   const stats = useMemo(() => {
     const totalProjects = projects.length;
-    // Count total files including task attachments
     const totalFiles = projects.reduce(
       (s, p) => s + (mergedFilesByProject.get(p.id)?.length ?? 0),
       0
@@ -878,7 +852,6 @@ export default function ProjectList() {
     );
   }, [projects, query]);
 
-  // Current files modal merged list
   const filesModalFiles = useMemo(
     () => (filesProject ? (mergedFilesByProject.get(filesProject.id) ?? []) : []),
     [filesProject, mergedFilesByProject]
@@ -935,7 +908,6 @@ export default function ProjectList() {
     );
   };
 
-  // Only project-owned files can be uploaded / deleted by admin
   const handleFileUpload = (file: File) => {
     if (!filesId) return;
     if (file.size > 1024 * 1024) { notifyError("File exceeds 1 MB limit."); return; }
@@ -959,25 +931,71 @@ export default function ProjectList() {
     reader.readAsDataURL(file);
   };
 
+  /**
+   * Delete any file — project-owned files are removed from project state;
+   * task-attachment and task-completion files are removed from the tasks
+   * stored in localStorage (and the local storedTasks state is refreshed).
+   */
   const deleteFile = (mergedFile: MergedFile) => {
-    if (mergedFile.source !== "project") {
-      notifyError("Task files can only be removed from the Tasks page.");
+    if (!window.confirm(`Delete "${mergedFile.name}"? This cannot be undone.`)) return;
+
+    if (mergedFile.source === "project") {
+      // Remove from project files in context/localStorage
+      if (!filesId || mergedFile.originalProjectFileId === undefined) return;
+      if (previewFile?.id === mergedFile.id) setPreviewFile(null);
+      const targetId = mergedFile.originalProjectFileId;
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.id === filesId
+            ? { ...p, files: p.files.filter((f) => f.id !== targetId) }
+            : p
+        )
+      );
+      notifySuccess("File deleted.");
       return;
     }
-    if (!filesId || mergedFile.originalProjectFileId === undefined) return;
+
+    // Task-level file (task-attachment or task-completion)
+    // Remove the specific attachment from the task in localStorage
+    if (mergedFile.taskId === undefined || !mergedFile.attachmentId) {
+      notifyError("Could not identify file source. Please refresh and try again.");
+      return;
+    }
+
     if (previewFile?.id === mergedFile.id) setPreviewFile(null);
-    const targetId = mergedFile.originalProjectFileId;
-    setProjects((prev) =>
-      prev.map((p) =>
-        p.id === filesId
-          ? { ...p, files: p.files.filter((f) => f.id !== targetId) }
-          : p
-      )
-    );
+
+    const updatedTasks = storedTasks.map((task) => {
+      if (task.id !== mergedFile.taskId) return task;
+
+      if (mergedFile.source === "task-attachment") {
+        return {
+          ...task,
+          attachments: (task.attachments ?? []).filter((a) => a.id !== mergedFile.attachmentId),
+        };
+      }
+
+      if (mergedFile.source === "task-completion") {
+        return {
+          ...task,
+          completionRequest: task.completionRequest
+            ? {
+                ...task.completionRequest,
+                attachments: (task.completionRequest.attachments ?? []).filter(
+                  (a) => a.id !== mergedFile.attachmentId
+                ),
+              }
+            : task.completionRequest,
+        };
+      }
+
+      return task;
+    });
+
+    writeTasksToStorage(updatedTasks);
+    setStoredTasks(updatedTasks);
     notifySuccess("File deleted.");
   };
 
-  // Members to add: all resolved user accounts not already in the project
   const membersToAdd = useMemo(() => {
     if (!membersProject) return [];
     const current = new Set<number>([
@@ -1335,10 +1353,10 @@ export default function ProjectList() {
                     <Upload className="w-3 h-3" /> Admin uploads — can be deleted
                   </span>
                   <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-400/20 text-amber-200">
-                    <Paperclip className="w-3 h-3" /> Task files — read-only
+                    <Paperclip className="w-3 h-3" /> Task files — can be deleted
                   </span>
                   <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-green-400/20 text-green-200">
-                    <CheckCircle2 className="w-3 h-3" /> Completion proofs — read-only
+                    <CheckCircle2 className="w-3 h-3" /> Completion proofs — can be deleted
                   </span>
                 </div>
               </div>
@@ -1375,7 +1393,6 @@ export default function ProjectList() {
                 ) : (
                   filesModalFiles.map((file) => {
                     const cat = getFileCategory(file);
-                    const canDelete = file.source === "project";
                     return (
                       <motion.div
                         key={file.id}
@@ -1407,7 +1424,7 @@ export default function ProjectList() {
                           </div>
                         </div>
 
-                        {/* Actions */}
+                        {/* Actions — all files are now deletable by admin */}
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button
                             onClick={() => setPreviewFile(file)}
@@ -1427,19 +1444,14 @@ export default function ProjectList() {
                             <Download className="w-4 h-4" />
                           </button>
 
-                          {canDelete ? (
-                            <button
-                              onClick={() => deleteFile(file)}
-                              type="button"
-                              title="Delete"
-                              className="h-8 w-8 rounded-lg border border-rose-100 bg-white flex items-center justify-center text-rose-400 hover:text-rose-600 hover:border-rose-300 transition"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          ) : (
-                            /* Placeholder to keep alignment consistent */
-                            <div className="h-8 w-8" />
-                          )}
+                          <button
+                            onClick={() => deleteFile(file)}
+                            type="button"
+                            title="Delete"
+                            className="h-8 w-8 rounded-lg border border-rose-100 bg-white flex items-center justify-center text-rose-400 hover:text-rose-600 hover:border-rose-300 transition"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </motion.div>
                     );
@@ -1504,7 +1516,6 @@ export default function ProjectList() {
               </div>
 
               <div className="flex-1 overflow-y-auto p-5 space-y-5">
-                {/* Current members */}
                 {(() => {
                   const explicit = new Set(membersProject.memberIds ?? []);
                   const taskIds  = new Set(
@@ -1557,7 +1568,6 @@ export default function ProjectList() {
                   );
                 })()}
 
-                {/* Add members — now includes locally-created users */}
                 <div>
                   <div className="text-xs font-bold uppercase tracking-widest text-text-primary/50 mb-2">
                     Add Members

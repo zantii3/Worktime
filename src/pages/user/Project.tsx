@@ -5,6 +5,7 @@ import {
   Menu, FolderKanban, Search, X, ChevronRight,
   Calendar, Tag, Clock, CheckCircle2,
   Circle, PlayCircle, AlertCircle, Layers, Eye,
+  FileText, FileImage, Users, Download, Paperclip,
 } from "lucide-react";
 import Usersidebar from "./components/Usersidebar.tsx";
 
@@ -21,6 +22,16 @@ interface Account {
 interface ProjectMember {
   id: string;
   name: string;
+  email?: string;
+}
+
+interface ProjectFile {
+  id: number;
+  name: string;
+  base64: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  projectId: number;
 }
 
 interface Project {
@@ -37,13 +48,30 @@ interface Project {
   tasksTotal: number;
   tasksCompleted: number;
   createdAt: string;
+  // Raw files from storage — passed through for the files panel
+  rawFiles: ProjectFile[];
+  taskFiles: MergedFile[];
 }
 
 const PROJECTS_KEY = "worktime_projects_v1";
 const TASKS_KEY = "worktime_tasks_v1";
 
+// localStorage keys that Users.tsx writes — we need these to resolve member names
+const CREATED_KEY  = "worktime_created_accounts_v1";
+const DELETED_KEY  = "worktime_deleted_account_ids_v1";
+const EDITS_KEY    = "worktime_account_edits_v1";
+
 type TaskStatus = "Pending" | "In Progress" | "Completed";
 type TaskPriority = "Low" | "Medium" | "High";
+
+// Task attachment shape
+type TaskAttachment = {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  dataUrl: string;
+};
 
 interface Task {
   id: number;
@@ -55,6 +83,12 @@ interface Task {
   status: TaskStatus;
   dueDate?: string;
   projectId?: number;
+  attachments?: TaskAttachment[];
+  completionRequest?: {
+    attachments?: TaskAttachment[];
+    requestedBy?: string;
+    requestedAt?: string;
+  };
 }
 
 interface StoredProject {
@@ -64,7 +98,34 @@ interface StoredProject {
   leaderId: number;
   dueDate?: string;
   tags?: string[];
+  files?: ProjectFile[];
+  memberIds?: number[];
 }
+
+type StoredAccount = {
+  id: number;
+  kind: "user" | "admin";
+  name: string;
+  email: string;
+  password: string;
+  roleLabel: string;
+  department: string;
+  createdAt: string;
+};
+
+type AccountEdit = { name?: string; email?: string; password?: string; roleLabel?: string; department?: string };
+type EditsMap = Record<string, AccountEdit>;
+
+// ─── Merged file type (mirrors admin ProjectList.tsx) ──────────────────────────
+type MergedFile = {
+  id: string;
+  name: string;
+  base64: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  projectId: number;
+  source: "project" | "task-attachment" | "task-completion";
+};
 
 // ─── Status Config ──────────────────────────────────────────────────────────────
 const STATUS_CONFIG: Record<ProjectStatus, { label: string; color: string; bg: string; border: string; icon: React.ReactNode }> = {
@@ -81,13 +142,92 @@ const PRIORITY_CONFIG: Record<ProjectPriority, { color: string; bg: string; bord
   Critical: { color: "#7c3aed", bg: "bg-purple-50", border: "border-purple-200" },
 };
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function safeRead<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function formatDate(iso: string) {
+  try {
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  } catch { return "—"; }
+}
+
+function getFileCategory(name: string, base64: string): "image" | "pdf" | "other" {
+  if (base64.startsWith("data:image/")) return "image";
+  if (base64.startsWith("data:application/pdf")) return "pdf";
+  const ext = name.toLowerCase().split(".").pop() ?? "";
+  if (["jpg","jpeg","png","gif","webp","svg","bmp"].includes(ext)) return "image";
+  if (ext === "pdf") return "pdf";
+  return "other";
+}
+
+function triggerDownload(name: string, base64: string) {
+  const a = document.createElement("a");
+  a.href = base64;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+/** Resolve all live user accounts (static JSON accounts.json merged with localStorage) */
+function resolveAllUserAccounts(): Account[] {
+  const deleted = new Set<string>(safeRead<string[]>(DELETED_KEY, []));
+  const edits   = safeRead<EditsMap>(EDITS_KEY, {});
+  const created = safeRead<StoredAccount[]>(CREATED_KEY, []);
+
+  // We fetch static accounts.json below; here we only resolve localStorage-created ones.
+  const localResult: Account[] = [];
+  for (const a of created) {
+    if (a.kind !== "user") continue;
+    const key = `user:${a.id}`;
+    if (deleted.has(key)) continue;
+    const edit = edits[key] ?? {};
+    localResult.push({ id: a.id, name: edit.name ?? a.name, email: edit.email ?? a.email });
+  }
+  return localResult;
+}
+
+// ─── Source badge (view-only indicator for files) ──────────────────────────────
+
+function SourceBadge({ source }: { source: MergedFile["source"] }) {
+  if (source === "project") {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
+        Admin upload
+      </span>
+    );
+  }
+  if (source === "task-completion") {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-green-50 text-green-700 border border-green-200 shrink-0">
+        Completion proof
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200 shrink-0">
+      <Paperclip className="w-2.5 h-2.5" />
+      Task file
+    </span>
+  );
+}
+
 // ─── Project Detail Modal ───────────────────────────────────────────────────────
+type DetailTab = "overview" | "files" | "members";
+
 function ProjectDetailModal({ project, onClose }: { project: Project; onClose: () => void }) {
   const statusCfg   = STATUS_CONFIG[project.status];
   const priorityCfg = PRIORITY_CONFIG[project.priority];
-
-  const formatDate = (d: string) =>
-    new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const [tab, setTab] = useState<DetailTab>("overview");
 
   const daysLeft = () => {
     const diff = new Date(project.endDate).getTime() - Date.now();
@@ -97,6 +237,26 @@ function ProjectDetailModal({ project, onClose }: { project: Project; onClose: (
     return           { label: `${days}d left`,                    color: "text-slate-500" };
   };
   const dl = daysLeft();
+
+  // Merge rawFiles + taskFiles into one list for the files tab
+  const allFiles: MergedFile[] = useMemo(() => {
+    const projectFiles: MergedFile[] = project.rawFiles.map((f) => ({
+      id:          `proj-${f.id}`,
+      name:        f.name,
+      base64:      f.base64,
+      uploadedBy:  f.uploadedBy,
+      uploadedAt:  f.uploadedAt,
+      projectId:   f.projectId,
+      source:      "project",
+    }));
+    return [...projectFiles, ...project.taskFiles];
+  }, [project.rawFiles, project.taskFiles]);
+
+  const TABS: { key: DetailTab; label: string; count?: number }[] = [
+    { key: "overview", label: "Overview" },
+    { key: "files",    label: "Files",   count: allFiles.length },
+    { key: "members",  label: "Members", count: project.members.length },
+  ];
 
   return (
     <motion.div
@@ -129,88 +289,185 @@ function ProjectDetailModal({ project, onClose }: { project: Project; onClose: (
               <X className="w-4 h-4" />
             </button>
           </div>
+
+          {/* Tabs */}
+          <div className="flex gap-1 mt-4">
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  tab === t.key
+                    ? "bg-white text-primary"
+                    : "bg-white/15 text-white/80 hover:bg-white/25"
+                }`}
+              >
+                {t.label}
+                {t.count !== undefined && (
+                  <span className={`inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full text-[9px] font-bold px-1 ${
+                    tab === t.key ? "bg-primary/10 text-primary" : "bg-white/20 text-white"
+                  }`}>
+                    {t.count}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Body */}
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
-          <div className="flex gap-2 flex-wrap">
-            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${statusCfg.bg} ${statusCfg.border}`} style={{ color: statusCfg.color }}>
-              {statusCfg.icon}{statusCfg.label}
-            </span>
-            <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold border ${priorityCfg.bg} ${priorityCfg.border}`} style={{ color: priorityCfg.color }}>
-              <Tag className="w-3 h-3" />{project.priority} Priority
-            </span>
-          </div>
 
-          <p className="text-slate-600 text-sm leading-relaxed">{project.description || "No description provided."}</p>
+          {/* ── Overview tab ── */}
+          {tab === "overview" && (
+            <>
+              <div className="flex gap-2 flex-wrap">
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${statusCfg.bg} ${statusCfg.border}`} style={{ color: statusCfg.color }}>
+                  {statusCfg.icon}{statusCfg.label}
+                </span>
+                <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold border ${priorityCfg.bg} ${priorityCfg.border}`} style={{ color: priorityCfg.color }}>
+                  <Tag className="w-3 h-3" />{project.priority} Priority
+                </span>
+              </div>
 
-          <div>
-            <div className="flex justify-between text-xs font-medium text-slate-500 mb-1.5">
-              <span>Progress</span>
-              <span className="font-bold text-[#1F3C68]">{project.progress}%</span>
-            </div>
-            <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-              <motion.div
-                initial={{ width: 0 }} animate={{ width: `${project.progress}%` }}
-                transition={{ duration: 0.7, ease: "easeOut" }}
-                className={`h-full rounded-full ${project.progress === 100 ? "bg-gradient-to-r from-green-400 to-emerald-500" : "bg-gradient-to-r from-[#F28C28] to-[#E97638]"}`}
-              />
-            </div>
-            <p className="text-[10px] text-slate-400 mt-1">{project.tasksCompleted} of {project.tasksTotal} tasks completed</p>
-          </div>
+              <p className="text-slate-600 text-sm leading-relaxed">{project.description || "No description provided."}</p>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Start Date</p>
-              <p className="text-sm font-bold text-[#1F3C68]">{formatDate(project.startDate)}</p>
-            </div>
-            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">End Date</p>
-              <p className="text-sm font-bold text-[#1F3C68]">{formatDate(project.endDate)}</p>
-              <p className={`text-[10px] font-semibold mt-0.5 ${dl.color}`}>{dl.label}</p>
-            </div>
-          </div>
+              <div>
+                <div className="flex justify-between text-xs font-medium text-slate-500 mb-1.5">
+                  <span>Progress</span>
+                  <span className="font-bold text-[#1F3C68]">{project.progress}%</span>
+                </div>
+                <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                  <motion.div
+                    initial={{ width: 0 }} animate={{ width: `${project.progress}%` }}
+                    transition={{ duration: 0.7, ease: "easeOut" }}
+                    className={`h-full rounded-full ${project.progress === 100 ? "bg-gradient-to-r from-green-400 to-emerald-500" : "bg-gradient-to-r from-[#F28C28] to-[#E97638]"}`}
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">{project.tasksCompleted} of {project.tasksTotal} tasks completed</p>
+              </div>
 
-          <div className="grid grid-cols-3 gap-2">
-            <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-center">
-              <p className="text-lg font-bold text-yellow-600">{project.tasksTotal - project.tasksCompleted}</p>
-              <p className="text-[9px] font-semibold text-yellow-700 uppercase tracking-wide">Remaining</p>
-            </div>
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
-              <p className="text-lg font-bold text-[#1F3C68]">{project.tasksTotal}</p>
-              <p className="text-[9px] font-semibold text-blue-700 uppercase tracking-wide">Total Tasks</p>
-            </div>
-            <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
-              <p className="text-lg font-bold text-green-600">{project.tasksCompleted}</p>
-              <p className="text-[9px] font-semibold text-green-700 uppercase tracking-wide">Done</p>
-            </div>
-          </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Start Date</p>
+                  <p className="text-sm font-bold text-[#1F3C68]">{formatDate(project.startDate)}</p>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">End Date</p>
+                  <p className="text-sm font-bold text-[#1F3C68]">{formatDate(project.endDate)}</p>
+                  <p className={`text-[10px] font-semibold mt-0.5 ${dl.color}`}>{dl.label}</p>
+                </div>
+              </div>
 
-          {project.members.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Team Members</p>
-              <div className="flex flex-wrap gap-2">
-                {project.members.map((m) => (
-                  <div key={m.id} className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg">
-                    <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center text-white text-[8px] font-bold flex-shrink-0">
-                      {m.name.charAt(0).toUpperCase()}
-                    </div>
-                    <span className="text-xs font-medium text-slate-700">{m.name}</span>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-center">
+                  <p className="text-lg font-bold text-yellow-600">{project.tasksTotal - project.tasksCompleted}</p>
+                  <p className="text-[9px] font-semibold text-yellow-700 uppercase tracking-wide">Remaining</p>
+                </div>
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
+                  <p className="text-lg font-bold text-[#1F3C68]">{project.tasksTotal}</p>
+                  <p className="text-[9px] font-semibold text-blue-700 uppercase tracking-wide">Total Tasks</p>
+                </div>
+                <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+                  <p className="text-lg font-bold text-green-600">{project.tasksCompleted}</p>
+                  <p className="text-[9px] font-semibold text-green-700 uppercase tracking-wide">Done</p>
+                </div>
+              </div>
+
+              {project.tags.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tags</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {project.tags.map((tag, i) => (
+                      <span key={i} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-semibold bg-[#1F3C68]/10 text-[#1F3C68] border border-[#1F3C68]/20">
+                        <Tag className="w-2.5 h-2.5" />{tag}
+                      </span>
+                    ))}
                   </div>
-                ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── Files tab ── */}
+          {tab === "files" && (
+            <div className="space-y-2">
+              {allFiles.length === 0 ? (
+                <div className="py-12 flex flex-col items-center text-center text-slate-400">
+                  <FileText className="w-10 h-10 mb-3 opacity-30" />
+                  <p className="text-sm font-semibold">No files yet</p>
+                  <p className="text-xs mt-1 text-slate-300">Files uploaded by your manager or attached to tasks will appear here.</p>
+                </div>
+              ) : (
+                allFiles.map((file) => {
+                  const cat = getFileCategory(file.name, file.base64);
+                  return (
+                    <div key={file.id} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                      {/* Thumbnail */}
+                      <div className="h-9 w-9 rounded-lg overflow-hidden border border-slate-200 bg-white flex items-center justify-center shrink-0">
+                        {cat === "image" ? (
+                          <img src={file.base64} alt={file.name} className="h-full w-full object-cover" />
+                        ) : (
+                          <FileText className="w-4 h-4 text-slate-400" />
+                        )}
+                      </div>
+
+                      {/* Info */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-semibold text-slate-700 truncate">{file.name}</span>
+                          <SourceBadge source={file.source} />
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-0.5">{formatDate(file.uploadedAt)} · {file.uploadedBy}</p>
+                      </div>
+
+                      {/* Download only — view-only for users */}
+                      <button
+                        onClick={() => triggerDownload(file.name, file.base64)}
+                        type="button"
+                        title="Download"
+                        className="h-8 w-8 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-slate-400 hover:text-[#1F3C68] hover:border-[#1F3C68]/30 transition shrink-0"
+                      >
+                        <Download className="w-4 h-4" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+
+              <div className="flex items-center gap-2 pt-2 text-slate-300 text-[10px]">
+                <Eye className="w-3 h-3" />
+                <span>View & download only — contact your manager to add or remove files.</span>
               </div>
             </div>
           )}
 
-          {project.tags.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tags</p>
-              <div className="flex flex-wrap gap-1.5">
-                {project.tags.map((tag, i) => (
-                  <span key={i} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-semibold bg-[#1F3C68]/10 text-[#1F3C68] border border-[#1F3C68]/20">
-                    <Tag className="w-2.5 h-2.5" />{tag}
-                  </span>
-                ))}
+          {/* ── Members tab ── */}
+          {tab === "members" && (
+            <div className="space-y-2">
+              {project.members.length === 0 ? (
+                <div className="py-12 flex flex-col items-center text-center text-slate-400">
+                  <Users className="w-10 h-10 mb-3 opacity-30" />
+                  <p className="text-sm font-semibold">No members listed</p>
+                  <p className="text-xs mt-1 text-slate-300">Members will appear here once they are added by your manager.</p>
+                </div>
+              ) : (
+                project.members.map((m) => (
+                  <div key={m.id} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                    <div className="w-8 h-8 rounded-full bg-[#1F3C68] flex items-center justify-center text-white text-xs font-bold shrink-0">
+                      {m.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{m.name}</p>
+                      {m.email && <p className="text-[10px] text-slate-400 truncate">{m.email}</p>}
+                    </div>
+                  </div>
+                ))
+              )}
+
+              <div className="flex items-center gap-2 pt-2 text-slate-300 text-[10px]">
+                <Eye className="w-3 h-3" />
+                <span>View only — contact your manager to change project membership.</span>
               </div>
             </div>
           )}
@@ -242,6 +499,8 @@ function ProjectCard({ project, onClick }: { project: Project; onClick: () => vo
   };
   const dl = daysLeft();
 
+  const totalFiles = project.rawFiles.length + project.taskFiles.length;
+
   return (
     <motion.div
       whileHover={{ y: -3, scale: 1.01 }} whileTap={{ scale: 0.99 }}
@@ -271,6 +530,11 @@ function ProjectCard({ project, onClick }: { project: Project; onClick: () => vo
           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${priorityCfg.bg} ${priorityCfg.border}`} style={{ color: priorityCfg.color }}>
             {project.priority}
           </span>
+          {totalFiles > 0 && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-50 text-slate-500 border border-slate-200">
+              <FileText className="w-2.5 h-2.5" />{totalFiles} {totalFiles === 1 ? "file" : "files"}
+            </span>
+          )}
           <span className={`ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${dl.bg} ${dl.color}`}>
             <Clock className="w-2.5 h-2.5" />{dl.label}
           </span>
@@ -337,10 +601,10 @@ function ProjectList() {
   const location = useLocation();
   const navigate  = useNavigate();
 
-  // Resolve current user from route state → localStorage → null
   const rawUser = location.state?.user ?? JSON.parse(localStorage.getItem("currentUser") ?? "null");
 
-  const [currentUser, setCurrentUser] = useState<Account | null>(null);
+  const [currentUser,     setCurrentUser]     = useState<Account | null>(null);
+  const [allUserAccounts, setAllUserAccounts] = useState<Account[]>([]);
   const [menuOpen,        setMenuOpen]        = useState(false);
   const [storedProjects,  setStoredProjects]  = useState<StoredProject[]>([]);
   const [tasks,           setTasks]           = useState<Task[]>([]);
@@ -350,124 +614,183 @@ function ProjectList() {
 
   const handleLogout = () => { localStorage.removeItem("currentUser"); navigate("/"); };
 
-  // ── Step 1: Verify & enrich user against accounts.json ──────────────────────
+  // ── Step 1: Verify & enrich user ────────────────────────────────────────────
   useEffect(() => {
     if (!rawUser) return;
 
+    // Try to fetch static accounts.json; fall back to rawUser
     fetch("/accounts.json")
       .then((r) => r.json())
-      .then((accounts: Account[]) => {
-        // Match by id (coerced) OR by email as fallback
-        const match = accounts.find(
+      .then((staticAccounts: Account[]) => {
+        // Merge static + localStorage-created accounts
+        const localAccounts = resolveAllUserAccounts();
+
+        // Apply any edits to static accounts
+        const deleted = new Set<string>(safeRead<string[]>(DELETED_KEY, []));
+        const edits   = safeRead<EditsMap>(EDITS_KEY, {});
+
+        const mergedStatic: Account[] = (staticAccounts as Account[])
+          .filter((a) => !deleted.has(`user:${a.id}`))
+          .map((a) => {
+            const edit = edits[`user:${a.id}`] ?? {};
+            return { id: a.id, name: edit.name ?? a.name, email: edit.email ?? a.email };
+          });
+
+        const all = [...mergedStatic, ...localAccounts];
+        setAllUserAccounts(all);
+
+        const match = all.find(
           (a) =>
             String(a.id) === String(rawUser.id) ||
             a.email?.toLowerCase() === rawUser.email?.toLowerCase()
         );
-        // Use canonical account data; fall back to rawUser if not found
         setCurrentUser(match ?? rawUser);
       })
       .catch(() => {
-        // accounts.json unreachable — use stored user as-is
+        // accounts.json unreachable
+        const localAccounts = resolveAllUserAccounts();
+        setAllUserAccounts(localAccounts);
         setCurrentUser(rawUser);
       });
   }, [rawUser?.id, rawUser?.email]);
 
-  // Keep local storage-backed project/task data in sync for the view-only page.
+  // ── Step 2: Poll localStorage for projects + tasks ───────────────────────────
   useEffect(() => {
     const load = () => {
       try {
         const rawProjects = localStorage.getItem(PROJECTS_KEY);
-        const rawTasks = localStorage.getItem(TASKS_KEY);
-
-        const parsedProjects = rawProjects ? JSON.parse(rawProjects) : [];
-        const parsedTasks = rawTasks ? JSON.parse(rawTasks) : [];
-
-        setStoredProjects(Array.isArray(parsedProjects) ? parsedProjects : []);
-        setTasks(Array.isArray(parsedTasks) ? parsedTasks : []);
+        const rawTasks    = localStorage.getItem(TASKS_KEY);
+        setStoredProjects(rawProjects ? JSON.parse(rawProjects) : []);
+        setTasks(rawTasks         ? JSON.parse(rawTasks)    : []);
       } catch {
         setStoredProjects([]);
         setTasks([]);
       }
     };
-
     load();
     const interval = setInterval(load, 3000);
     return () => clearInterval(interval);
   }, []);
 
+  // ── Step 3: Derive projects visible to current user ──────────────────────────
   const projects = useMemo<Project[]>(() => {
     if (!currentUser) return [];
 
+    const currentUserId   = currentUser.id;
     const currentUserName = currentUser.name?.trim().toLowerCase();
 
     return storedProjects
       .filter((project) => {
-        const isLeader = String(project.leaderId) === String(currentUser.id);
-        const isAssignedInProject = tasks.some((task) => {
+        // A user sees a project if they are:
+        // 1. The project leader
+        const isLeader = String(project.leaderId) === String(currentUserId);
+
+        // 2. Explicitly added as a member by admin (via memberIds in ProjectList.tsx)
+        const isExplicitMember = (project.memberIds ?? []).some(
+          (id) => String(id) === String(currentUserId)
+        );
+
+        // 3. Assigned to a task within the project
+        const isAssignedToTask = tasks.some((task) => {
           if (task.projectId !== project.id) return false;
-
-          const assignedById = task.assignedToId !== undefined && String(task.assignedToId) === String(currentUser.id);
-          const assignedByName =
-            !!task.assignedTo &&
-            task.assignedTo.trim().toLowerCase() === currentUserName;
-
-          return assignedById || assignedByName;
+          const byId   = task.assignedToId !== undefined && String(task.assignedToId) === String(currentUserId);
+          const byName = !!task.assignedTo && task.assignedTo.trim().toLowerCase() === currentUserName;
+          return byId || byName;
         });
 
-        return isLeader || isAssignedInProject;
+        return isLeader || isExplicitMember || isAssignedToTask;
       })
       .map((project) => {
-        const projectTasks = tasks.filter((task) => task.projectId === project.id);
-        const tasksTotal = projectTasks.length;
-        const tasksCompleted = projectTasks.filter((task) => task.status === "Completed").length;
-        const hasInProgress = projectTasks.some((task) => task.status === "In Progress");
-        const hasStarted = projectTasks.some((task) => task.status !== "Pending");
-        const progress = tasksTotal > 0 ? Math.round((tasksCompleted / tasksTotal) * 100) : 0;
+        const projectTasks    = tasks.filter((t) => t.projectId === project.id);
+        const tasksTotal      = projectTasks.length;
+        const tasksCompleted  = projectTasks.filter((t) => t.status === "Completed").length;
+        const hasInProgress   = projectTasks.some((t) => t.status === "In Progress");
+        const hasStarted      = projectTasks.some((t) => t.status !== "Pending");
+        const progress        = tasksTotal > 0 ? Math.round((tasksCompleted / tasksTotal) * 100) : 0;
 
-        const membersMap = new Map<string, ProjectMember>();
+        // Build member list from memberIds + task-assigned users
+        const memberIdsSet = new Set<number>([
+          ...(project.memberIds ?? []),
+          ...projectTasks
+            .filter((t) => t.assignedToId != null)
+            .map((t) => t.assignedToId as number),
+        ]);
+
+        // Also capture name-only assignees who don't have an ID
+        const namedOnlyMembers: ProjectMember[] = [];
         for (const task of projectTasks) {
           if (!task.assignedTo) continue;
-          const memberKey = String(task.assignedToId ?? task.assignedTo.trim().toLowerCase());
-          if (!membersMap.has(memberKey)) {
-            membersMap.set(memberKey, {
-              id: String(task.assignedToId ?? task.assignedTo),
-              name: task.assignedTo,
+          if (task.assignedToId != null) continue; // handled via memberIdsSet
+          const key = task.assignedTo.trim().toLowerCase();
+          if (!namedOnlyMembers.find((m) => m.id === key)) {
+            namedOnlyMembers.push({ id: key, name: task.assignedTo });
+          }
+        }
+
+        const idMembers: ProjectMember[] = allUserAccounts
+          .filter((a) => memberIdsSet.has(a.id))
+          .map((a) => ({ id: String(a.id), name: a.name, email: a.email }));
+
+        const members = [...idMembers, ...namedOnlyMembers];
+
+        const priorityRank: Record<TaskPriority, number> = { Low: 0, Medium: 1, High: 2 };
+        const highestPriority = projectTasks.reduce<TaskPriority | null>((acc, t) => {
+          if (!acc || priorityRank[t.priority] > priorityRank[acc]) return t.priority;
+          return acc;
+        }, null);
+
+        const status: ProjectStatus =
+          tasksTotal === 0 || !hasStarted  ? "Not Started"
+          : tasksCompleted === tasksTotal  ? "Completed"
+          : hasInProgress || tasksCompleted > 0 ? "In Progress"
+          : "On Hold";
+
+        // Build task-level files (task-attachment + task-completion)
+        const taskFiles: MergedFile[] = [];
+        for (const task of projectTasks) {
+          for (const att of task.attachments ?? []) {
+            taskFiles.push({
+              id:         `task-att-${task.id}-${att.id}`,
+              name:       att.name,
+              base64:     att.dataUrl,
+              uploadedBy: task.assignedTo || "Employee",
+              uploadedAt: new Date().toISOString(),
+              projectId:  project.id,
+              source:     "task-attachment",
+            });
+          }
+          for (const att of task.completionRequest?.attachments ?? []) {
+            taskFiles.push({
+              id:         `task-compl-${task.id}-${att.id}`,
+              name:       att.name,
+              base64:     att.dataUrl,
+              uploadedBy: task.completionRequest?.requestedBy ?? task.assignedTo ?? "Employee",
+              uploadedAt: task.completionRequest?.requestedAt ?? new Date().toISOString(),
+              projectId:  project.id,
+              source:     "task-completion",
             });
           }
         }
 
-        const priorityRank: Record<TaskPriority, number> = { Low: 0, Medium: 1, High: 2 };
-        const highestPriorityTask = projectTasks.reduce<TaskPriority | null>((highest, task) => {
-          if (!highest || priorityRank[task.priority] > priorityRank[highest]) return task.priority;
-          return highest;
-        }, null);
-
-        const status: ProjectStatus =
-          tasksTotal === 0 || !hasStarted
-            ? "Not Started"
-            : tasksCompleted === tasksTotal
-              ? "Completed"
-              : hasInProgress || tasksCompleted > 0
-                ? "In Progress"
-                : "On Hold";
-
         return {
-          id: project.id,
-          name: project.name,
-          description: project.description,
+          id:           project.id,
+          name:         project.name,
+          description:  project.description,
           status,
-          priority: highestPriorityTask === "High" ? "High" : highestPriorityTask ?? "Medium",
-          startDate: projectTasks[0]?.dueDate ?? project.dueDate ?? new Date().toISOString(),
-          endDate: project.dueDate ?? projectTasks[0]?.dueDate ?? new Date().toISOString(),
+          priority:     highestPriority === "High" ? "High" : highestPriority ?? "Medium",
+          startDate:    projectTasks[0]?.dueDate ?? project.dueDate ?? new Date().toISOString(),
+          endDate:      project.dueDate ?? projectTasks[0]?.dueDate ?? new Date().toISOString(),
           progress,
-          members: Array.from(membersMap.values()),
-          tags: project.tags ?? [],
+          members,
+          tags:         project.tags ?? [],
           tasksTotal,
           tasksCompleted,
-          createdAt: new Date().toISOString(),
+          createdAt:    new Date().toISOString(),
+          rawFiles:     project.files ?? [],
+          taskFiles,
         };
       });
-  }, [currentUser, storedProjects, tasks]);
+  }, [currentUser, storedProjects, tasks, allUserAccounts]);
 
   // ── Counts & filtered list ──────────────────────────────────────────────────
   const counts = {
