@@ -29,6 +29,10 @@ import {
 import { useClock } from "./hooks/useClock";
 import Usersidebar from "./components/Usersidebar";
 
+// ── Static accounts JSON (used by resolveMergedAccounts) ──────────────────────
+import staticAccounts from "../data/accounts.json";
+import { resolveMergedAccounts } from "../data/resolveAccounts";
+
 type TaskStatus = "Pending" | "In Progress" | "Completed";
 type TaskPriority = "Low" | "Medium" | "High";
 
@@ -85,6 +89,8 @@ interface Project {
   leaderName?: string;
   dueDate?: string;
   tags?: string[];
+  /** Explicitly added members via ProjectList member management */
+  memberIds?: number[];
 }
 
 interface Account {
@@ -662,7 +668,6 @@ function ProjectModal({
   const pending = projectTasks.filter((t) => t.status === "Pending").length;
   const progress = total ? Math.round((completed / total) * 100) : 0;
 
-  // Unique assignees
   const members = Array.from(new Set(projectTasks.map((t) => t.assignedTo).filter(Boolean)));
 
   return (
@@ -682,7 +687,6 @@ function ProjectModal({
           onClick={(e) => e.stopPropagation()}
           className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl"
         >
-          {/* Header */}
           <div className="relative overflow-hidden bg-primary px-4 py-5 sm:px-6">
             <div className="absolute -top-6 -right-6 w-28 h-28 rounded-full bg-white/5" />
             <div className="relative z-10 flex items-start justify-between gap-4">
@@ -703,7 +707,6 @@ function ProjectModal({
           </div>
 
           <div className="space-y-5 px-4 py-5 sm:px-6">
-            {/* Progress */}
             <div>
               <div className="flex justify-between items-center mb-1.5">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Progress</p>
@@ -719,7 +722,6 @@ function ProjectModal({
               </div>
             </div>
 
-            {/* Task Stats */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {[
                 { label: "Total", value: total, color: "text-[#1F3C68]", bg: "bg-[#EDF2FA]" },
@@ -733,7 +735,6 @@ function ProjectModal({
               ))}
             </div>
 
-            {/* Details */}
             <div className="space-y-2.5">
               <div className="flex items-center justify-between text-sm">
                 <span className="flex items-center gap-2 text-slate-400 font-medium">
@@ -757,7 +758,6 @@ function ProjectModal({
               </div>
             </div>
 
-            {/* Tags */}
             {(project.tags ?? []).length > 0 && (
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Tags</p>
@@ -767,7 +767,6 @@ function ProjectModal({
               </div>
             )}
 
-            {/* Members */}
             {members.length > 0 && (
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
@@ -1334,7 +1333,6 @@ function TaskPage() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<TaskAttachment | null>(null);
 
-  // ── Project modal state ──────────────────────────────────────────────────
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
 
   const [projects, setProjects] = useState<Project[]>([]);
@@ -1360,11 +1358,46 @@ function TaskPage() {
     return () => clearInterval(interval);
   }, []);
 
+  // ── FIX 1: Load all accounts (static + created + edited + deleted) ──────────
+  // Replaces the old fetch("/accounts.json") which only saw static accounts.json
+  // and missed any user created or edited through the admin Users panel.
   useEffect(() => {
-    fetch("/accounts.json")
-      .then((response) => response.json())
-      .then((data: Account[]) => setAccounts(Array.isArray(data) ? data : []))
-      .catch(() => setAccounts([]));
+    const WATCHED_KEYS = [
+      "worktime_created_accounts_v1",
+      "worktime_deleted_account_ids_v1",
+      "worktime_account_edits_v1",
+    ];
+
+    const load = () => {
+      const merged = resolveMergedAccounts(
+        staticAccounts as { id: number; name: string; email: string; password: string }[],
+        "user"
+      );
+      // Preserve assignedProjects from the static JSON for the accounts that
+      // have it — resolveMergedAccounts drops fields it doesn't track, so we
+      // re-attach them here so the assignedProjects path still works as a
+      // secondary membership signal.
+      const staticById = new Map(
+        (staticAccounts as { id: number; assignedProjects?: number[] }[]).map(
+          (a) => [a.id, a.assignedProjects ?? []]
+        )
+      );
+      setAccounts(
+        merged.map((a) => ({
+          ...a,
+          assignedProjects: staticById.get(a.id) ?? [],
+        }))
+      );
+    };
+
+    load();
+
+    // Re-resolve whenever the admin panel writes account changes
+    const handler = (e: StorageEvent) => {
+      if (e.key && WATCHED_KEYS.includes(e.key)) load();
+    };
+    window.addEventListener("storage", handler);
+    return () => window.removeEventListener("storage", handler);
   }, []);
 
   const userProjects = useMemo(() => {
@@ -1384,29 +1417,56 @@ function TaskPage() {
     const matchName = !!user?.name && t.assignedTo?.trim().toLowerCase() === user.name.trim().toLowerCase();
     return matchId || matchName;
   }), [tasks, user]);
-  const teamTasks = useMemo(() => tasks.filter((t) => t.projectId && userProjectIds.has(t.projectId)), [tasks, userProjectIds]);
+
+  const teamTasks = useMemo(
+    () => tasks.filter((t) => t.projectId && userProjectIds.has(t.projectId)),
+    [tasks, userProjectIds]
+  );
+
   const displayedTasks = viewMode === "team" && userProjects.length > 0 ? teamTasks : myTasks;
 
+  // ── FIX 2: membersByProject — union ALL three membership sources ────────────
+  //
+  // Before this fix, only `account.assignedProjects` (static JSON) was checked.
+  // Members added via ProjectList's "Add Member" button write to project.memberIds
+  // in worktime_projects_v1 — that source was completely ignored.
+  //
+  // Priority order (highest → lowest):
+  //   1. project.memberIds  — explicit admin add via ProjectList member management
+  //   2. account.assignedProjects — static JSON membership
+  //   3. task inference     — anyone already assigned a task in this project
   const membersByProject = useMemo(() => {
     const map = new Map<number, Account[]>();
 
     userProjects.forEach((project) => {
-      const assignedAccounts = accounts.filter((account) =>
-        account.id !== user?.id && (account.assignedProjects ?? []).includes(project.id)
-      );
+      // Source 1 + 2: explicit memberIds OR static assignedProjects
+      const explicitMemberIds = new Set<number>(project.memberIds ?? []);
 
-      const inferredAccounts = tasks
+      const directMembers = accounts.filter((account) => {
+        if (String(account.id) === String(user?.id)) return false;
+        if (explicitMemberIds.has(account.id)) return true;
+        if ((account.assignedProjects ?? []).includes(project.id)) return true;
+        return false;
+      });
+
+      // Source 3: infer from existing task assignments (covers tasks created
+      // before the account was formally added as a member)
+      const inferredMembers = tasks
         .filter((task) => task.projectId === project.id && task.assignedTo)
         .map((task) => ({
           id: task.assignedToId ?? -task.id,
           email: "",
           name: task.assignedTo,
-          assignedProjects: [project.id],
+          assignedProjects: [] as number[],
         }))
-        .filter((account) => account.name.trim().toLowerCase() !== user?.name?.trim().toLowerCase());
+        .filter(
+          (inferred) =>
+            inferred.name.trim().toLowerCase() !== user?.name?.trim().toLowerCase()
+        );
 
+      // Merge — account ID is the dedup key; prefer real accounts over inferred stubs
       const merged = new Map<string, Account>();
-      [...assignedAccounts, ...inferredAccounts].forEach((account) => {
+      [...directMembers, ...inferredMembers].forEach((account) => {
         const key = String(account.id);
         if (!merged.has(key)) merged.set(key, account);
       });
@@ -1421,12 +1481,14 @@ function TaskPage() {
     () => userProjects.some((project) => (membersByProject.get(project.id) ?? []).length > 0),
     [userProjects, membersByProject]
   );
+
   const managedProjects = useMemo(() => userProjects.map((project) => ({
     project,
     tasks: tasks.filter((task) => task.projectId === project.id),
     members: membersByProject.get(project.id) ?? [],
-    leaderName: accountById.get(project.leaderId)?.name ?? project.leaderName ?? user?.name ?? "Unknown",
+    leaderName: accountById.get(project.leaderId)?.name ?? user?.name ?? "Unknown",
   })), [userProjects, tasks, membersByProject, accountById, user]);
+
   const manageStats = useMemo(() => {
     const totalProjects = managedProjects.length;
     const totalTasks = managedProjects.reduce((sum, item) => sum + item.tasks.length, 0);
@@ -1443,7 +1505,6 @@ function TaskPage() {
       0
     );
     const overallProgress = totalTasks ? Math.round((completedTasks / totalTasks) * 100) : 0;
-
     return { totalProjects, totalTasks, completedTasks, inProgressTasks, pendingTasks, overallProgress };
   }, [managedProjects]);
 
@@ -1453,7 +1514,8 @@ function TaskPage() {
     return matchId || matchName;
   };
 
-  const canReviewTaskCompletion = (task: Task) => !!task.projectId && userProjectIds.has(task.projectId);
+  const canReviewTaskCompletion = (task: Task) =>
+    !!task.projectId && userProjectIds.has(task.projectId);
 
   const saveTasks = (updated: Task[]) => {
     setTasks(updated);
@@ -1500,23 +1562,19 @@ function TaskPage() {
     [tasks, pendingStatusChange]
   );
 
-  // ── Status update (any direction) ─────────────────────────────────────────
   const applyStatusUpdate = (id: number, status: TaskStatus) => {
     saveTasks(tasks.map((t) => {
       if (t.id !== id) return t;
       if (status === "Completed") {
         return {
-          ...t,
-          status,
+          ...t, status,
           completedAt: new Date().toISOString(),
           completedBy: user?.name,
           completedById: user?.id,
         };
       }
-
       return {
-        ...t,
-        status,
+        ...t, status,
         completionRequest: undefined,
         completedAt: undefined,
         completedBy: undefined,
@@ -1557,7 +1615,6 @@ function TaskPage() {
   const reviewCompletionRequest = (id: number, decision: Exclude<CompletionApprovalStatus, "Pending">) => {
     saveTasks(tasks.map((task) => {
       if (task.id !== id || !task.completionRequest) return task;
-
       const reviewedRequest: TaskCompletionRequest = {
         ...task.completionRequest,
         status: decision,
@@ -1565,21 +1622,17 @@ function TaskPage() {
         reviewedBy: user?.name,
         reviewedById: user?.id,
       };
-
       if (decision === "Approved") {
         return {
-          ...task,
-          status: "Completed",
+          ...task, status: "Completed",
           completionRequest: reviewedRequest,
           completedAt: new Date().toISOString(),
           completedBy: user?.name,
           completedById: user?.id,
         };
       }
-
       return {
-        ...task,
-        status: "In Progress",
+        ...task, status: "In Progress",
         completionRequest: reviewedRequest,
         completedAt: undefined,
         completedBy: undefined,
@@ -1591,49 +1644,27 @@ function TaskPage() {
   const updateStatus = (id: number, status: TaskStatus) => {
     const task = tasks.find((item) => item.id === id);
     if (!task) return;
-
     const allowedTransitions = getAllowedStatusTransitions(task.status);
     if (!allowedTransitions.includes(status) || task.status === status) return;
-
     if (status === "Completed") {
       if (task.completionRequest?.status === "Pending" && canReviewTaskCompletion(task)) {
         reviewCompletionRequest(id, "Approved");
         return;
       }
-
       setPendingStatusChange({ taskId: id, nextStatus: status });
       return;
     }
-
     applyStatusUpdate(id, status);
   };
 
   const saveTaskDraft = ({
-    title,
-    description,
-    priority,
-    dueDate,
-    assignedTo,
-    assignedToId,
-    projectId,
-    tags,
-    attachments,
+    title, description, priority, dueDate,
+    assignedTo, assignedToId, projectId, tags, attachments,
   }: TaskDraftPayload) => {
     if (editingTask) {
       saveTasks(tasks.map((task) => (
         task.id === editingTask.id
-          ? {
-              ...task,
-              title,
-              description,
-              priority,
-              dueDate,
-              assignedTo,
-              assignedToId,
-              projectId,
-              tags,
-              attachments,
-            }
+          ? { ...task, title, description, priority, dueDate, assignedTo, assignedToId, projectId, tags, attachments }
           : task
       )));
       setEditingTask(null);
@@ -1644,19 +1675,14 @@ function TaskPage() {
 
     const newTask: Task = {
       id: Date.now(),
-      title,
-      description,
-      priority,
+      title, description, priority,
       status: "Pending",
       dueDate,
       createdAt: new Date().toISOString(),
-      assignedTo,
-      assignedToId,
+      assignedTo, assignedToId,
       assignedBy: user?.name,
       assignedById: user?.id,
-      projectId,
-      tags,
-      attachments,
+      projectId, tags, attachments,
     };
 
     saveTasks([newTask, ...tasks]);
@@ -1666,7 +1692,10 @@ function TaskPage() {
     setCurrentPage(1);
   };
 
-  const handleLogout = () => { localStorage.removeItem("currentUser"); navigate("/"); };
+  const handleLogout = () => {
+    localStorage.removeItem("currentUser");
+    navigate("/");
+  };
 
   return (
     <div className="flex min-h-screen font-sans bg-[#F8FAFC]">
@@ -1689,7 +1718,6 @@ function TaskPage() {
         )}
       </AnimatePresence>
 
-      {/* Project detail modal */}
       {selectedProject && (
         <ProjectModal
           project={selectedProject}
@@ -1845,335 +1873,296 @@ function TaskPage() {
             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.27 }}
               className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
 
-          {/* Panel header + filters */}
-          <div className="flex flex-col gap-4 border-b border-slate-100 px-4 py-4 sm:px-6 sm:py-5 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="p-3 bg-[#E0F2FE] rounded-xl">
-                <ListTodo className="w-6 h-6 text-[#1F3C68]" />
-              </div>
-              <div>
-                <h2 className="text-xl font-black text-[#1F3C68] leading-tight">Task List</h2>
-                <p className="text-xs text-slate-400">
-                  {filteredTasks.length} task{filteredTasks.length !== 1 ? "s" : ""} shown
-                  {totalPages > 1 && <span className="ml-1 text-slate-300">· page {safePage} of {totalPages}</span>}
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-              {(["All", "Pending", "In Progress", "Completed"] as const).map((s) => (
-                <button key={s}
-                  onClick={() => handleFilterChange(() => setActiveStatus(s))}
-                  className={`w-full rounded-lg px-3 py-2 text-xs font-bold transition-all duration-150 sm:w-auto sm:py-1.5 ${
-                    activeStatus === s ? "bg-primary text-white shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-                  }`}>
-                  {s}
-                </button>
-              ))}
-              <select value={priorityFilter}
-                onChange={(e) => handleFilterChange(() => setPriorityFilter(e.target.value as "All" | TaskPriority))}
-                className="w-full rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#1F3C68]/30 sm:w-auto sm:py-1.5">
-                <option value="All">All Priority</option>
-                <option value="Low">Low</option>
-                <option value="Medium">Medium</option>
-                <option value="High">High</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Tag Filter Strip */}
-          {allTags.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 border-b border-slate-50 bg-slate-50/60 px-4 py-3 sm:px-6">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                <Tag className="w-3 h-3" /> Tags
-              </span>
-              <button onClick={() => handleFilterChange(() => setActiveTag(null))}
-                className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
-                  activeTag === null ? "bg-[#1F3C68] text-white border-[#1F3C68]" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
-                }`}>All</button>
-              {allTags.map((tag) => {
-                const p = getTagPalette(tag);
-                const isActive = activeTag === tag;
-                return (
-                  <button key={tag}
-                    onClick={() => handleFilterChange(() => setActiveTag(isActive ? null : tag))}
-                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
-                      isActive ? `${p.bg} ${p.text} ${p.border} ring-2 ring-offset-1 ${p.border}` : `bg-white ${p.text} ${p.border} hover:${p.bg}`
-                    }`}>
-                    <Tag className="w-2.5 h-2.5" />
-                    {tag}
-                    <span className={`ml-0.5 font-black tabular-nums ${isActive ? p.text : "text-slate-400"}`}>
-                      {displayedTasks.filter((t) => (t.tags ?? []).includes(tag)).length}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Task rows */}
-          <div className="min-h-[200px] divide-y divide-slate-50 px-3 py-2 sm:px-4">
-            <AnimatePresence mode="popLayout">
-              {paginatedTasks.length === 0 ? (
-                <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                  className="flex flex-col items-center justify-center py-16 text-slate-300">
-                  <ListTodo className="w-10 h-10 mb-3" />
-                  <p className="text-sm font-semibold">No tasks found</p>
-                  <p className="text-xs mt-1">Try adjusting your filters</p>
-                </motion.div>
-              ) : (
-                paginatedTasks.map((task, index) => {
-                  const pCfg = priorityConfig[task.priority];
-                  const sCfg = statusConfig[task.status];
-                  const hasTags = (task.tags ?? []).length > 0;
-                  const hasAttachments = (task.attachments ?? []).length > 0;
-                  const completionRequest = task.completionRequest;
-                  const completionAttachments = completionRequest?.attachments ?? [];
-                  const hasCompletionAttachments = completionAttachments.length > 0;
-                  const project = task.projectId ? projectById.get(task.projectId) : null;
-                  const isTeamView = viewMode === "team" && userProjects.length > 0;
-                  const canEditTask = !!task.projectId && userProjectIds.has(task.projectId);
-                  const canReviewCompletion = canReviewTaskCompletion(task);
-                  const isAssignee = isTaskAssignee(task);
-                  const isAwaitingApproval = completionRequest?.status === "Pending";
-                  const wasReturned = completionRequest?.status === "Rejected";
-
-                  return (
-                    <motion.div key={task.id} layout
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, x: -20 }}
-                      transition={{ delay: index * 0.04 }}
-                      className={`group my-2 flex flex-col gap-4 rounded-2xl border px-3 py-4 transition-all duration-200 sm:px-4 lg:flex-row lg:items-start lg:justify-between ${
-                        task.status === "Completed"
-                          ? "border-slate-200 bg-slate-50/80"
-                          : "border-slate-200 bg-white shadow-sm hover:-translate-y-0.5 hover:border-[#1F3C68]/15 hover:shadow-md"
+              <div className="flex flex-col gap-4 border-b border-slate-100 px-4 py-4 sm:px-6 sm:py-5 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="p-3 bg-[#E0F2FE] rounded-xl">
+                    <ListTodo className="w-6 h-6 text-[#1F3C68]" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-black text-[#1F3C68] leading-tight">Task List</h2>
+                    <p className="text-xs text-slate-400">
+                      {filteredTasks.length} task{filteredTasks.length !== 1 ? "s" : ""} shown
+                      {totalPages > 1 && <span className="ml-1 text-slate-300">· page {safePage} of {totalPages}</span>}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                  {(["All", "Pending", "In Progress", "Completed"] as const).map((s) => (
+                    <button key={s}
+                      onClick={() => handleFilterChange(() => setActiveStatus(s))}
+                      className={`w-full rounded-lg px-3 py-2 text-xs font-bold transition-all duration-150 sm:w-auto sm:py-1.5 ${
+                        activeStatus === s ? "bg-primary text-white shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                       }`}>
-                      <div className="flex items-start gap-3 min-w-0 flex-1">
-                        <div className={`mt-1.5 h-10 w-1 rounded-full flex-shrink-0 ${sCfg.bar}`} />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${
-                              task.status === "Completed" ? "bg-[#EDF2FA] text-[#1F3C68]" : "bg-slate-100 text-slate-500"
-                            }`}>
-                              <span className={`h-1.5 w-1.5 rounded-full ${sCfg.bar}`} />
-                              {task.status}
-                            </span>
-                            {isAwaitingApproval && (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">
-                                <AlertCircle className="h-3 w-3" />
-                                Awaiting project leader approval
-                              </span>
-                            )}
-                            {wasReturned && (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-rose-700">
-                                <AlertCircle className="h-3 w-3" />
-                                Returned for update
-                              </span>
-                            )}
-                            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300">
-                              Task #{task.id}
-                            </span>
-                          </div>
-                          <h3 className={`mt-2 text-sm font-black text-[#1F3C68] sm:text-[15px] ${task.status === "Completed" ? "line-through text-slate-400" : ""}`}>
-                            {task.title}
-                          </h3>
-                          <p className="mt-1 text-xs leading-5 text-slate-400">{task.description}</p>
-                          <div className="mt-3 flex flex-wrap items-center gap-2">
-                            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500">
-                              <Clock className="w-3 h-3" />
-                              Due {task.dueDate}
-                            </span>
-                            {task.assignedBy && (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                                <User className="w-2.5 h-2.5" /> Assigned by {task.assignedBy}
-                              </span>
-                            )}
+                      {s}
+                    </button>
+                  ))}
+                  <select value={priorityFilter}
+                    onChange={(e) => handleFilterChange(() => setPriorityFilter(e.target.value as "All" | TaskPriority))}
+                    className="w-full rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#1F3C68]/30 sm:w-auto sm:py-1.5">
+                    <option value="All">All Priority</option>
+                    <option value="Low">Low</option>
+                    <option value="Medium">Medium</option>
+                    <option value="High">High</option>
+                  </select>
+                </div>
+              </div>
 
-                            {/* ── Clickable project badge → opens modal ── */}
-                            {isTeamView && project ? (
-                              <button
-                                onClick={() => setSelectedProject(project)}
-                                className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-violet-200 bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700 transition-colors hover:bg-violet-200"
-                              >
-                                <Layers className="w-2.5 h-2.5" />
-                                {project.name}
-                              </button>
-                            ) : project ? (
-                              <button
-                                onClick={() => setSelectedProject(project)}
-                                className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-violet-200 bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700 transition-colors hover:bg-violet-200"
-                              >
-                                <Layers className="w-2.5 h-2.5" />
-                                {project.name}
-                              </button>
-                            ) : null}
+              {allTags.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 border-b border-slate-50 bg-slate-50/60 px-4 py-3 sm:px-6">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                    <Tag className="w-3 h-3" /> Tags
+                  </span>
+                  <button onClick={() => handleFilterChange(() => setActiveTag(null))}
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
+                      activeTag === null ? "bg-[#1F3C68] text-white border-[#1F3C68]" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+                    }`}>All</button>
+                  {allTags.map((tag) => {
+                    const p = getTagPalette(tag);
+                    const isActive = activeTag === tag;
+                    return (
+                      <button key={tag}
+                        onClick={() => handleFilterChange(() => setActiveTag(isActive ? null : tag))}
+                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
+                          isActive ? `${p.bg} ${p.text} ${p.border} ring-2 ring-offset-1 ${p.border}` : `bg-white ${p.text} ${p.border} hover:${p.bg}`
+                        }`}>
+                        <Tag className="w-2.5 h-2.5" />
+                        {tag}
+                        <span className={`ml-0.5 font-black tabular-nums ${isActive ? p.text : "text-slate-400"}`}>
+                          {displayedTasks.filter((t) => (t.tags ?? []).includes(tag)).length}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
-                            <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">
-                              <User className="w-2.5 h-2.5" /> {task.assignedTo}
-                            </span>
-                          </div>
-                          {hasTags && (
-                            <div className="mt-2 flex flex-wrap gap-1">
-                              {(task.tags ?? []).map((tag) => <TagBadge key={tag} tag={tag} />)}
-                            </div>
-                          )}
-                          {hasAttachments && (
-                            <div className="mt-3 space-y-2">
-                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Supporting Files</p>
-                              <div className="flex flex-wrap gap-2">
-                                {(task.attachments ?? []).map((attachment) => (
-                                  <div
-                                    key={attachment.id}
-                                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] font-bold text-slate-600"
-                                  >
-                                    <Paperclip className="w-3 h-3" />
-                                    <span className="max-w-[110px] truncate sm:max-w-[140px]">{attachment.name}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => setPreviewAttachment(attachment)}
-                                      className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[10px] font-black text-[#1F3C68] transition-colors hover:bg-[#EDF2FA]"
-                                    >
-                                      <Eye className="h-3 w-3" />
-                                      {canPreviewAttachment(attachment) ? "View" : "Preview"}
-                                    </button>
-                                    <a
-                                      href={attachment.dataUrl}
-                                      download={attachment.name}
-                                      className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[10px] font-black text-slate-500 transition-colors hover:bg-slate-200"
-                                    >
-                                      <Download className="h-3 w-3" />
-                                      Download
-                                    </a>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {(completionRequest || hasCompletionAttachments) && (
-                            <div className="mt-3 space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              <div className="min-h-[200px] divide-y divide-slate-50 px-3 py-2 sm:px-4">
+                <AnimatePresence mode="popLayout">
+                  {paginatedTasks.length === 0 ? (
+                    <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                      className="flex flex-col items-center justify-center py-16 text-slate-300">
+                      <ListTodo className="w-10 h-10 mb-3" />
+                      <p className="text-sm font-semibold">No tasks found</p>
+                      <p className="text-xs mt-1">Try adjusting your filters</p>
+                    </motion.div>
+                  ) : (
+                    paginatedTasks.map((task, index) => {
+                      const pCfg = priorityConfig[task.priority];
+                      const sCfg = statusConfig[task.status];
+                      const hasTags = (task.tags ?? []).length > 0;
+                      const hasAttachments = (task.attachments ?? []).length > 0;
+                      const completionRequest = task.completionRequest;
+                      const completionAttachments = completionRequest?.attachments ?? [];
+                      const hasCompletionAttachments = completionAttachments.length > 0;
+                      const project = task.projectId ? projectById.get(task.projectId) : null;
+                      const isTeamView = viewMode === "team" && userProjects.length > 0;
+                      const canEditTask = !!task.projectId && userProjectIds.has(task.projectId);
+                      const canReviewCompletion = canReviewTaskCompletion(task);
+                      const isAssignee = isTaskAssignee(task);
+                      const isAwaitingApproval = completionRequest?.status === "Pending";
+                      const wasReturned = completionRequest?.status === "Rejected";
+
+                      return (
+                        <motion.div key={task.id} layout
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ delay: index * 0.04 }}
+                          className={`group my-2 flex flex-col gap-4 rounded-2xl border px-3 py-4 transition-all duration-200 sm:px-4 lg:flex-row lg:items-start lg:justify-between ${
+                            task.status === "Completed"
+                              ? "border-slate-200 bg-slate-50/80"
+                              : "border-slate-200 bg-white shadow-sm hover:-translate-y-0.5 hover:border-[#1F3C68]/15 hover:shadow-md"
+                          }`}>
+                          <div className="flex items-start gap-3 min-w-0 flex-1">
+                            <div className={`mt-1.5 h-10 w-1 rounded-full flex-shrink-0 ${sCfg.bar}`} />
+                            <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-2">
-                                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Completion Output</p>
-                                {completionRequest && (
-                                  <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500">
-                                    {getCompletionVisibilityLabel(completionRequest.visibility)}
+                                <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${
+                                  task.status === "Completed" ? "bg-[#EDF2FA] text-[#1F3C68]" : "bg-slate-100 text-slate-500"
+                                }`}>
+                                  <span className={`h-1.5 w-1.5 rounded-full ${sCfg.bar}`} />
+                                  {task.status}
+                                </span>
+                                {isAwaitingApproval && (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">
+                                    <AlertCircle className="h-3 w-3" />
+                                    Awaiting project leader approval
                                   </span>
                                 )}
+                                {wasReturned && (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-rose-700">
+                                    <AlertCircle className="h-3 w-3" />
+                                    Returned for update
+                                  </span>
+                                )}
+                                <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300">
+                                  Task #{task.id}
+                                </span>
                               </div>
-                              {completionRequest?.note && (
-                                <p className="text-xs leading-5 text-slate-500">{completionRequest.note}</p>
+                              <h3 className={`mt-2 text-sm font-black text-[#1F3C68] sm:text-[15px] ${task.status === "Completed" ? "line-through text-slate-400" : ""}`}>
+                                {task.title}
+                              </h3>
+                              <p className="mt-1 text-xs leading-5 text-slate-400">{task.description}</p>
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500">
+                                  <Clock className="w-3 h-3" />
+                                  Due {task.dueDate}
+                                </span>
+                                {task.assignedBy && (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                                    <User className="w-2.5 h-2.5" /> Assigned by {task.assignedBy}
+                                  </span>
+                                )}
+                                {project && (
+                                  <button
+                                    onClick={() => setSelectedProject(project)}
+                                    className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-violet-200 bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700 transition-colors hover:bg-violet-200"
+                                  >
+                                    <Layers className="w-2.5 h-2.5" />
+                                    {project.name}
+                                  </button>
+                                )}
+                                <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+                                  <User className="w-2.5 h-2.5" /> {task.assignedTo}
+                                </span>
+                              </div>
+                              {hasTags && (
+                                <div className="mt-2 flex flex-wrap gap-1">
+                                  {(task.tags ?? []).map((tag) => <TagBadge key={tag} tag={tag} />)}
+                                </div>
                               )}
-                              {completionRequest && (
-                                <p className="text-[11px] text-slate-400">
-                                  Submitted by {completionRequest.requestedBy ?? task.assignedTo}
-                                  {completionRequest.reviewedBy ? ` - Reviewed by ${completionRequest.reviewedBy}` : ""}
-                                </p>
+                              {hasAttachments && (
+                                <div className="mt-3 space-y-2">
+                                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Supporting Files</p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {(task.attachments ?? []).map((attachment) => (
+                                      <div key={attachment.id} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] font-bold text-slate-600">
+                                        <Paperclip className="w-3 h-3" />
+                                        <span className="max-w-[110px] truncate sm:max-w-[140px]">{attachment.name}</span>
+                                        <button type="button" onClick={() => setPreviewAttachment(attachment)}
+                                          className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[10px] font-black text-[#1F3C68] transition-colors hover:bg-[#EDF2FA]">
+                                          <Eye className="h-3 w-3" />
+                                          {canPreviewAttachment(attachment) ? "View" : "Preview"}
+                                        </button>
+                                        <a href={attachment.dataUrl} download={attachment.name}
+                                          className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[10px] font-black text-slate-500 transition-colors hover:bg-slate-200">
+                                          <Download className="h-3 w-3" />
+                                          Download
+                                        </a>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
                               )}
-                              {hasCompletionAttachments && (
-                                <div className="flex flex-wrap gap-2">
-                                  {completionAttachments.map((attachment) => (
-                                    <div
-                                      key={attachment.id}
-                                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-bold text-slate-600"
-                                    >
-                                      <Paperclip className="w-3 h-3" />
-                                      <span className="max-w-[110px] truncate sm:max-w-[140px]">{attachment.name}</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => setPreviewAttachment(attachment)}
-                                        className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-1 text-[10px] font-black text-[#1F3C68] transition-colors hover:bg-[#EDF2FA]"
-                                      >
-                                        <Eye className="h-3 w-3" />
-                                        {canPreviewAttachment(attachment) ? "View" : "Preview"}
-                                      </button>
-                                      <a
-                                        href={attachment.dataUrl}
-                                        download={attachment.name}
-                                        className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-1 text-[10px] font-black text-slate-500 transition-colors hover:bg-slate-200"
-                                      >
-                                        <Download className="h-3 w-3" />
-                                        Download
-                                      </a>
+                              {(completionRequest || hasCompletionAttachments) && (
+                                <div className="mt-3 space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Completion Output</p>
+                                    {completionRequest && (
+                                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                                        {getCompletionVisibilityLabel(completionRequest.visibility)}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {completionRequest?.note && (
+                                    <p className="text-xs leading-5 text-slate-500">{completionRequest.note}</p>
+                                  )}
+                                  {completionRequest && (
+                                    <p className="text-[11px] text-slate-400">
+                                      Submitted by {completionRequest.requestedBy ?? task.assignedTo}
+                                      {completionRequest.reviewedBy ? ` - Reviewed by ${completionRequest.reviewedBy}` : ""}
+                                    </p>
+                                  )}
+                                  {hasCompletionAttachments && (
+                                    <div className="flex flex-wrap gap-2">
+                                      {completionAttachments.map((attachment) => (
+                                        <div key={attachment.id} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-bold text-slate-600">
+                                          <Paperclip className="w-3 h-3" />
+                                          <span className="max-w-[110px] truncate sm:max-w-[140px]">{attachment.name}</span>
+                                          <button type="button" onClick={() => setPreviewAttachment(attachment)}
+                                            className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-1 text-[10px] font-black text-[#1F3C68] transition-colors hover:bg-[#EDF2FA]">
+                                            <Eye className="h-3 w-3" />
+                                            {canPreviewAttachment(attachment) ? "View" : "Preview"}
+                                          </button>
+                                          <a href={attachment.dataUrl} download={attachment.name}
+                                            className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-1 text-[10px] font-black text-slate-500 transition-colors hover:bg-slate-200">
+                                            <Download className="h-3 w-3" />
+                                            Download
+                                          </a>
+                                        </div>
+                                      ))}
                                     </div>
-                                  ))}
+                                  )}
                                 </div>
                               )}
                             </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* ── Right side: priority + status popover ── */}
-                      <div className="mt-0.5 flex w-full flex-col items-stretch gap-2 lg:w-auto lg:min-w-[180px] lg:items-end">
-                        <span className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] font-bold ${pCfg.bg} ${pCfg.color} lg:self-end`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${pCfg.dot}`} />
-                          {task.priority}
-                        </span>
-
-                        {/* Status dropdown — replaces the old advance button */}
-                        <div className="lg:self-end">
-                          <StatusPopover task={task} onUpdate={updateStatus} />
-                        </div>
-                        <p className="text-left text-[10px] font-medium leading-relaxed text-slate-400 lg:max-w-[180px] lg:text-right">
-                          {task.status === "Pending"
-                            ? "Start the task first before completion becomes available."
-                            : task.status === "In Progress"
-                              ? isAwaitingApproval
-                                ? "Completion was submitted and is waiting for project manager approval."
-                                : wasReturned
-                                  ? "The last completion request was returned. Update the output and resubmit."
-                                  : "Completion now submits proof for approval instead of closing the task immediately."
-                              : "This task was only marked completed after approval."}
-                        </p>
-                        {canReviewCompletion && isAwaitingApproval && (
-                          <>
-                            <button
-                              onClick={() => reviewCompletionRequest(task.id, "Approved")}
-                              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#1F3C68] px-3 py-2 text-[11px] font-bold text-white shadow-sm hover:bg-[#173254]"
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              Approve Completion
-                            </button>
-                            <button
-                              onClick={() => reviewCompletionRequest(task.id, "Rejected")}
-                              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-bold text-rose-700 transition-colors hover:bg-rose-100"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                              Return to Member
-                            </button>
-                          </>
-                        )}
-                        {!canReviewCompletion && isAssignee && isAwaitingApproval && (
-                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[10px] font-bold leading-relaxed text-amber-700 lg:text-right">
-                            Waiting for project leader approval.
                           </div>
-                        )}
-                        {canEditTask && (
-                          <button
-                            onClick={() => {
-                              setEditingTask(task);
-                              setShowAssignModal(true);
-                            }}
-                            className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-bold text-slate-600 transition-colors hover:border-[#1F3C68]/20 hover:text-[#1F3C68]"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                            Edit Task
-                          </button>
-                        )}
-                      </div>
-                    </motion.div>
-                  );
-                })
-              )}
-            </AnimatePresence>
-          </div>
 
-          <Pagination
-            currentPage={safePage}
-            totalPages={totalPages}
-            onPageChange={setCurrentPage}
-            totalItems={filteredTasks.length}
-            itemsPerPage={TASKS_PER_PAGE}
-          />
+                          <div className="mt-0.5 flex w-full flex-col items-stretch gap-2 lg:w-auto lg:min-w-[180px] lg:items-end">
+                            <span className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] font-bold ${pCfg.bg} ${pCfg.color} lg:self-end`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${pCfg.dot}`} />
+                              {task.priority}
+                            </span>
+                            <div className="lg:self-end">
+                              <StatusPopover task={task} onUpdate={updateStatus} />
+                            </div>
+                            <p className="text-left text-[10px] font-medium leading-relaxed text-slate-400 lg:max-w-[180px] lg:text-right">
+                              {task.status === "Pending"
+                                ? "Start the task first before completion becomes available."
+                                : task.status === "In Progress"
+                                  ? isAwaitingApproval
+                                    ? "Completion was submitted and is waiting for project manager approval."
+                                    : wasReturned
+                                      ? "The last completion request was returned. Update the output and resubmit."
+                                      : "Completion now submits proof for approval instead of closing the task immediately."
+                                  : "This task was only marked completed after approval."}
+                            </p>
+                            {canReviewCompletion && isAwaitingApproval && (
+                              <>
+                                <button onClick={() => reviewCompletionRequest(task.id, "Approved")}
+                                  className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#1F3C68] px-3 py-2 text-[11px] font-bold text-white shadow-sm hover:bg-[#173254]">
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  Approve Completion
+                                </button>
+                                <button onClick={() => reviewCompletionRequest(task.id, "Rejected")}
+                                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-bold text-rose-700 transition-colors hover:bg-rose-100">
+                                  <X className="w-3.5 h-3.5" />
+                                  Return to Member
+                                </button>
+                              </>
+                            )}
+                            {!canReviewCompletion && isAssignee && isAwaitingApproval && (
+                              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[10px] font-bold leading-relaxed text-amber-700 lg:text-right">
+                                Waiting for project leader approval.
+                              </div>
+                            )}
+                            {canEditTask && (
+                              <button
+                                onClick={() => {
+                                  setEditingTask(task);
+                                  setShowAssignModal(true);
+                                }}
+                                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-bold text-slate-600 transition-colors hover:border-[#1F3C68]/20 hover:text-[#1F3C68]"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                                Edit Task
+                              </button>
+                            )}
+                          </div>
+                        </motion.div>
+                      );
+                    })
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <Pagination
+                currentPage={safePage}
+                totalPages={totalPages}
+                onPageChange={setCurrentPage}
+                totalItems={filteredTasks.length}
+                itemsPerPage={TASKS_PER_PAGE}
+              />
             </motion.div>
           </>
         ) : (
@@ -2233,13 +2222,8 @@ function TaskPage() {
               <div className="min-h-[220px] divide-y divide-slate-50 px-3 py-2 sm:px-4">
                 <AnimatePresence mode="popLayout">
                   {managedProjects.length === 0 ? (
-                    <motion.div
-                      key="manage-empty"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="flex flex-col items-center justify-center py-16 text-slate-300"
-                    >
+                    <motion.div key="manage-empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                      className="flex flex-col items-center justify-center py-16 text-slate-300">
                       <Settings2 className="w-10 h-10 mb-3" />
                       <p className="text-sm font-semibold">No projects to manage yet</p>
                       <p className="text-xs mt-1">Once you lead a project, it will appear here</p>
@@ -2251,9 +2235,7 @@ function TaskPage() {
                       const progress = projectTasks.length ? Math.round((completedTasks / projectTasks.length) * 100) : 0;
 
                       return (
-                        <motion.div
-                          key={project.id}
-                          layout
+                        <motion.div key={project.id} layout
                           initial={{ opacity: 0, y: 8 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, x: -20 }}
@@ -2275,7 +2257,6 @@ function TaskPage() {
                                 </span>
                               </div>
                               <p className="text-xs text-slate-400 truncate mt-0.5">{project.description || "No project description."}</p>
-
                               <div className="flex flex-wrap items-center gap-2 mt-1.5">
                                 <span className="text-[10px] text-slate-300 font-medium">
                                   {project.dueDate ? `Due ${project.dueDate}` : "No due date"}
@@ -2293,29 +2274,22 @@ function TaskPage() {
                                   {inProgressTasks} in progress
                                 </span>
                               </div>
-
                               <div className="mt-2.5">
                                 <div className="flex justify-between items-center mb-1">
                                   <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Progress</p>
                                   <span className="text-[11px] font-black text-[#1F3C68]">{progress}%</span>
                                 </div>
                                 <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                                  <motion.div
-                                    initial={{ width: 0 }}
-                                    animate={{ width: `${progress}%` }}
+                                  <motion.div initial={{ width: 0 }} animate={{ width: `${progress}%` }}
                                     transition={{ duration: 0.7, ease: "easeOut" }}
-                                    className="h-full rounded-full bg-gradient-to-r from-[#F28C28] to-[#E97638]"
-                                  />
+                                    className="h-full rounded-full bg-gradient-to-r from-[#F28C28] to-[#E97638]" />
                                 </div>
                               </div>
-
                               {members.length > 0 && (
                                 <div className="flex flex-wrap gap-1 mt-2.5">
                                   {members.slice(0, 5).map((member) => (
-                                    <span
-                                      key={member.id}
-                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200"
-                                    >
+                                    <span key={member.id}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
                                       <User className="w-2.5 h-2.5" />
                                       {member.name}
                                     </span>
@@ -2327,7 +2301,6 @@ function TaskPage() {
                                   )}
                                 </div>
                               )}
-
                               {(project.tags ?? []).length > 0 && (
                                 <div className="flex flex-wrap gap-1 mt-2">
                                   {(project.tags ?? []).map((tag) => <TagBadge key={tag} tag={tag} />)}
@@ -2337,10 +2310,8 @@ function TaskPage() {
                           </div>
 
                           <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center lg:w-auto lg:flex-shrink-0">
-                            <button
-                              onClick={() => setSelectedProject(project)}
-                              className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-500 transition-all hover:bg-slate-200"
-                            >
+                            <button onClick={() => setSelectedProject(project)}
+                              className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-500 transition-all hover:bg-slate-200">
                               View
                             </button>
                             <button
