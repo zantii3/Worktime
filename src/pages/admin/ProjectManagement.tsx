@@ -58,6 +58,7 @@ type AdminTask = Task & {
   assignedById?: number;
   dueDate?: string;
   tags?: string[];
+  attachments?: TaskAttachment[];
   completionRequest?: TaskCompletionRequest;
   completedAt?: string;
   completedBy?: string;
@@ -65,9 +66,16 @@ type AdminTask = Task & {
 };
 
 type AdminProject = Project;
+
+// TaskForm now includes attachments to support file upload in the modal
 type TaskForm = Omit<AdminTask, "id">;
 type ProjectForm = Omit<AdminProject, "id">;
 type ModalMode = "project" | "task";
+
+// ---------- Constants ----------
+
+const MAX_ATTACHMENT_SIZE = 1024 * 1024; // 1 MB
+const MAX_ATTACHMENTS = 3;
 
 const createId = (): number => Date.now() + Math.floor(Math.random() * 1000);
 const STATUS: TaskStatus[] = ["Pending", "In Progress", "Completed"];
@@ -78,6 +86,8 @@ type TaskSortKey =
   | "newest" | "oldest" | "priority" | "status" | "dueDate"
   | "title" | "assignee" | "project";
 type SortDir = "asc" | "desc";
+
+// ---------- Helpers ----------
 
 function cn(...classes: Array<string | false | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -114,6 +124,43 @@ function safeDateValue(yyyyMMdd?: string) {
   const t = new Date(yyyyMMdd).getTime();
   return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
 }
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function prepareAttachments(
+  files: FileList | null,
+  existing: TaskAttachment[]
+): Promise<TaskAttachment[]> {
+  if (!files?.length) return existing;
+  const selected = Array.from(files);
+  if (existing.length + selected.length > MAX_ATTACHMENTS) {
+    throw new Error(`You can attach up to ${MAX_ATTACHMENTS} files per task.`);
+  }
+  const prepared = await Promise.all(
+    selected.map(async (file) => {
+      if (file.size > MAX_ATTACHMENT_SIZE) {
+        throw new Error(`"${file.name}" exceeds the 1 MB limit.`);
+      }
+      return {
+        id: `${file.name}-${file.size}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        dataUrl: await readFileAsDataUrl(file),
+      } satisfies TaskAttachment;
+    })
+  );
+  return [...existing, ...prepared];
+}
+
+// ---------- Shared UI ----------
 
 function Pill({ children, tone }: {
   children: string;
@@ -280,7 +327,6 @@ function SubmissionDetailModal({
           onClick={(e) => e.stopPropagation()}
           className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
         >
-          {/* Header */}
           <div className="bg-gradient-to-r from-[#1F3C68] to-[#2B4E82] px-6 py-5 text-white shrink-0">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
@@ -302,10 +348,7 @@ function SubmissionDetailModal({
             </div>
           </div>
 
-          {/* Body */}
           <div className="flex-1 overflow-y-auto p-6 space-y-5">
-
-            {/* Task meta */}
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
               <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Task Details</p>
               <div className="grid grid-cols-2 gap-3 text-sm">
@@ -336,7 +379,6 @@ function SubmissionDetailModal({
               )}
             </div>
 
-            {/* Submission info */}
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Completion Submission</p>
@@ -360,7 +402,6 @@ function SubmissionDetailModal({
               )}
             </div>
 
-            {/* Attachments */}
             {req.attachments?.length > 0 && (
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
@@ -398,7 +439,6 @@ function SubmissionDetailModal({
               </div>
             )}
 
-            {/* Review notice */}
             <div className="rounded-2xl border border-[#1F3C68]/20 bg-[#EDF2FA] px-4 py-3 flex items-start gap-3">
               <ShieldCheck className="w-4 h-4 text-[#1F3C68] shrink-0 mt-0.5" />
               <p className="text-xs text-[#1F3C68] leading-relaxed font-medium">
@@ -413,7 +453,6 @@ function SubmissionDetailModal({
             </div>
           </div>
 
-          {/* Footer actions */}
           <div className="px-6 pb-6 pt-3 border-t border-slate-100 flex items-center justify-between gap-3 shrink-0">
             <button onClick={onClose} type="button"
               className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-50 transition">
@@ -468,7 +507,6 @@ export default function Tasks() {
     return m;
   }, [assignees]);
 
-  // Current admin for reviewer attribution
   const currentAdmin = useMemo(() => {
     try {
       return JSON.parse(localStorage.getItem("currentAdmin") || "null") as
@@ -486,13 +524,11 @@ export default function Tasks() {
   const [expandedProjects, setExpandedProjects] = useState<Record<number, boolean>>({});
   const [showAllTasks, setShowAllTasks] = useState(false);
 
-  // Project list controls
   const [projectQuery, setProjectQuery] = useState("");
   const [leaderFilter, setLeaderFilter] = useState<number | "All">("All");
   const [projectSortKey, setProjectSortKey] = useState<ProjectSortKey>("newest");
   const [projectSortDir, setProjectSortDir] = useState<SortDir>("desc");
 
-  // Task list controls
   const [taskQuery, setTaskQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "All">("All");
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "All">("All");
@@ -500,14 +536,12 @@ export default function Tasks() {
   const [taskSortKey, setTaskSortKey] = useState<TaskSortKey>("newest");
   const [taskSortDir, setTaskSortDir] = useState<SortDir>("desc");
 
-  // Selection
   const [selected, setSelected] = useState<Record<number, boolean>>({});
   const selectedIds = useMemo(
     () => Object.entries(selected).filter(([, v]) => v).map(([k]) => Number(k)),
     [selected]
   );
 
-  // Modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>("project");
   const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
@@ -515,6 +549,7 @@ export default function Tasks() {
 
   const [projectForm, setProjectForm] = useState<ProjectForm>({
     name: "", description: "", leaderId: 0, dueDate: "", tags: [],
+    createdAt: "", files: [],
   });
 
   const [taskForm, setTaskForm] = useState<TaskForm>({
@@ -522,31 +557,48 @@ export default function Tasks() {
     assignedToId: undefined, assignedBy: "", assignedById: undefined,
     projectId: undefined, priority: "Low", status: "Pending",
     dueDate: "", tags: [],
+    // New: attachments field for supporting files
+    attachments: [],
   });
 
   const [tagInput, setTagInput] = useState("");
 
-  // Pending approvals state
+  // ── Attachment state for the task form ──────────────────────────────────
+  const [attachmentError, setAttachmentError] = useState("");
+
+  const handleTaskAttachmentAdd = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setAttachmentError("");
+    try {
+      const updated = await prepareAttachments(files, taskForm.attachments ?? []);
+      setTaskForm((prev) => ({ ...prev, attachments: updated }));
+    } catch (err) {
+      setAttachmentError(err instanceof Error ? err.message : "Unable to attach file.");
+    }
+  };
+
+  const handleTaskAttachmentRemove = (attachmentId: string) => {
+    setTaskForm((prev) => ({
+      ...prev,
+      attachments: (prev.attachments ?? []).filter((a) => a.id !== attachmentId),
+    }));
+  };
+
+  // Pending approvals
   const [pendingFilter, setPendingFilter] = useState<"all" | "leader-required" | "manager-only">("all");
   const [pendingQuery, setPendingQuery] = useState("");
   const [selectedSubmission, setSelectedSubmission] = useState<AdminTask | null>(null);
 
-  // ── Pending approvals derived data ──────────────────────────────────────
   const pendingSubmissions = useMemo(() => {
-    return typedTasks.filter(
-      (t) => t.completionRequest?.status === "Pending"
-    );
+    return typedTasks.filter((t) => t.completionRequest?.status === "Pending");
   }, [typedTasks]);
 
   const filteredPendingSubmissions = useMemo(() => {
     const q = pendingQuery.trim().toLowerCase();
     return pendingSubmissions.filter((t) => {
       const matchVisibility =
-        pendingFilter === "all" ||
-        t.completionRequest?.visibility === pendingFilter;
-      const projectName = t.projectId
-        ? projectById.get(t.projectId)?.name ?? ""
-        : "";
+        pendingFilter === "all" || t.completionRequest?.visibility === pendingFilter;
+      const projectName = t.projectId ? projectById.get(t.projectId)?.name ?? "" : "";
       const matchSearch =
         !q ||
         t.title.toLowerCase().includes(q) ||
@@ -557,10 +609,7 @@ export default function Tasks() {
   }, [pendingSubmissions, pendingFilter, pendingQuery, projectById]);
 
   // ── Review actions ────────────────────────────────────────────────────
-  const reviewSubmission = (
-    taskId: number,
-    decision: "Approved" | "Rejected"
-  ) => {
+  const reviewSubmission = (taskId: number, decision: "Approved" | "Rejected") => {
     setTasks((prev) =>
       (prev as AdminTask[]).map((t) => {
         if (t.id !== taskId || !t.completionRequest) return t;
@@ -573,8 +622,7 @@ export default function Tasks() {
         };
         if (decision === "Approved") {
           return {
-            ...t,
-            status: "Completed" as TaskStatus,
+            ...t, status: "Completed" as TaskStatus,
             completionRequest: reviewed,
             completedAt: new Date().toISOString(),
             completedBy: currentAdmin?.name ?? "Admin",
@@ -582,18 +630,13 @@ export default function Tasks() {
           };
         }
         return {
-          ...t,
-          status: "In Progress" as TaskStatus,
+          ...t, status: "In Progress" as TaskStatus,
           completionRequest: reviewed,
-          completedAt: undefined,
-          completedBy: undefined,
-          completedById: undefined,
+          completedAt: undefined, completedBy: undefined, completedById: undefined,
         };
       })
     );
-
-    const action = decision === "Approved" ? "approved" : "returned";
-    notifySuccess(`Submission ${action} successfully.`);
+    notifySuccess(`Submission ${decision === "Approved" ? "approved" : "returned"} successfully.`);
     setSelectedSubmission(null);
   };
 
@@ -602,12 +645,13 @@ export default function Tasks() {
     setEditingProjectId(null);
     setEditingTaskId(null);
     setTagInput("");
-    setProjectForm({ name: "", description: "", leaderId: 0, dueDate: "", tags: [] });
+    setAttachmentError("");
+    setProjectForm({ name: "", description: "", leaderId: 0, dueDate: "", tags: [], createdAt: "", files: [] });
     setTaskForm({
       title: "", description: "", assignedTo: "",
       assignedToId: undefined, assignedBy: "", assignedById: undefined,
       projectId: undefined, priority: "Low", status: "Pending",
-      dueDate: "", tags: [],
+      dueDate: "", tags: [], attachments: [],
     });
   };
 
@@ -617,6 +661,7 @@ export default function Tasks() {
     setProjectForm({
       name: p.name, description: p.description, leaderId: p.leaderId,
       dueDate: p.dueDate ?? "", tags: p.tags ?? [],
+      createdAt: p.createdAt, files: p.files ?? [],
     });
     setModalOpen(true);
   };
@@ -633,6 +678,8 @@ export default function Tasks() {
       assignedBy: t.assignedBy ?? "", assignedById: t.assignedById,
       projectId: t.projectId, priority: t.priority, status: t.status,
       dueDate: t.dueDate ?? "", tags: t.tags ?? [],
+      // Preserve existing attachments when editing
+      attachments: t.attachments ?? [],
     });
     setModalOpen(true);
   };
@@ -668,7 +715,12 @@ export default function Tasks() {
       );
       notifySuccess("Project updated.");
     } else {
-      const newProject: AdminProject = { id: createId(), ...projectForm };
+      const newProject: AdminProject = {
+        id: createId(),
+        createdAt: new Date().toISOString(),
+        files: [],
+        ...projectForm,
+      };
       setProjects((prev) => [newProject as Project, ...prev]);
       notifySuccess("Project created.");
     }
@@ -912,16 +964,13 @@ export default function Tasks() {
         <StatCard label="Completed" value={stats.completed} tone="success" />
       </div>
 
-      {/* ══════════════════════════════════════════════════════════
-          PENDING APPROVALS PANEL
-      ══════════════════════════════════════════════════════════ */}
+      {/* Pending Approvals Panel */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, delay: 0.04 }}
         className="bg-card rounded-2xl shadow-sm border border-amber-200 overflow-hidden"
       >
-        {/* Panel header */}
         <div className="p-5 border-b border-amber-100 bg-amber-50/60">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-3">
@@ -947,9 +996,7 @@ export default function Tasks() {
               </div>
             </div>
 
-            {/* Filter tabs + search */}
             <div className="flex items-center gap-2 flex-wrap">
-              {/* Visibility filter */}
               <div className="flex items-center gap-1 bg-white border border-amber-200 rounded-xl p-1">
                 {(["all", "leader-required", "manager-only"] as const).map((f) => (
                   <button key={f} type="button"
@@ -965,7 +1012,6 @@ export default function Tasks() {
                 ))}
               </div>
 
-              {/* Search */}
               <div className="flex items-center gap-2 border border-amber-200 rounded-xl px-3 py-2 bg-white focus-within:ring-2 focus-within:ring-amber-300/50">
                 <Search className="h-3.5 w-3.5 text-amber-400" />
                 <input
@@ -985,7 +1031,6 @@ export default function Tasks() {
           </div>
         </div>
 
-        {/* Submissions list */}
         <div className="divide-y divide-amber-50">
           <AnimatePresence mode="popLayout">
             {filteredPendingSubmissions.length === 0 ? (
@@ -1013,9 +1058,7 @@ export default function Tasks() {
             ) : (
               filteredPendingSubmissions.map((task, i) => {
                 const req = task.completionRequest!;
-                const pName = task.projectId
-                  ? projectById.get(task.projectId)?.name ?? "—"
-                  : "—";
+                const pName = task.projectId ? projectById.get(task.projectId)?.name ?? "—" : "—";
                 const isLeaderRequired = req.visibility === "leader-required";
                 const hasAttachments = (req.attachments ?? []).length > 0;
 
@@ -1029,18 +1072,13 @@ export default function Tasks() {
                     transition={{ delay: i * 0.04 }}
                     className="flex flex-col lg:flex-row lg:items-center gap-4 px-5 py-4 hover:bg-amber-50/40 transition-colors group"
                   >
-                    {/* Left: task info */}
                     <div className="flex items-start gap-3 flex-1 min-w-0">
-                      {/* Indicator dot */}
                       <div className="mt-1.5 flex-shrink-0">
                         <span className="block w-2 h-2 rounded-full bg-amber-400 ring-2 ring-amber-200" />
                       </div>
-
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2 mb-1">
-                          <span className="font-bold text-text-heading text-sm truncate">
-                            {task.title}
-                          </span>
+                          <span className="font-bold text-text-heading text-sm truncate">{task.title}</span>
                           <span className={cn(
                             "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border",
                             isLeaderRequired
@@ -1057,7 +1095,6 @@ export default function Tasks() {
                             </span>
                           )}
                         </div>
-
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-primary/60">
                           <span className="font-medium">
                             Project: <span className="text-[#1F3C68] font-semibold">{pName}</span>
@@ -1072,7 +1109,6 @@ export default function Tasks() {
                             {formatDate(req.requestedAt)}
                           </span>
                         </div>
-
                         {req.note && (
                           <p className="text-xs text-slate-500 mt-1.5 line-clamp-2 leading-relaxed bg-amber-50 rounded-lg px-2.5 py-1.5 border border-amber-100">
                             <span className="font-semibold text-amber-700">Note: </span>
@@ -1082,29 +1118,19 @@ export default function Tasks() {
                       </div>
                     </div>
 
-                    {/* Right: actions */}
                     <div className="flex items-center gap-2 shrink-0 pl-5 lg:pl-0">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedSubmission(task)}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:border-[#1F3C68]/30 hover:text-[#1F3C68] transition"
-                      >
+                      <button type="button" onClick={() => setSelectedSubmission(task)}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:border-[#1F3C68]/30 hover:text-[#1F3C68] transition">
                         <Eye className="w-3.5 h-3.5" />
                         Review
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => reviewSubmission(task.id, "Rejected")}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-rose-100 bg-white text-xs font-bold text-rose-600 hover:bg-rose-50 transition"
-                      >
+                      <button type="button" onClick={() => reviewSubmission(task.id, "Rejected")}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-rose-100 bg-white text-xs font-bold text-rose-600 hover:bg-rose-50 transition">
                         <XCircle className="w-3.5 h-3.5" />
                         Return
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => reviewSubmission(task.id, "Approved")}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#1F3C68] text-xs font-bold text-white hover:bg-[#173254] transition shadow-sm"
-                      >
+                      <button type="button" onClick={() => reviewSubmission(task.id, "Approved")}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#1F3C68] text-xs font-bold text-white hover:bg-[#173254] transition shadow-sm">
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         Approve
                       </button>
@@ -1117,7 +1143,7 @@ export default function Tasks() {
         </div>
       </motion.div>
 
-      {/* Modal */}
+      {/* ── Task / Project Modal ─────────────────────────────────────────── */}
       <Modal
         open={modalOpen}
         title={
@@ -1166,6 +1192,7 @@ export default function Tasks() {
             </>
           ) : (
             <>
+              {/* ── Task fields ── */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="space-y-1">
                   <div className="text-xs font-semibold text-text-heading">Task title</div>
@@ -1221,41 +1248,100 @@ export default function Tasks() {
                   </select>
                 </label>
               </div>
-              <label className="space-y-1">
-                <div className="text-xs font-semibold text-text-heading">Due date (optional)</div>
-                <input type="date" value={taskForm.dueDate ?? ""}
-                  onChange={(e) => setTaskForm((p) => ({ ...p, dueDate: e.target.value }))}
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30" />
-              </label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <div className="text-xs font-semibold text-text-heading">Due date (optional)</div>
+                  <input type="date" value={taskForm.dueDate ?? ""}
+                    onChange={(e) => setTaskForm((p) => ({ ...p, dueDate: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30" />
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="space-y-1">
+                    <div className="text-xs font-semibold text-text-heading">Priority</div>
+                    <select value={taskForm.priority}
+                      onChange={(e) => setTaskForm((p) => ({ ...p, priority: e.target.value as TaskPriority }))}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30">
+                      {PRIORITY.map((p) => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  </label>
+                  <label className="space-y-1">
+                    <div className="text-xs font-semibold text-text-heading">Status</div>
+                    <select value={taskForm.status}
+                      onChange={(e) => setTaskForm((p) => ({ ...p, status: e.target.value as TaskStatus }))}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30">
+                      {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </label>
+                </div>
+              </div>
               <label className="space-y-1">
                 <div className="text-xs font-semibold text-text-heading">Description</div>
                 <textarea value={taskForm.description}
                   onChange={(e) => setTaskForm((p) => ({ ...p, description: e.target.value }))}
                   placeholder="Description"
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white min-h-[100px] outline-none focus:ring-2 focus:ring-primary/30" />
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white min-h-[80px] outline-none focus:ring-2 focus:ring-primary/30" />
               </label>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="space-y-1">
-                  <div className="text-xs font-semibold text-text-heading">Priority</div>
-                  <select value={taskForm.priority}
-                    onChange={(e) => setTaskForm((p) => ({ ...p, priority: e.target.value as TaskPriority }))}
-                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30">
-                    {PRIORITY.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
+
+              {/* ── Supporting File Attachments (new) ── */}
+              <div className="space-y-2">
+                <div className="text-xs font-semibold text-text-heading">
+                  Supporting Files{" "}
+                  <span className="font-normal text-text-primary/50">(optional, max {MAX_ATTACHMENTS} files, 1 MB each)</span>
+                </div>
+                <label className="flex cursor-pointer items-center justify-between rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-500 transition-colors hover:border-primary/40 hover:bg-primary/5">
+                  <span className="inline-flex items-center gap-2 font-medium">
+                    <Paperclip className="w-4 h-4" />
+                    Add files for instructions, briefs, or references
+                  </span>
+                  <span className="text-[11px] font-bold text-slate-400">
+                    {(taskForm.attachments ?? []).length}/{MAX_ATTACHMENTS}
+                  </span>
+                  <input
+                    type="file"
+                    multiple
+                    hidden
+                    disabled={(taskForm.attachments ?? []).length >= MAX_ATTACHMENTS}
+                    onChange={async (e) => {
+                      await handleTaskAttachmentAdd(e.target.files);
+                      e.target.value = "";
+                    }}
+                  />
                 </label>
-                <label className="space-y-1">
-                  <div className="text-xs font-semibold text-text-heading">Status</div>
-                  <select value={taskForm.status}
-                    onChange={(e) => setTaskForm((p) => ({ ...p, status: e.target.value as TaskStatus }))}
-                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/30">
-                    {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </label>
+
+                {attachmentError && (
+                  <p className="text-xs font-semibold text-rose-500">{attachmentError}</p>
+                )}
+
+                {(taskForm.attachments ?? []).length > 0 && (
+                  <div className="space-y-2">
+                    {(taskForm.attachments ?? []).map((att) => (
+                      <div
+                        key={att.id}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Paperclip className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-text-heading">{att.name}</p>
+                            <p className="text-[10px] text-slate-400">{formatAttachmentSize(att.size)}</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleTaskAttachmentRemove(att.id)}
+                          className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-500 hover:bg-rose-50 hover:text-rose-600 transition-colors shrink-0"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </>
           )}
 
-          {/* Tags */}
+          {/* Tags — shared between project and task forms */}
           <div className="space-y-2">
             <div className="text-xs font-semibold text-text-heading">Tags (optional)</div>
             <div className="flex gap-2">
@@ -1448,15 +1534,15 @@ export default function Tasks() {
                                 <div className="text-xs text-text-primary/70">Subtasks for this project</div>
                               </div>
                               <button onClick={() => openCreateTask(p.id)} type="button"
-                                className="inline-flex items-center gap-2 bg-primary text-white rounded-xl px-3 py-2 text-sm font-semibold hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-primary/30">
+                                className="inline-flex items-center gap-2 bg-primary text-white rounded-xl px-3 py-2 text-sm font-semibold hover:opacity-95">
                                 <Plus className="h-4 w-4" /> Add Task
                               </button>
                             </div>
                             <div className="w-full overflow-x-auto">
-                              <AdminTable headers={["Title", "Assigned To", "Priority", "Status", "Submission", "Due", "Actions"]}>
+                              <AdminTable headers={["Title", "Assigned To", "Priority", "Status", "Submission", "Due", "Files", "Actions"]}>
                                 {projectTasks.length === 0 ? (
                                   <tr>
-                                    <td colSpan={7} className="px-4 py-10 text-center text-text-primary/60">
+                                    <td colSpan={8} className="px-4 py-10 text-center text-text-primary/60">
                                       No tasks yet for this project.
                                     </td>
                                   </tr>
@@ -1464,6 +1550,7 @@ export default function Tasks() {
                                   projectTasks.map((t) => {
                                     const adminT = t as AdminTask;
                                     const hasPending = adminT.completionRequest?.status === "Pending";
+                                    const attachCount = (adminT.attachments ?? []).length;
                                     return (
                                       <tr key={t.id} className="align-top">
                                         <td className="px-4 py-3 min-w-[280px]">
@@ -1483,7 +1570,6 @@ export default function Tasks() {
                                             {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
                                           </select>
                                         </td>
-                                        {/* Submission status column */}
                                         <td className="px-4 py-3 min-w-[160px]">
                                           {hasPending ? (
                                             <button type="button"
@@ -1506,6 +1592,17 @@ export default function Tasks() {
                                         </td>
                                         <td className="px-4 py-3 text-sm text-text-primary min-w-[120px]">
                                           {t.dueDate ? t.dueDate : <span className="text-text-primary/50">—</span>}
+                                        </td>
+                                        {/* Supporting files count column */}
+                                        <td className="px-4 py-3 min-w-[100px]">
+                                          {attachCount > 0 ? (
+                                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                              <Paperclip className="w-3 h-3" />
+                                              {attachCount}
+                                            </span>
+                                          ) : (
+                                            <span className="text-xs text-text-primary/40">—</span>
+                                          )}
                                         </td>
                                         <td className="px-4 py-3 min-w-[160px]">
                                           <div className="flex items-center gap-3">
@@ -1562,7 +1659,7 @@ export default function Tasks() {
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <button onClick={() => openCreateTask()} type="button"
-                    className="inline-flex items-center gap-2 bg-primary text-white rounded-xl px-3 py-2 text-sm font-semibold hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-primary/30">
+                    className="inline-flex items-center gap-2 bg-primary text-white rounded-xl px-3 py-2 text-sm font-semibold hover:opacity-95">
                     <Plus className="h-4 w-4" /> Add Task
                   </button>
                   <div className="flex items-center gap-2 border border-slate-200 rounded-xl px-3 py-2 bg-white focus-within:ring-2 focus-within:ring-primary/30">
@@ -1603,7 +1700,7 @@ export default function Tasks() {
                   </select>
                   <button type="button"
                     onClick={() => setTaskSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-                    className="inline-flex items-center gap-2 border border-slate-200 bg-white hover:bg-soft rounded-xl px-3 py-2 text-sm font-semibold text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30">
+                    className="inline-flex items-center gap-2 border border-slate-200 bg-white hover:bg-soft rounded-xl px-3 py-2 text-sm font-semibold text-text-primary">
                     <ArrowUpDown className="h-4 w-4 text-text-primary/70" />
                     {taskSortDir === "asc" ? "Asc" : "Desc"}
                   </button>
@@ -1642,19 +1739,20 @@ export default function Tasks() {
             </div>
 
             <div className="w-full overflow-x-auto">
-              <AdminTable headers={["", "Task", "Project", "Assigned To", "Priority", "Status", "Submission", "Due", "Actions"]}>
+              <AdminTable headers={["", "Task", "Project", "Assigned To", "Priority", "Status", "Submission", "Due", "Files", "Actions"]}>
                 <tr className="bg-soft border-b border-slate-200">
                   <td className="px-4 py-3">
                     <input type="checkbox" checked={allVisibleSelected}
                       onChange={(e) => toggleAllVisible(visibleTaskIdsAll, e.target.checked)} />
                   </td>
-                  <td className="px-4 py-3 font-medium text-text-primary" colSpan={8}>
+                  <td className="px-4 py-3 font-medium text-text-primary" colSpan={9}>
                     Select all visible
                   </td>
                 </tr>
                 {filteredTasksAll.map((t) => {
                   const adminT = t as AdminTask;
                   const hasPending = adminT.completionRequest?.status === "Pending";
+                  const attachCount = (adminT.attachments ?? []).length;
                   return (
                     <motion.tr key={t.id}
                       initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
@@ -1682,11 +1780,9 @@ export default function Tasks() {
                           {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
                         </select>
                       </td>
-                      {/* Submission status */}
                       <td className="px-4 py-3 min-w-[160px]">
                         {hasPending ? (
-                          <button type="button"
-                            onClick={() => setSelectedSubmission(adminT)}
+                          <button type="button" onClick={() => setSelectedSubmission(adminT)}
                             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition">
                             <AlertCircle className="w-3 h-3" /> Review
                           </button>
@@ -1705,6 +1801,17 @@ export default function Tasks() {
                       <td className="px-4 py-3 text-sm text-text-primary min-w-[120px]">
                         {t.dueDate ? t.dueDate : <span className="text-text-primary/50">—</span>}
                       </td>
+                      {/* Supporting files count */}
+                      <td className="px-4 py-3 min-w-[100px]">
+                        {attachCount > 0 ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                            <Paperclip className="w-3 h-3" />
+                            {attachCount}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-text-primary/40">—</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 min-w-[180px]">
                         <div className="flex items-center gap-3">
                           <button onClick={() => openEditTask(adminT)} type="button"
@@ -1722,7 +1829,7 @@ export default function Tasks() {
                 })}
                 {filteredTasksAll.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-4 py-10 text-center text-text-primary/60">
+                    <td colSpan={10} className="px-4 py-10 text-center text-text-primary/60">
                       No tasks found.
                     </td>
                   </tr>

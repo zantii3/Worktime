@@ -1,7 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
 // USER PAGES
-
 import Attendance from "./pages/user/Attendance";
 import UserDashboard from "./pages/user/Dashboard";
 import ForgotPassword from "./pages/user/ForgotPassword";
@@ -23,6 +22,8 @@ import AdminProjectList from "./pages/admin/ProjectList";
 import AdminUsers from "./pages/admin/Users";
 import AdminLayout from "./pages/admin/layout/AdminLayout";
 
+// ROUTE GUARDS
+import { AdminProtectedRoute, UserProtectedRoute } from "./pages/components/ProtectedRoute";
 
 // STATE + TOASTS
 import { ToastContainer } from "react-toastify";
@@ -35,21 +36,20 @@ function NotFound() {
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-8 max-w-md w-full">
         <h1 className="text-xl font-semibold text-slate-800">Page not found</h1>
         <p className="text-sm text-slate-500 mt-2">
-          The page you’re looking for doesn’t exist.
+          The page you're looking for doesn't exist.
         </p>
-
         <div className="mt-6 flex gap-2">
           <a
             href="/"
             className="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700"
           >
-            Go to User Dashboard
+            Go to User Login
           </a>
           <a
-            href="/admin"
+            href="/admin/login"
             className="inline-flex items-center justify-center rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-700 hover:bg-slate-200"
           >
-            Go to Admin
+            Go to Admin Login
           </a>
         </div>
       </div>
@@ -60,105 +60,86 @@ function NotFound() {
 export default function App() {
   return (
     <AdminProvider>
-      {/* Temporary health route for debugging: open /__health to confirm app mounts */}
       <Routes>
-        <Route
-          path="/__health"
-          element={
-            <div className="min-h-screen flex items-center justify-center bg-slate-50">
-              <h1 className="text-xl font-semibold text-slate-800">App mounted</h1>
-            </div>
-          }
-        />
-      </Routes>
-      <Routes>
-        {/* ================= USER ROUTES ================= */}
+        {/* ── Public: User ─────────────────────────────────────────────── */}
         <Route path="/" element={<Login />} />
-        <Route path="/dashboard" element={<UserDashboard />} />
-        <Route path="/attendance" element={<Attendance />} />
-        <Route path="/leave" element={<Leave />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
-        <Route path="/tasks" element={<Tasks />} />
-        <Route path="/project" element={<Project />}/>
-        <Route path="/profile" element={<Profile />} />
-        
 
-        {/* OPTIONAL: if user Tasks page exists later, add it back */}
-        {/* <Route path="/tasks" element={<Tasks />} /> */}
+        {/* ── Protected: User ──────────────────────────────────────────── */}
+        <Route path="/dashboard" element={<UserProtectedRoute><UserDashboard /></UserProtectedRoute>} />
+        <Route path="/attendance" element={<UserProtectedRoute><Attendance /></UserProtectedRoute>} />
+        <Route path="/leave" element={<UserProtectedRoute><Leave /></UserProtectedRoute>} />
+        <Route path="/tasks" element={<UserProtectedRoute><Tasks /></UserProtectedRoute>} />
+        <Route path="/project" element={<UserProtectedRoute><Project /></UserProtectedRoute>} />
+        <Route path="/profile" element={<UserProtectedRoute><Profile /></UserProtectedRoute>} />
 
-        {/* ================= ADMIN ROUTES ================= */}
+        {/* ── Public: Admin ────────────────────────────────────────────── */}
         <Route path="/admin/login" element={<AdminLogin />} />
         <Route path="/admin/forgot-password" element={<AdminForgotPassword />} />
-        
 
-        <Route
-          path="/admin/profile" 
-          element={
-          <AdminLayout>
-            <AdminProfile />
-          </AdminLayout>
-          }
-        
-        />
+        {/* ── Protected: Admin ─────────────────────────────────────────── */}
         <Route
           path="/admin"
           element={
-            <AdminLayout>
-              <AdminDashboard />
-            </AdminLayout>
+            <AdminProtectedRoute>
+              <AdminLayout><AdminDashboard /></AdminLayout>
+            </AdminProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/profile"
+          element={
+            <AdminProtectedRoute>
+              <AdminLayout><AdminProfile /></AdminLayout>
+            </AdminProtectedRoute>
           }
         />
         <Route
           path="/admin/attendance"
           element={
-            <AdminLayout>
-              <AdminAttendance />
-            </AdminLayout>
+            <AdminProtectedRoute>
+              <AdminLayout><AdminAttendance /></AdminLayout>
+            </AdminProtectedRoute>
           }
         />
         <Route
           path="/admin/leave"
           element={
-            <AdminLayout>
-              <AdminLeave />
-            </AdminLayout>
+            <AdminProtectedRoute>
+              <AdminLayout><AdminLeave /></AdminLayout>
+            </AdminProtectedRoute>
           }
         />
         <Route
           path="/admin/project-management"
           element={
-            <AdminLayout>
-              <AdminProjectManagement />
-            </AdminLayout>
-          }  
+            <AdminProtectedRoute>
+              <AdminLayout><AdminProjectManagement /></AdminLayout>
+            </AdminProtectedRoute>
+          }
         />
-
         <Route
           path="/admin/project-list"
           element={
-            <AdminLayout>
-              <AdminProjectList />
-            </AdminLayout>
+            <AdminProtectedRoute>
+              <AdminLayout><AdminProjectList /></AdminLayout>
+            </AdminProtectedRoute>
           }
         />
-
         <Route
           path="/admin/users"
           element={
-            <AdminLayout>
-              <AdminUsers />
-            </AdminLayout>
+            <AdminProtectedRoute>
+              <AdminLayout><AdminUsers /></AdminLayout>
+            </AdminProtectedRoute>
           }
         />
 
-        {/* Optional: redirect /admin/* unknown paths to /admin */}
+        {/* ── Fallbacks ────────────────────────────────────────────────── */}
         <Route path="/admin/*" element={<Navigate to="/admin" replace />} />
-
-        {/* Global fallback */}
         <Route path="*" element={<NotFound />} />
       </Routes>
 
-      {/* Global Notifications (ONLY ONCE) */}
       <ToastContainer position="top-right" autoClose={2000} />
     </AdminProvider>
   );

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AdminContextType,
   Attendance,
@@ -8,13 +8,9 @@ import type {
   User,
 } from "./AdminTypes";
 
-// Single shared LS key for tasks (Admin + User reads/writes here)
 const TASKS_KEY = "worktime_tasks_v1";
-
-// Projects are admin-managed (frontend-only for now)
 const PROJECTS_KEY = "worktime_projects_v1";
 
-// Use accounts.json as the single source of truth for users
 import accounts from "../../data/accounts.json";
 import adminAccounts from "../../admin/data/adminAccounts.json";
 
@@ -50,7 +46,6 @@ function readProjectsFromStorage(): Project[] {
 }
 
 export const AdminProvider = ({ children }: { children: React.ReactNode }) => {
-  // ✅ USERS: always sourced from accounts.json
   const accountsUsers = useMemo(() => {
     const list = (accounts as Account[]).map((a) => ({
       id: a.id,
@@ -61,38 +56,57 @@ export const AdminProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const admins = useMemo(() => {
-  return (adminAccounts as { id: number; email: string; name: string }[]).map((a) => ({
-    id: a.id,
-    name: a.name,
-    email: a.email,
-  }));
-}, []);
-  // ✅ TASKS: load once from shared LS key
+    return (adminAccounts as { id: number; email: string; name: string }[]).map((a) => ({
+      id: a.id,
+      name: a.name,
+      email: a.email,
+    }));
+  }, []);
+
   const [tasks, setTasks] = useState<Task[]>(() => readTasksFromStorage());
-
-  // ✅ PROJECTS: persisted to LS
   const [projects, setProjects] = useState<Project[]>(() => readProjectsFromStorage());
-
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
   const [users, setUsers] = useState<User[]>(accountsUsers);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
 
-  // ✅ Keep users synced to accounts.json
+  // Tracks whether a tasks state update originated from the poll (external write)
+  // vs. an internal admin action, so we don't write back what we just read.
+  const isExternalSync = useRef(false);
+
   useEffect(() => {
     setUsers(accountsUsers);
   }, [accountsUsers]);
 
-  // ✅ Persist tasks to LocalStorage
+  // Persist tasks — skipped when the update came from the localStorage poll
   useEffect(() => {
+    if (isExternalSync.current) {
+      isExternalSync.current = false;
+      return;
+    }
     try {
-      console.log("AdminProvider: Persisting tasks to LS:", tasks.length);
       localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
     } catch {
       // ignore storage failures
     }
   }, [tasks]);
 
-  // ✅ Persist projects to LocalStorage
+  // Poll localStorage for task changes written by the user-side Tasks.tsx.
+  // Uses the same 3 s interval Tasks.tsx uses so they stay in sync.
+  useEffect(() => {
+    const sync = () => {
+      const fresh = readTasksFromStorage();
+      setTasks((prev) => {
+        if (JSON.stringify(prev) === JSON.stringify(fresh)) return prev;
+        isExternalSync.current = true;
+        return fresh;
+      });
+    };
+
+    const interval = setInterval(sync, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Persist projects
   useEffect(() => {
     try {
       localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
