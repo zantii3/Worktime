@@ -18,10 +18,12 @@ import {
   Palmtree,
   Zap,
   Baby,
-  User,
   X,
   XCircle,
-  ChevronDown,
+  Eye,
+  Download,
+  Image as ImageIcon,
+  User,
 } from "lucide-react";
 import {
   useEffect,
@@ -35,7 +37,6 @@ import {
 import { STORAGE_KEY } from "../user/types/leaveconstants";
 import { notifyError, notifySuccess } from "./utils/toast";
 
-// ─── Pull all known account names from every source ──────────────────────────
 import staticAccounts from "../data/accounts.json";
 import staticAdmins from "./data/adminAccounts.json";
 
@@ -55,6 +56,8 @@ type StoredLeaveRequest = {
   dateFrom?: string;
   dateTo?: string;
   attachmentName?: string | null;
+  attachmentBase64?: string;
+  attachmentMime?: string;
   startDate?: string;
   endDate?: string;
   fileName?: string;
@@ -72,6 +75,8 @@ type NormalizedLeaveRequest = {
   reason: string;
   status: LeaveStatus;
   attachmentName: string | null;
+  attachmentBase64?: string;
+  attachmentMime?: string;
   appliedOn?: string;
   days: number;
 };
@@ -82,6 +87,8 @@ type LeaveForm = {
   dateTo: string;
   reason: string;
   attachmentName: string | null;
+  attachmentBase64?: string;
+  attachmentMime?: string;
 };
 
 type CurrentAdmin = { id: number; email: string; name: string };
@@ -167,6 +174,15 @@ function formatDateRange(from: string, to: string) {
   return from === to ? fmt(from) : `${fmt(from)} – ${fmt(to)}`;
 }
 
+function formatDate(s: string) {
+  if (!s) return "—";
+  return new Date(`${s}T00:00:00`).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function normalizeLeaveType(type: string | undefined): LeaveType {
   switch (type) {
     case "Vacation":
@@ -204,6 +220,8 @@ function normalizeLeave(record: StoredLeaveRequest): NormalizedLeaveRequest {
     reason: record.reason || "",
     status: record.status || "Pending",
     attachmentName: record.attachmentName ?? record.fileName ?? null,
+    attachmentBase64: record.attachmentBase64,
+    attachmentMime: record.attachmentMime,
     appliedOn: record.appliedOn ?? record.date,
     days,
   };
@@ -230,7 +248,6 @@ function readCurrentAdmin(): CurrentAdmin | null {
   }
 }
 
-/** Builds the resolved name for an admin, respecting any edits from Users.tsx */
 function resolveAdminName(admin: CurrentAdmin): string {
   try {
     const edits = JSON.parse(localStorage.getItem(EDITS_KEY) || "{}") as Record<
@@ -243,15 +260,10 @@ function resolveAdminName(admin: CurrentAdmin): string {
   }
 }
 
-/** Returns the full set of known employee names from all sources */
 function getAllKnownNames(): Set<string> {
   const names = new Set<string>();
-
-  // Static accounts
   (staticAccounts as { name: string }[]).forEach((a) => names.add(a.name));
   (staticAdmins as { name: string }[]).forEach((a) => names.add(a.name));
-
-  // Edits override
   try {
     const edits = JSON.parse(localStorage.getItem(EDITS_KEY) || "{}") as Record<
       string,
@@ -259,15 +271,12 @@ function getAllKnownNames(): Set<string> {
     >;
     Object.values(edits).forEach((e) => e.name && names.add(e.name));
   } catch {}
-
-  // Dynamically created accounts
   try {
     const created = JSON.parse(
       localStorage.getItem(CREATED_ACCOUNTS_KEY) || "[]"
     ) as { name: string }[];
     created.forEach((a) => names.add(a.name));
   } catch {}
-
   return names;
 }
 
@@ -351,7 +360,6 @@ function SummaryCard({
           : "border-slate-200 shadow-sm hover:border-slate-300 hover:shadow-md",
       ].join(" ")}
     >
-      {/* Icon + title */}
       <div className="flex items-start justify-between gap-3">
         <div
           className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${meta.bg} ${meta.border} border`}
@@ -365,15 +373,11 @@ function SummaryCard({
           <div className="text-[10px] text-text-primary/50 mt-0.5">requests</div>
         </div>
       </div>
-
-      {/* Label */}
       <div className="mt-3">
         <div className="text-xs font-bold text-text-heading leading-tight">
           {meta.label}
         </div>
       </div>
-
-      {/* Progress bar */}
       <div className="mt-3 h-1.5 rounded-full bg-slate-100 overflow-hidden">
         <motion.div
           className="h-full bg-primary rounded-full"
@@ -385,8 +389,6 @@ function SummaryCard({
       <div className="mt-1 text-[10px] text-text-primary/50 text-right">
         {approvedPct}% approved
       </div>
-
-      {/* Breakdown */}
       <div className="mt-3 grid grid-cols-3 gap-1 text-[10px]">
         {[
           { label: "Pending", value: breakdown.pending, cls: "text-amber-600" },
@@ -449,6 +451,399 @@ function EmployeeChip({ name }: { name: string }) {
   );
 }
 
+// ─── File Preview Modal ───────────────────────────────────────────────────────
+
+function FilePreviewModal({
+  fileName,
+  base64,
+  mime,
+  onClose,
+}: {
+  fileName: string;
+  base64: string;
+  mime: string;
+  onClose: () => void;
+}) {
+  const isImage = mime.startsWith("image/");
+  const isPdf = mime === "application/pdf";
+
+  const handleDownload = () => {
+    const link = document.createElement("a");
+    link.href = base64;
+    link.download = fileName;
+    link.click();
+  };
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ scale: 0.92, opacity: 0, y: 16 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.92, opacity: 0, y: 16 }}
+          transition={{ type: "spring", damping: 22, stiffness: 280 }}
+          onClick={(e) => e.stopPropagation()}
+          className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[88vh] overflow-hidden flex flex-col"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50 rounded-t-3xl">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="p-2 bg-primary/10 rounded-xl shrink-0">
+                {isImage ? (
+                  <ImageIcon className="w-5 h-5 text-primary" />
+                ) : (
+                  <FileText className="w-5 h-5 text-primary" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="font-semibold text-text-heading text-sm truncate">{fileName}</p>
+                <p className="text-xs text-slate-400 mt-0.5">Supporting Document</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 ml-3">
+              <button
+                onClick={handleDownload}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:opacity-90 transition"
+                type="button"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download
+              </button>
+              <button
+                onClick={onClose}
+                className="p-2 hover:bg-slate-200 rounded-xl transition"
+                type="button"
+              >
+                <X className="w-4 h-4 text-slate-500" />
+              </button>
+            </div>
+          </div>
+
+          {/* Preview */}
+          <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-slate-100">
+            {isImage ? (
+              <img
+                src={base64}
+                alt={fileName}
+                className="max-w-full max-h-[60vh] rounded-xl shadow-md object-contain"
+              />
+            ) : isPdf ? (
+              <iframe
+                src={base64}
+                title={fileName}
+                className="w-full h-[60vh] rounded-xl border border-slate-200 bg-white"
+              />
+            ) : (
+              <div className="flex flex-col items-center gap-4 py-12 text-slate-400">
+                <div className="p-5 bg-white rounded-2xl shadow border border-slate-200">
+                  <FileText className="w-12 h-12 text-slate-300" />
+                </div>
+                <p className="text-sm font-medium text-slate-500">
+                  Preview not available for this file type
+                </p>
+                <button
+                  onClick={handleDownload}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold hover:opacity-90 transition"
+                  type="button"
+                >
+                  <Download className="w-4 h-4" />
+                  Download to view
+                </button>
+              </div>
+            )}
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
+// ─── Review Modal ─────────────────────────────────────────────────────────────
+
+function ReviewModal({
+  leave,
+  resolvedName,
+  onClose,
+  onApprove,
+  onReject,
+}: {
+  leave: NormalizedLeaveRequest;
+  resolvedName: string | null;
+  onClose: () => void;
+  onApprove: (id: number) => void;
+  onReject: (id: number) => void;
+}) {
+  const [showFilePreview, setShowFilePreview] = useState(false);
+  const meta = LEAVE_TYPE_META[leave.type];
+  const Icon = meta.icon;
+  const isSelf = leave.employee === resolvedName;
+  const canAct = leave.status === "Pending" && !isSelf;
+
+  const initials = leave.employee
+    .split(" ")
+    .slice(0, 2)
+    .map((w: string) => w[0])
+    .join("")
+    .toUpperCase();
+
+  const isImage = leave.attachmentMime?.startsWith("image/");
+  const hasPreviewed = !!(leave.attachmentBase64 && leave.attachmentMime);
+
+  return (
+    <>
+      <AnimatePresence>
+        <motion.div
+          className="fixed inset-0 bg-slate-900/50 backdrop-blur-[2px] z-[60]"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+        />
+        <motion.div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 28, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.97 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            className="w-full max-w-lg max-h-[92vh] rounded-3xl overflow-hidden border border-slate-200 shadow-2xl bg-card flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal header */}
+            <div className="bg-primary px-6 py-5 shrink-0">
+              <div className="flex items-start justify-between gap-4 text-white">
+                <div className="flex items-start gap-3">
+                  <div className="h-10 w-10 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
+                    <Eye className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="text-lg font-extrabold leading-tight">Review Leave Request</div>
+                    <div className="text-sm text-white/70 mt-0.5">
+                      {leave.status === "Pending"
+                        ? "Approve or reject this request"
+                        : `Already ${leave.status.toLowerCase()}`}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={onClose}
+                  type="button"
+                  className="h-8 w-8 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center transition shrink-0"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal body */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-5">
+              {/* Employee info */}
+              <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="h-12 w-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                  <span className="text-sm font-extrabold text-primary">{initials}</span>
+                </div>
+                <div className="min-w-0">
+                  <div className="font-bold text-text-heading text-base truncate">{leave.employee}</div>
+                  {leave.appliedOn && (
+                    <div className="text-xs text-slate-400 mt-0.5">
+                      Filed on {formatDate(leave.appliedOn)}
+                    </div>
+                  )}
+                  {isSelf && (
+                    <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                      Your own request
+                    </span>
+                  )}
+                </div>
+                <div className="ml-auto shrink-0">
+                  <StatusPill status={leave.status} />
+                </div>
+              </div>
+
+              {/* Leave type */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2">Leave Type</div>
+                  <LeaveTypeBadge type={leave.type} />
+                </div>
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2">Duration</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl font-extrabold text-primary tabular-nums">{leave.days}</span>
+                    <span className="text-sm text-slate-500">day{leave.days !== 1 ? "s" : ""}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Date range */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2">Date Range</div>
+                <div className="flex items-center gap-2 text-sm font-semibold text-text-heading">
+                  <CalendarDays className="w-4 h-4 text-primary shrink-0" />
+                  {formatDateRange(leave.dateFrom, leave.dateTo)}
+                </div>
+              </div>
+
+              {/* Reason */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2">Reason</div>
+                <p className="text-sm text-text-primary leading-relaxed">{leave.reason || "—"}</p>
+              </div>
+
+              {/* Attachment */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-3">
+                  Supporting Document
+                </div>
+                {leave.attachmentName ? (
+                  <div className="space-y-3">
+                    {/* Image thumbnail preview */}
+                    {isImage && leave.attachmentBase64 && (
+                      <div
+                        className="relative w-full h-36 rounded-xl overflow-hidden border border-slate-200 bg-slate-200 cursor-pointer group"
+                        onClick={() => setShowFilePreview(true)}
+                      >
+                        <img
+                          src={leave.attachmentBase64}
+                          alt={leave.attachmentName}
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center">
+                          <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 bg-white/90 px-3 py-1.5 rounded-xl shadow">
+                            <Eye className="w-4 h-4 text-primary" />
+                            <span className="text-xs font-semibold text-primary">View Full</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* File chip row */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl flex-1 min-w-0">
+                        {isImage ? (
+                          <ImageIcon className="w-4 h-4 text-blue-500 shrink-0" />
+                        ) : (
+                          <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                        )}
+                        <span className="text-sm text-text-heading font-medium truncate">
+                          {leave.attachmentName}
+                        </span>
+                      </div>
+                      {hasPreviewed && (
+                        <button
+                          type="button"
+                          onClick={() => setShowFilePreview(true)}
+                          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/10 border border-primary/20 text-primary text-xs font-semibold hover:bg-primary/15 transition shrink-0"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          Preview
+                        </button>
+                      )}
+                      {leave.attachmentBase64 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const link = document.createElement("a");
+                            link.href = leave.attachmentBase64!;
+                            link.download = leave.attachmentName!;
+                            link.click();
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-200 transition shrink-0"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Download
+                        </button>
+                      )}
+                      {!leave.attachmentBase64 && (
+                        <span className="text-xs text-slate-400 italic">File not stored</span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <Paperclip className="w-4 h-4" />
+                    <span className="text-sm italic">No document attached</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer actions */}
+            <div className="px-6 pb-6 pt-3 shrink-0 border-t border-slate-100">
+              {canAct ? (
+                <div className="flex items-center gap-3">
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.97 }}
+                    onClick={() => { onApprove(leave.id); onClose(); }}
+                    type="button"
+                    className="flex-1 inline-flex items-center justify-center gap-2 bg-emerald-600 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-sm hover:bg-emerald-700 transition"
+                  >
+                    <Check className="h-4 w-4" />
+                    Approve
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.97 }}
+                    onClick={() => { onReject(leave.id); onClose(); }}
+                    type="button"
+                    className="flex-1 inline-flex items-center justify-center gap-2 bg-rose-500 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-sm hover:bg-rose-600 transition"
+                  >
+                    <X className="h-4 w-4" />
+                    Reject
+                  </motion.button>
+                  <button
+                    onClick={onClose}
+                    type="button"
+                    className="px-4 py-3 rounded-xl border border-slate-200 text-sm font-semibold text-text-heading hover:bg-soft transition"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 text-sm text-slate-400 italic">
+                    {isSelf
+                      ? "You cannot act on your own request."
+                      : `This request has been ${leave.status.toLowerCase()}.`}
+                  </div>
+                  <button
+                    onClick={onClose}
+                    type="button"
+                    className="px-5 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-text-heading hover:bg-soft transition"
+                  >
+                    Close
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </motion.div>
+      </AnimatePresence>
+
+      {/* File Preview overlay on top of review modal */}
+      {showFilePreview && leave.attachmentBase64 && leave.attachmentMime && (
+        <FilePreviewModal
+          fileName={leave.attachmentName!}
+          base64={leave.attachmentBase64}
+          mime={leave.attachmentMime}
+          onClose={() => setShowFilePreview(false)}
+        />
+      )}
+    </>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function Leave() {
@@ -456,7 +851,6 @@ export default function Leave() {
     readCurrentAdmin()
   );
 
-  // Resolved admin name (respects edits from Users.tsx)
   const adminDisplayName = useMemo(
     () => (currentAdmin ? resolveAdminName(currentAdmin) : null),
     [currentAdmin]
@@ -471,27 +865,27 @@ export default function Leave() {
   const [search, setSearch] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [reviewLeave, setReviewLeave] = useState<NormalizedLeaveRequest | null>(null);
   const [form, setForm] = useState<LeaveForm>({
     type: "Vacation Leave",
     dateFrom: "",
     dateTo: "",
     reason: "",
     attachmentName: null,
+    attachmentBase64: undefined,
+    attachmentMime: undefined,
   });
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // Live clock
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Persist leaves
   useEffect(() => {
     localStorage.setItem(ALL_LEAVES_KEY, JSON.stringify(leaves));
   }, [leaves]);
 
-  // Cross-tab sync
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === ALL_LEAVES_KEY) setLeaves(readLeavesFromStorage());
@@ -506,7 +900,6 @@ export default function Leave() {
     [leaves]
   );
 
-  // Filtered + searched list
   const filteredLeaves = useMemo(() => {
     let list = normalizedLeaves;
     if (statusFilter !== "All")
@@ -522,7 +915,6 @@ export default function Leave() {
           l.type.toLowerCase().includes(q)
       );
     }
-    // Sort: pending first, then by appliedOn desc
     return [...list].sort((a, b) => {
       if (a.status === "Pending" && b.status !== "Pending") return -1;
       if (b.status === "Pending" && a.status !== "Pending") return 1;
@@ -530,7 +922,6 @@ export default function Leave() {
     });
   }, [normalizedLeaves, statusFilter, typeFilter, search]);
 
-  // Card stats
   const cardStats = useMemo(() => {
     const init = () => ({ total: 0, pending: 0, approved: 0, rejected: 0 });
     const byType: Record<LeaveType, ReturnType<typeof init>> = {
@@ -557,7 +948,6 @@ export default function Leave() {
   const hasFilters =
     statusFilter !== "All" || typeFilter !== "All" || search.trim() !== "";
 
-  // Form handlers
   const onChange = (
     e: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
@@ -565,14 +955,26 @@ export default function Leave() {
     setForm((p) => ({ ...p, [name]: value }));
   };
 
+  // ─── File handler: reads file as base64 ────────────────────────────────────
   const onPickFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    setForm((p) => ({ ...p, attachmentName: file ? file.name : null }));
+    if (!file) return;
+    const mime = file.type;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setForm((p) => ({
+        ...p,
+        attachmentName: file.name,
+        attachmentBase64: reader.result as string,
+        attachmentMime: mime,
+      }));
+    };
+    reader.readAsDataURL(file);
   };
 
   const clearFile = () => {
     if (fileRef.current) fileRef.current.value = "";
-    setForm((p) => ({ ...p, attachmentName: null }));
+    setForm((p) => ({ ...p, attachmentName: null, attachmentBase64: undefined, attachmentMime: undefined }));
   };
 
   const resetForm = () => {
@@ -582,6 +984,8 @@ export default function Leave() {
       dateTo: "",
       reason: "",
       attachmentName: null,
+      attachmentBase64: undefined,
+      attachmentMime: undefined,
     });
     setEditingId(null);
     clearFile();
@@ -614,7 +1018,6 @@ export default function Leave() {
   const save = () => {
     if (!validate() || !currentAdmin) return;
 
-    // Use the resolved display name so it matches any edits made in Users.tsx
     const employeeName = adminDisplayName ?? currentAdmin.name;
 
     const payload: StoredLeaveRequest = {
@@ -629,6 +1032,8 @@ export default function Leave() {
       endDate: form.dateTo,
       days: diffDaysInclusive(form.dateFrom, form.dateTo),
       attachmentName: form.attachmentName,
+      attachmentBase64: form.attachmentBase64,
+      attachmentMime: form.attachmentMime,
       fileName: form.attachmentName ?? undefined,
       appliedOn: todayISO(),
     };
@@ -661,6 +1066,8 @@ export default function Leave() {
       dateTo: leave.dateTo,
       reason: leave.reason,
       attachmentName: leave.attachmentName,
+      attachmentBase64: leave.attachmentBase64,
+      attachmentMime: leave.attachmentMime,
     });
     if (fileRef.current) fileRef.current.value = "";
     setIsModalOpen(true);
@@ -791,7 +1198,6 @@ export default function Leave() {
               </div>
             </div>
 
-            {/* Status filter pills */}
             <div className="flex items-center gap-2 flex-wrap">
               {STATUS_FILTERS.map((f) => (
                 <button
@@ -811,9 +1217,7 @@ export default function Leave() {
             </div>
           </div>
 
-          {/* Search + filter chips */}
           <div className="flex items-center gap-3 flex-wrap">
-            {/* Search */}
             <div className="relative flex-1 min-w-[200px] max-w-xs">
               <Search className="w-4 h-4 text-text-primary/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
@@ -833,7 +1237,6 @@ export default function Leave() {
               )}
             </div>
 
-            {/* Active filter chips */}
             <AnimatePresence>
               {typeFilter !== "All" && (
                 <motion.div
@@ -878,6 +1281,7 @@ export default function Leave() {
                   "Duration",
                   "Days",
                   "Reason",
+                  "Attachment",
                   "Status",
                   "Actions",
                 ].map((h) => (
@@ -894,7 +1298,7 @@ export default function Leave() {
               <AnimatePresence>
                 {filteredLeaves.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-16 text-center">
+                    <td colSpan={8} className="px-4 py-16 text-center">
                       <div className="flex flex-col items-center gap-3 text-text-primary/40">
                         <div className="h-14 w-14 rounded-2xl bg-soft border border-slate-200 flex items-center justify-center">
                           <BookText className="w-7 h-7 opacity-40" />
@@ -924,8 +1328,8 @@ export default function Leave() {
                 ) : (
                   filteredLeaves.map((leave, idx) => {
                     const isSelf = leave.employee === resolvedName;
-                    const canAct =
-                      leave.status === "Pending" && !isSelf;
+                    const canAct = leave.status === "Pending" && !isSelf;
+                    const hasAttachment = !!(leave.attachmentName);
 
                     return (
                       <motion.tr
@@ -966,10 +1370,27 @@ export default function Leave() {
                         </td>
 
                         {/* Reason */}
-                        <td className="px-4 py-3 max-w-[200px]">
+                        <td className="px-4 py-3 max-w-[160px]">
                           <p className="text-sm text-text-primary/80 line-clamp-2 leading-snug">
                             {leave.reason}
                           </p>
+                        </td>
+
+                        {/* Attachment */}
+                        <td className="px-4 py-3">
+                          {hasAttachment ? (
+                            <button
+                              type="button"
+                              onClick={() => setReviewLeave(leave)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border bg-blue-50 border-blue-200 text-blue-700 text-xs font-medium hover:bg-blue-100 transition"
+                              title="View in review modal"
+                            >
+                              <Paperclip className="w-3 h-3 shrink-0" />
+                              <span className="truncate max-w-[80px]">{leave.attachmentName}</span>
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-300 italic">None</span>
+                          )}
                         </td>
 
                         {/* Status */}
@@ -980,7 +1401,17 @@ export default function Leave() {
                         {/* Actions */}
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            {/* Own pending request — can edit */}
+                            {/* Review button — always visible */}
+                            <button
+                              onClick={() => setReviewLeave(leave)}
+                              type="button"
+                              className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 border border-slate-200 hover:border-primary/20 transition"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              Review
+                            </button>
+
+                            {/* Own pending — can edit */}
                             {isSelf && leave.status === "Pending" && (
                               <button
                                 onClick={() => edit(leave)}
@@ -992,7 +1423,7 @@ export default function Leave() {
                               </button>
                             )}
 
-                            {/* Other employee pending — can approve/reject */}
+                            {/* Other employee pending — quick approve/reject */}
                             {canAct && (
                               <>
                                 <button
@@ -1014,14 +1445,12 @@ export default function Leave() {
                               </>
                             )}
 
-                            {/* Already acted + not own */}
                             {!isSelf && leave.status !== "Pending" && (
                               <span className="text-xs text-text-primary/30 italic">
                                 {leave.status}
                               </span>
                             )}
 
-                            {/* Own but already resolved */}
                             {isSelf && leave.status !== "Pending" && (
                               <span className="text-xs text-text-primary/30 italic">
                                 Your request
@@ -1038,6 +1467,19 @@ export default function Leave() {
           </table>
         </div>
       </motion.div>
+
+      {/* ── Review Modal ── */}
+      <AnimatePresence>
+        {reviewLeave && (
+          <ReviewModal
+            leave={reviewLeave}
+            resolvedName={resolvedName}
+            onClose={() => setReviewLeave(null)}
+            onApprove={(id) => setStatus(id, "Approved")}
+            onReject={(id) => setStatus(id, "Rejected")}
+          />
+        )}
+      </AnimatePresence>
 
       {/* ── File Leave Modal ── */}
       <AnimatePresence>
@@ -1065,7 +1507,7 @@ export default function Leave() {
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Modal header */}
-                <div className="bg-primary px-6 py-6">
+                <div className="bg-primary px-6 py-6 shrink-0">
                   <div className="flex items-start justify-between gap-4 text-white">
                     <div className="flex items-start gap-4">
                       <div className="h-11 w-11 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
@@ -1197,7 +1639,45 @@ export default function Leave() {
                         </span>
                       )}
                     </button>
-                    <input ref={fileRef} type="file" onChange={onPickFile} className="hidden" />
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"
+                      onChange={onPickFile}
+                      className="hidden"
+                    />
+
+                    {/* Image thumbnail preview inside form */}
+                    {form.attachmentBase64 && form.attachmentMime?.startsWith("image/") && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mt-2 relative w-full h-28 rounded-xl overflow-hidden border border-slate-200 bg-slate-100"
+                      >
+                        <img
+                          src={form.attachmentBase64}
+                          alt={form.attachmentName ?? "Preview"}
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
+                        <span className="absolute bottom-1.5 left-2 text-white text-[10px] font-semibold">
+                          Preview
+                        </span>
+                      </motion.div>
+                    )}
+                    {form.attachmentBase64 && !form.attachmentMime?.startsWith("image/") && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mt-2 flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-xl"
+                      >
+                        <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+                        <span className="text-xs text-blue-700 font-medium truncate flex-1">
+                          {form.attachmentName}
+                        </span>
+                        <span className="text-[10px] text-blue-500 shrink-0">Ready</span>
+                      </motion.div>
+                    )}
                   </Field>
                 </div>
 

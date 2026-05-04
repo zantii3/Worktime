@@ -15,6 +15,11 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  FileText,
+  Download,
+  Eye,
+  X,
+  Image as ImageIcon,
 } from "lucide-react";
 import { useClock } from "./hooks/useClock";
 import Usersidebar from "./components/Usersidebar.tsx";
@@ -32,6 +37,12 @@ interface LeaveForm {
   dateFrom: string;
   dateTo: string;
   reason: string;
+}
+
+// Extended LeaveRequest with base64 attachment data
+interface LeaveRequestWithAttachment extends LeaveRequest {
+  attachmentBase64?: string;
+  attachmentMime?: string;
 }
 
 const ALL_LEAVES_KEY = STORAGE_KEY;
@@ -56,15 +67,12 @@ function PastDateModal({ onClose }: { onClose: () => void }) {
           onClick={(e) => e.stopPropagation()}
           className="bg-white rounded-3xl shadow-2xl border-2 border-red-100 w-full max-w-sm mx-4 overflow-hidden"
         >
-          {/* Header */}
           <div className="bg-gradient-to-br from-red-500 to-rose-600 p-6 flex flex-col items-center text-white">
             <div className="p-3 bg-white/20 rounded-2xl mb-3">
               <AlertTriangle className="w-8 h-8" />
             </div>
             <h2 className="text-xl font-bold">Invalid Date Selected</h2>
           </div>
-
-          {/* Body */}
           <div className="p-6 text-center">
             <p className="text-slate-600 text-sm leading-relaxed mb-1">
               You've selected a date that has already passed.
@@ -74,8 +82,6 @@ function PastDateModal({ onClose }: { onClose: () => void }) {
               <span className="font-semibold text-[#1F3C68]">today or future dates</span>.
             </p>
           </div>
-
-          {/* Footer */}
           <div className="px-6 pb-6">
             <button
               onClick={onClose}
@@ -91,6 +97,166 @@ function PastDateModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ─── File Preview Modal ───────────────────────────────────────────────────────
+function FilePreviewModal({
+  fileName,
+  base64,
+  mime,
+  onClose,
+}: {
+  fileName: string;
+  base64: string;
+  mime: string;
+  onClose: () => void;
+}) {
+  const isImage = mime.startsWith("image/");
+  const isPdf = mime === "application/pdf";
+
+  const handleDownload = () => {
+    const link = document.createElement("a");
+    link.href = base64;
+    link.download = fileName;
+    link.click();
+  };
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ scale: 0.92, opacity: 0, y: 16 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.92, opacity: 0, y: 16 }}
+          transition={{ type: "spring", damping: 22, stiffness: 280 }}
+          onClick={(e) => e.stopPropagation()}
+          className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[88vh] overflow-hidden flex flex-col"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50 rounded-t-3xl">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="p-2 bg-[#1F3C68]/10 rounded-xl shrink-0">
+                {isImage ? (
+                  <ImageIcon className="w-5 h-5 text-[#1F3C68]" />
+                ) : (
+                  <FileText className="w-5 h-5 text-[#1F3C68]" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="font-semibold text-[#1F3C68] text-sm truncate">{fileName}</p>
+                <p className="text-xs text-slate-400 mt-0.5">Supporting Document</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 ml-3">
+              <button
+                onClick={handleDownload}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1F3C68] text-white text-xs font-semibold hover:bg-[#162d52] transition"
+                type="button"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download
+              </button>
+              <button
+                onClick={onClose}
+                className="p-2 hover:bg-slate-200 rounded-xl transition"
+                type="button"
+                aria-label="Close preview"
+              >
+                <X className="w-4 h-4 text-slate-500" />
+              </button>
+            </div>
+          </div>
+
+          {/* Preview Body */}
+          <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-slate-100">
+            {isImage ? (
+              <img
+                src={base64}
+                alt={fileName}
+                className="max-w-full max-h-[60vh] rounded-xl shadow-md object-contain"
+              />
+            ) : isPdf ? (
+              <iframe
+                src={base64}
+                title={fileName}
+                className="w-full h-[60vh] rounded-xl border border-slate-200 bg-white"
+              />
+            ) : (
+              <div className="flex flex-col items-center gap-4 py-12 text-slate-400">
+                <div className="p-5 bg-white rounded-2xl shadow border border-slate-200">
+                  <FileText className="w-12 h-12 text-slate-300" />
+                </div>
+                <p className="text-sm font-medium text-slate-500">
+                  Preview not available for this file type
+                </p>
+                <button
+                  onClick={handleDownload}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#1F3C68] text-white text-sm font-semibold hover:bg-[#162d52] transition"
+                  type="button"
+                >
+                  <Download className="w-4 h-4" />
+                  Download to view
+                </button>
+              </div>
+            )}
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
+// ─── Attachment Chip ──────────────────────────────────────────────────────────
+function AttachmentChip({
+  fileName,
+  base64,
+  mime,
+}: {
+  fileName: string;
+  base64?: string;
+  mime?: string;
+}) {
+  const [showPreview, setShowPreview] = useState(false);
+
+  const isImage = mime?.startsWith("image/");
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => base64 && setShowPreview(true)}
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-all
+          ${base64
+            ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 cursor-pointer"
+            : "bg-slate-50 border-slate-200 text-slate-500 cursor-default"
+          }`}
+        title={base64 ? "Click to preview" : fileName}
+      >
+        {isImage ? (
+          <ImageIcon className="w-3 h-3 shrink-0" />
+        ) : (
+          <Paperclip className="w-3 h-3 shrink-0" />
+        )}
+        <span className="truncate max-w-[120px]">{fileName}</span>
+        {base64 && <Eye className="w-3 h-3 shrink-0 opacity-60" />}
+      </button>
+
+      {showPreview && base64 && mime && (
+        <FilePreviewModal
+          fileName={fileName}
+          base64={base64}
+          mime={mime}
+          onClose={() => setShowPreview(false)}
+        />
+      )}
+    </>
+  );
+}
+
 function Leave() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -103,12 +269,12 @@ function Leave() {
   const [isAnimating, setIsAnimating] = useState(false);
   const [formError, setFormError] = useState("");
   const [fileName, setFileName] = useState("");
+  const [fileBase64, setFileBase64] = useState<string | null>(null);
+  const [fileMime, setFileMime] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"All" | LeaveStatus>("All");
   const [showPastDateModal, setShowPastDateModal] = useState(false);
 
-  // Pagination - history
   const [currentPage, setCurrentPage] = useState(1);
-  // Pagination - pending
   const [pendingPage, setPendingPage] = useState(1);
   const PENDING_PER_PAGE = 3;
 
@@ -119,11 +285,11 @@ function Leave() {
     reason: "",
   });
 
-  const [leaves, setLeaves] = useState<LeaveRequest[]>(() => {
+  const [leaves, setLeaves] = useState<LeaveRequestWithAttachment[]>(() => {
     const stored = localStorage.getItem(ALL_LEAVES_KEY);
     if (!stored) return [];
     try {
-      const parsed: LeaveRequest[] = JSON.parse(stored);
+      const parsed: LeaveRequestWithAttachment[] = JSON.parse(stored);
       return parsed.filter((l) => l.employee === user?.name);
     } catch {
       return [];
@@ -134,7 +300,7 @@ function Leave() {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key !== ALL_LEAVES_KEY) return;
       try {
-        const updated: LeaveRequest[] = e.newValue ? JSON.parse(e.newValue) : [];
+        const updated: LeaveRequestWithAttachment[] = e.newValue ? JSON.parse(e.newValue) : [];
         setLeaves(updated.filter((l) => l.employee === user?.name));
       } catch {
         // ignore
@@ -169,13 +335,11 @@ function Leave() {
     return diff > 0 ? diff : 0;
   };
 
-  // ─── Past-date guard ────────────────────────────────────────────────────────
   const todayStr = new Date().toISOString().split("T")[0];
 
   const handleDateChange = (field: "dateFrom" | "dateTo", value: string) => {
     if (value && value < todayStr) {
       setShowPastDateModal(true);
-      // Clear the offending field
       setForm((prev) => ({ ...prev, [field]: "" }));
       return;
     }
@@ -186,6 +350,19 @@ function Leave() {
     return leaves
       .filter((l) => l.status === "Approved" && l.type === leaveType)
       .reduce((sum, l) => sum + l.days, 0);
+  };
+
+  // ─── File handler: reads file as base64 ──────────────────────────────────
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setFileMime(file.type);
+    const reader = new FileReader();
+    reader.onload = () => {
+      setFileBase64(reader.result as string);
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSubmit = () => {
@@ -214,7 +391,7 @@ function Leave() {
     setIsAnimating(true);
     setTimeout(() => setIsAnimating(false), 1000);
 
-    const newLeave: LeaveRequest = {
+    const newLeave: LeaveRequestWithAttachment = {
       id: Date.now(),
       employee: user?.name ?? "Unknown",
       type: form.type,
@@ -225,16 +402,20 @@ function Leave() {
       appliedOn: new Date().toISOString().split("T")[0],
       days,
       fileName: fileName || undefined,
+      attachmentBase64: fileBase64 || undefined,
+      attachmentMime: fileMime || undefined,
     };
 
     const storedAll = localStorage.getItem(ALL_LEAVES_KEY);
-    const allLeaves: LeaveRequest[] = storedAll ? JSON.parse(storedAll) : [];
+    const allLeaves: LeaveRequestWithAttachment[] = storedAll ? JSON.parse(storedAll) : [];
     const updatedAllLeaves = [newLeave, ...allLeaves];
     localStorage.setItem(ALL_LEAVES_KEY, JSON.stringify(updatedAllLeaves));
 
     setLeaves((prev) => [newLeave, ...prev]);
     setForm({ type: "Vacation Leave", dateFrom: "", dateTo: "", reason: "" });
     setFileName("");
+    setFileBase64(null);
+    setFileMime(null);
     setFormError("");
     setCurrentPage(1);
     setPendingPage(1);
@@ -248,7 +429,6 @@ function Leave() {
     pendingPage * PENDING_PER_PAGE
   );
 
-  // Reset page when tab changes
   const handleTabChange = (tab: "All" | LeaveStatus) => {
     setActiveTab(tab);
     setCurrentPage(1);
@@ -257,7 +437,6 @@ function Leave() {
   const filteredLeaves =
     activeTab === "All" ? leaves : leaves.filter((l) => l.status === activeTab);
 
-  // ─── Pagination logic ───────────────────────────────────────────────────────
   const totalPages = Math.max(1, Math.ceil(filteredLeaves.length / ROWS_PER_PAGE));
   const paginatedLeaves = filteredLeaves.slice(
     (currentPage - 1) * ROWS_PER_PAGE,
@@ -292,7 +471,6 @@ function Leave() {
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex">
-      {/* Past-date modal */}
       {showPastDateModal && (
         <PastDateModal onClose={() => setShowPastDateModal(false)} />
       )}
@@ -478,15 +656,59 @@ function Leave() {
                 </label>
                 <label className="flex items-center gap-3 w-full bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl cursor-pointer hover:border-[#E97638] hover:bg-orange-50/30 transition-all">
                   <Paperclip className="w-4 h-4 text-slate-400 shrink-0" />
-                  <span className="text-sm text-slate-500 truncate">
+                  <span className="text-sm text-slate-500 truncate flex-1">
                     {fileName || "No file chosen"}
                   </span>
+                  {fileName && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setFileName("");
+                        setFileBase64(null);
+                        setFileMime(null);
+                      }}
+                      className="shrink-0 p-0.5 hover:bg-slate-200 rounded transition"
+                    >
+                      <X className="w-3.5 h-3.5 text-slate-400" />
+                    </button>
+                  )}
                   <input
                     type="file"
                     className="hidden"
-                    onChange={(e) => setFileName(e.target.files?.[0]?.name || "")}
+                    accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"
+                    onChange={handleFileChange}
                   />
                 </label>
+                {/* Inline preview thumbnail for images */}
+                {fileBase64 && fileMime?.startsWith("image/") && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mt-2 relative w-full h-24 rounded-xl overflow-hidden border border-slate-200 bg-slate-100"
+                  >
+                    <img
+                      src={fileBase64}
+                      alt="Preview"
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
+                    <span className="absolute bottom-1.5 left-2 text-white text-[10px] font-semibold">
+                      Preview
+                    </span>
+                  </motion.div>
+                )}
+                {fileBase64 && !fileMime?.startsWith("image/") && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mt-2 flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-xl"
+                  >
+                    <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+                    <span className="text-xs text-blue-700 font-medium truncate flex-1">{fileName}</span>
+                    <span className="text-[10px] text-blue-500 shrink-0">Ready to submit</span>
+                  </motion.div>
+                )}
               </div>
             </div>
 
@@ -579,7 +801,6 @@ function Leave() {
             transition={{ delay: 0.3 }}
             className="bg-white rounded-3xl shadow-md border border-slate-100 overflow-hidden mb-6"
           >
-            {/* Primary blue header */}
             <div className="bg-gradient-to-r from-[#1F3C68] to-[#2a4f88] p-5 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-white/20 rounded-xl">
@@ -620,6 +841,16 @@ function Leave() {
                       <p className="text-xs text-slate-400 mt-0.5 truncate max-w-xs">
                         {leave.reason}
                       </p>
+                      {/* Attachment chip in pending section */}
+                      {leave.fileName && (
+                        <div className="mt-2">
+                          <AttachmentChip
+                            fileName={leave.fileName}
+                            base64={leave.attachmentBase64}
+                            mime={leave.attachmentMime}
+                          />
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#1F3C68]/10 text-[#1F3C68] border border-[#1F3C68]/20 text-sm font-semibold">
@@ -632,7 +863,6 @@ function Leave() {
               </AnimatePresence>
             </div>
 
-            {/* Pending Pagination */}
             {pendingLeaves.length > PENDING_PER_PAGE && (
               <div className="flex items-center justify-between px-5 py-4 border-t border-slate-100 bg-slate-50/50">
                 <p className="text-xs text-slate-400">
@@ -721,13 +951,13 @@ function Leave() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100">
-                  {["Type", "Duration", "Days", "Reason", "Applied On", "Status"].map(
+                  {["Type", "Duration", "Days", "Reason", "Applied On", "Attachment", "Status"].map(
                     (h, i) => (
                       <th
                         key={i}
                         className={`text-left text-xs font-semibold text-slate-500 uppercase tracking-wide pb-3 pr-4 ${
                           i >= 2 && i <= 4 ? "hidden md:table-cell" : ""
-                        }`}
+                        } ${i === 5 ? "hidden md:table-cell" : ""}`}
                       >
                         {h}
                       </th>
@@ -739,7 +969,7 @@ function Leave() {
                 <AnimatePresence mode="wait">
                   {paginatedLeaves.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-12 text-center text-slate-400">
+                      <td colSpan={7} className="py-12 text-center text-slate-400">
                         No leave requests found.
                       </td>
                     </tr>
@@ -771,6 +1001,18 @@ function Leave() {
                         <td className="py-4 pr-4 text-slate-400 hidden md:table-cell whitespace-nowrap">
                           {formatDate(leave.appliedOn)}
                         </td>
+                        {/* Attachment column */}
+                        <td className="py-4 pr-4 hidden md:table-cell">
+                          {leave.fileName ? (
+                            <AttachmentChip
+                              fileName={leave.fileName}
+                              base64={leave.attachmentBase64}
+                              mime={leave.attachmentMime}
+                            />
+                          ) : (
+                            <span className="text-xs text-slate-300 italic">None</span>
+                          )}
+                        </td>
                         <td className="py-4 pr-4">
                           <span
                             className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${getStatusStyles(
@@ -789,7 +1031,6 @@ function Leave() {
             </table>
           </div>
 
-          {/* ─── Pagination Controls ─────────────────────────────────────────── */}
           {filteredLeaves.length > ROWS_PER_PAGE && (
             <div className="flex items-center justify-between mt-6 pt-4 border-t border-slate-100">
               <p className="text-xs text-slate-400">
