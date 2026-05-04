@@ -9,6 +9,7 @@ import {
   ZoomIn, ZoomOut, RotateCw,
 } from "lucide-react";
 import Usersidebar from "./components/Usersidebar.tsx";
+import { clearCurrentUser, getCurrentUser } from "../utils/sessionAuth";
 
 // Static import — always available, no fetch dependency, guarantees member
 // resolution even when the dev server doesn't serve /accounts.json.
@@ -897,7 +898,7 @@ function ProjectPage() {
   const location = useLocation();
   const navigate  = useNavigate();
 
-  const rawUser = location.state?.user ?? JSON.parse(localStorage.getItem("currentUser") ?? "null");
+  const rawUser = location.state?.user ?? getCurrentUser<any>();
 
   const [currentUser,     setCurrentUser]     = useState<Account | null>(null);
   // Initialise immediately from the static import — no async blank-flash on first render
@@ -909,7 +910,7 @@ function ProjectPage() {
   const [search,          setSearch]          = useState("");
   const [statusFilter,    setStatusFilter]    = useState<ProjectStatus | "All">("All");
 
-  const handleLogout = () => { localStorage.removeItem("currentUser"); navigate("/"); };
+  const handleLogout = () => { clearCurrentUser(); navigate("/"); };
 
   // ── Step 1: Identify current user (synchronous from static list) ─────────────
   useEffect(() => {

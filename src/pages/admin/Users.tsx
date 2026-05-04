@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import React, { useEffect, useMemo, useState } from "react";
 import { useAdmin } from "./context/AdminProvider";
 import { notifyError, notifySuccess } from "./utils/toast";
+import { getCurrentAdmin } from "../utils/sessionAuth";
 
 import accounts from "../data/accounts.json";
 import adminAccounts from "./data/adminAccounts.json";
@@ -278,10 +279,7 @@ export default function Users() {
   }, []);
 
   const currentAdmin = useMemo(() => {
-    try {
-      return JSON.parse(localStorage.getItem("currentAdmin") || "null") as
-        | { id: number; email: string; name: string } | null;
-    } catch { return null; }
+    return getCurrentAdmin<{ id: number; email: string; name: string }>();
   }, []);
 
   // ── Persisted state ───────────────────────────────────────────────────────

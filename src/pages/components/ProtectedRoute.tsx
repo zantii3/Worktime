@@ -2,12 +2,19 @@ import { motion } from "framer-motion";
 import { ShieldOff } from "lucide-react";
 import React from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  CURRENT_ADMIN_KEY,
+  CURRENT_USER_KEY,
+  getAdminToken,
+  migrateLegacyAuthSession,
+} from "../utils/sessionAuth";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function isValidSession(key: string): boolean {
   try {
-    const raw = localStorage.getItem(key);
+    migrateLegacyAuthSession();
+    const raw = sessionStorage.getItem(key);
     if (!raw) return false;
     const parsed = JSON.parse(raw);
     return parsed !== null && typeof parsed === "object" && "id" in parsed;
@@ -17,19 +24,20 @@ function isValidSession(key: string): boolean {
 }
 
 function isUserLoggedIn(): boolean {
-  return isValidSession("currentUser");
+  return isValidSession(CURRENT_USER_KEY);
 }
 
 function isAdminLoggedIn(): boolean {
   return (
-    localStorage.getItem("admin_token") !== null &&
-    isValidSession("currentAdmin")
+    getAdminToken() !== null &&
+    isValidSession(CURRENT_ADMIN_KEY)
   );
 }
 
 function getSessionName(key: string): string | null {
   try {
-    const parsed = JSON.parse(localStorage.getItem(key) || "null");
+    migrateLegacyAuthSession();
+    const parsed = JSON.parse(sessionStorage.getItem(key) || "null");
     return parsed?.name ?? null;
   } catch {
     return null;
@@ -59,7 +67,7 @@ function Forbidden({ intendedFor }: { intendedFor: "user" | "admin" }) {
   let actions: React.ReactNode;
 
   if (intendedFor === "admin" && userLoggedIn && !adminLoggedIn) {
-    const name = getSessionName("currentUser");
+    const name = getSessionName(CURRENT_USER_KEY);
     body = (
       <>
         You're signed in as{" "}
@@ -76,7 +84,7 @@ function Forbidden({ intendedFor }: { intendedFor: "user" | "admin" }) {
       </button>
     );
   } else if (intendedFor === "user" && adminLoggedIn && !userLoggedIn) {
-    const name = getSessionName("currentAdmin");
+    const name = getSessionName(CURRENT_ADMIN_KEY);
     body = (
       <>
         You're signed in as{" "}

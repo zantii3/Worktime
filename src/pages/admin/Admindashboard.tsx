@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import accounts from "../data/accounts.json";
 import { STORAGE_KEY as LEAVE_STORAGE_KEY } from "../user/types/leaveconstants";
+import { getCurrentAdmin } from "../utils/sessionAuth";
 import { useAdmin } from "./context/AdminProvider";
 
 import {
@@ -723,10 +724,7 @@ export default function Dashboard() {
 
   // ── Current admin ─────────────────────────────────────────────────────────
   const currentAdmin = useMemo(() => {
-    try {
-      return JSON.parse(localStorage.getItem("currentAdmin") || "null") as
-        | { id: number; email: string; name: string } | null;
-    } catch { return null; }
+    return getCurrentAdmin<{ id: number; email: string; name: string }>();
   }, []);
 
   const adminEmployeeId = currentAdmin ? String(currentAdmin.id) : "";

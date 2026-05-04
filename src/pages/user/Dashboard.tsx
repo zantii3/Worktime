@@ -7,6 +7,7 @@ import { useAttendance } from "./hooks/useAttendance";
 import type { TimeRecord } from "./hooks/useAttendance";
 import Usersidebar from "./components/Usersidebar.tsx";
 import { STORAGE_KEY } from "./types/leaveconstants";
+import { clearCurrentUser, getCurrentUser } from "../utils/sessionAuth";
 
 type TaskStatus = "Pending" | "In Progress" | "Completed";
 
@@ -207,7 +208,7 @@ function EarlyOutModal({
 function Dashboard() {
   const location = useLocation();
   const navigate = useNavigate();
-  const user = location.state?.user || JSON.parse(localStorage.getItem("currentUser") || "null");
+  const user = location.state?.user || getCurrentUser<any>();
 
   const currentTime = useClock();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -401,7 +402,7 @@ function Dashboard() {
     return new Date(date).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
   };
 
-  const handleLogout = () => { localStorage.removeItem("currentUser"); navigate("/"); };
+  const handleLogout = () => { clearCurrentUser(); navigate("/"); };
 
   const leaveTypeConfig: Record<string, { short: string }> = {
     "Vacation Leave": { short: "Vacation Leave" },

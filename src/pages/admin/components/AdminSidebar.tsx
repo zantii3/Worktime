@@ -2,15 +2,20 @@ import { motion } from "framer-motion";
 import {
   CalendarDays,
   FileUser,
+  FolderGit,
   LayoutDashboard,
   ListTodo,
   LogOut,
   UserCircle2,
   Users,
-  FolderGit,
   X,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
+import {
+  clearAdminEmail,
+  clearAdminToken,
+  clearCurrentAdmin,
+} from "../../utils/sessionAuth";
 import { notifySuccess } from "../utils/toast";
 import picture from "/logo.png";
 
@@ -38,9 +43,9 @@ export default function AdminSidebar({ close }: Props) {
   };
 
   const logout = () => {
-    localStorage.removeItem("admin_token");
-    localStorage.removeItem("admin_email");
-    localStorage.removeItem("currentAdmin"); // ✅ REQUIRED
+    clearAdminToken();
+    clearAdminEmail();
+    clearCurrentAdmin();
     notifySuccess("Logged out successfully.");
     close?.();
     navigate("/admin/login", { replace: true });
@@ -55,7 +60,6 @@ export default function AdminSidebar({ close }: Props) {
   return (
     <aside className="w-72 bg-card border-r border-slate-200 min-h-dvh">
       <div className="flex flex-col h-full p-6">
-        {/* Logo */}
         <div className="flex items-center justify-center mb-10 relative">
           <motion.img
             initial={{ scale: 0 }}
@@ -81,7 +85,6 @@ export default function AdminSidebar({ close }: Props) {
           )}
         </div>
 
-        {/* Nav */}
         <nav className="flex flex-col gap-2 flex-1">
           {navItems.map((item, index) => {
             const active = isActive(item.path);
@@ -121,7 +124,6 @@ export default function AdminSidebar({ close }: Props) {
           })}
         </nav>
 
-        {/* Logout pinned bottom */}
         <motion.button
           whileHover={{ x: 4 }}
           whileTap={{ scale: 0.95 }}

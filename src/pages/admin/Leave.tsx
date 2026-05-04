@@ -38,6 +38,7 @@ import {
 
 import { STORAGE_KEY } from "../user/types/leaveconstants";
 import { notifyError, notifySuccess } from "./utils/toast";
+import { getCurrentAdmin } from "../utils/sessionAuth";
 
 import staticAccounts from "../data/accounts.json";
 import staticAdmins from "./data/adminAccounts.json";
@@ -254,13 +255,7 @@ function readLeavesFromStorage(): StoredLeaveRequest[] {
 }
 
 function readCurrentAdmin(): CurrentAdmin | null {
-  try {
-    const raw = localStorage.getItem("currentAdmin");
-    if (!raw) return null;
-    return JSON.parse(raw) as CurrentAdmin;
-  } catch {
-    return null;
-  }
+  return getCurrentAdmin<CurrentAdmin>();
 }
 
 function resolveAdminName(admin: CurrentAdmin): string {

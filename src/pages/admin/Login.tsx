@@ -5,6 +5,7 @@ import { notifyError, notifySuccess } from "./utils/toast";
 import picture from "/logo.png";
 
 import { resolveMergedAccounts } from "../data/resolveAccounts";
+import { setAdminEmail, setAdminToken, setCurrentAdmin } from "../utils/sessionAuth";
 import staticAdminAccounts from "./data/adminAccounts.json";
 
 type FormState = {
@@ -73,9 +74,9 @@ export default function AdminLogin() {
       // Fail-open for demo if storage is corrupted.
     }
 
-    localStorage.setItem("admin_token",    "demo_token");
-    localStorage.setItem("admin_email",    match.email);
-    localStorage.setItem("currentAdmin",   JSON.stringify(match));
+    setAdminToken("demo_token");
+    setAdminEmail(match.email);
+    setCurrentAdmin(match);
 
     notifySuccess(`Welcome back, ${match.name}!`);
     setSubmitting(false);

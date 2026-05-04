@@ -30,6 +30,15 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { STORAGE_KEY as LEAVE_STORAGE_KEY } from "../user/types/leaveconstants";
 import { notifyError, notifySuccess } from "./utils/toast";
+import {
+  clearAdminEmail,
+  clearAdminToken,
+  clearCurrentAdmin,
+  CURRENT_ADMIN_KEY,
+  getCurrentAdmin,
+  setAdminEmail,
+  setCurrentAdmin as setCurrentAdminSession,
+} from "../utils/sessionAuth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -100,8 +109,6 @@ type StoredAdminCredentials = {
 const STATUS_KEY            = "worktime_account_status_v1";
 const ATTENDANCE_KEY        = "worktime_attendance_v1";
 const TASKS_KEY             = "worktime_tasks_v1";
-const CURRENT_ADMIN_KEY     = "currentAdmin";
-const ADMIN_EMAIL_KEY       = "admin_email";
 const ADMIN_CREDENTIALS_KEY = "worktime_admin_credentials_v1";
 
 // Must stay in sync with Users.tsx
@@ -145,7 +152,7 @@ function readLeaves(): LeaveRecord[] {
 }
 
 function readCurrentAdmin(): CurrentAdmin | null {
-  return readJSON<CurrentAdmin | null>(CURRENT_ADMIN_KEY, null);
+  return getCurrentAdmin<CurrentAdmin>();
 }
 
 function readStoredProfile(adminId: number | null | undefined): StoredAdminProfile | null {
@@ -599,8 +606,8 @@ export default function AdminProfile() {
       photo: profileForm.photo || "",
     };
 
-    localStorage.setItem(CURRENT_ADMIN_KEY, JSON.stringify(updatedAdmin));
-    localStorage.setItem(ADMIN_EMAIL_KEY, updatedAdmin.email);
+    setCurrentAdminSession(updatedAdmin);
+    setAdminEmail(updatedAdmin.email);
     localStorage.setItem(`admin_profile_${currentAdmin.id}`, JSON.stringify(updatedProfile));
 
     if (profileForm.newPassword) {
@@ -726,9 +733,9 @@ export default function AdminProfile() {
   };
 
   const logout = () => {
-    localStorage.removeItem("admin_token");
-    localStorage.removeItem(ADMIN_EMAIL_KEY);
-    localStorage.removeItem(CURRENT_ADMIN_KEY);
+    clearAdminToken();
+    clearAdminEmail();
+    clearCurrentAdmin();
     notifySuccess("Logged out successfully.");
     navigate("/admin/login", { replace: true });
   };

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useClock } from "./hooks/useClock";
 import Usersidebar from "./components/Usersidebar.tsx";
+import { clearCurrentUser, getCurrentUser } from "../utils/sessionAuth";
 
 const PROFILE_KEY = "worktime_profile_v1";
 const USERS_KEY   = "worktime_users_v1";
@@ -452,7 +453,7 @@ function SectionCard({ title, icon: Icon, gradient, children }: {
 function Profile() {
   const location  = useLocation();
   const navigate  = useNavigate();
-  const user      = location.state?.user || JSON.parse(localStorage.getItem("currentUser") || "null");
+  const user      = location.state?.user || getCurrentUser<any>();
   const currentTime = useClock();
 
   const [menuOpen,      setMenuOpen]      = useState(false);
@@ -550,7 +551,7 @@ function Profile() {
     persist({ ...profile, ...draft, avatar: null });
   };
 
-  const handleLogout = () => { localStorage.removeItem("currentUser"); navigate("/"); };
+  const handleLogout = () => { clearCurrentUser(); navigate("/"); };
   const field = (key: keyof UserProfile) => (v: string) => setDraft((p) => ({ ...p, [key]: v }));
   const displayAvatar = draft.avatar;
 

@@ -7,6 +7,7 @@ import Usersidebar from "./components/Usersidebar.tsx";
 import { useAttendance } from "./hooks/useAttendance";
 import { daysInMonth, firstDayOfMonth } from "./utils/attendanceUtils.ts";
 import { STORAGE_KEY } from "./types/leaveconstants";
+import { getCurrentUser } from "../utils/sessionAuth";
 
 const ATTENDANCE_KEY = "worktime_attendance_v1";
 const STANDARD_SHIFT_START = "08:00";
@@ -365,7 +366,7 @@ function DayDetailModal({ dateStr, record, leaveType, onClose }: DayDetailProps)
 function AttendanceApp() {
   const location = useLocation();
   const navigate = useNavigate();
-  const user = location.state?.user || JSON.parse(localStorage.getItem("currentUser") || "null");
+  const user = location.state?.user || getCurrentUser<any>();
   const currentTime = useClock();
   const [menuOpen, setMenuOpen] = useState(false);
   const [currentMonth, setCurrentMonth] = useState(new Date());

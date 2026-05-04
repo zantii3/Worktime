@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { useClock } from "./hooks/useClock";
 import Usersidebar from "./components/Usersidebar";
+import { clearCurrentUser, getCurrentUser } from "../utils/sessionAuth";
 
 // ── Static accounts JSON (used by resolveMergedAccounts) ──────────────────────
 import staticAccounts from "../data/accounts.json";
@@ -1317,7 +1318,7 @@ function Pagination({
 function TaskPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const user = location.state?.user || JSON.parse(localStorage.getItem("currentUser") || "null");
+  const user = location.state?.user || getCurrentUser<any>();
 
   const currentTime = useClock();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1693,7 +1694,7 @@ function TaskPage() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("currentUser");
+    clearCurrentUser();
     navigate("/");
   };
 

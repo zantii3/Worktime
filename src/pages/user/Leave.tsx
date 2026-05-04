@@ -29,13 +29,15 @@ import {
 import { useClock } from "./hooks/useClock";
 import Usersidebar from "./components/Usersidebar.tsx";
 import type {
-  LeaveRequest,
   LeaveType,
   LeaveStatus,
   LeavePolicy,
 } from "./types/leavetypes";
+import staticAccounts from "../data/accounts.json";
+import { resolveMergedAccounts } from "../data/resolveAccounts";
 import { STORAGE_KEY, POLICY_STORAGE_KEY, defaultLeavePolicy } from "./types/leaveconstants";
 import { showError, showSuccess } from "./utils/toast";
+import { clearCurrentUser, getCurrentUser } from "../utils/sessionAuth";
 
 // ─── Extended types ───────────────────────────────────────────────────────────
 
@@ -48,9 +50,22 @@ interface LeaveForm {
   dateFrom: string;
   dateTo: string;
   reason: string;
+  targetProjectId: string;
 }
 
-interface LeaveRequestWithAttachment extends LeaveRequest {
+interface LeaveRequestWithAttachment {
+  id: number;
+  employee: string;
+  type: LeaveType;
+  startDate: string;
+  endDate: string;
+  reason: string;
+  status: ExtendedLeaveStatus;
+  appliedOn: string;
+  days: number;
+  dateFrom?: string;
+  dateTo?: string;
+  fileName?: string;
   attachmentBase64?: string;
   attachmentMime?: string;
   // Pre-approval metadata written by project leader / HR
@@ -58,8 +73,10 @@ interface LeaveRequestWithAttachment extends LeaveRequest {
   preReviewedById?: number;
   preReviewedByRole?: string;
   preReviewedAt?: string;
-  // Override the status to accept extended values
-  status: ExtendedLeaveStatus;
+  targetProjectId?: number;
+  targetProjectName?: string;
+  targetLeaderId?: number;
+  targetLeaderName?: string;
 }
 
 // ─── Storage constants ────────────────────────────────────────────────────────
@@ -67,6 +84,7 @@ interface LeaveRequestWithAttachment extends LeaveRequest {
 const ALL_LEAVES_KEY        = STORAGE_KEY;
 const ROWS_PER_PAGE         = 5;
 const PROJECTS_KEY          = "worktime_projects_v1";
+const TASKS_KEY             = "worktime_tasks_v1";
 const CREATED_ACCOUNTS_KEY  = "worktime_created_accounts_v1";
 const DELETED_IDS_KEY       = "worktime_deleted_account_ids_v1";
 const EDITS_KEY             = "worktime_account_edits_v1";
@@ -126,8 +144,22 @@ function isHRRole(role: string): boolean {
 
 type StoredProject = {
   id: number;
+  name?: string;
   leaderId: number;
   memberIds?: number[];
+};
+
+type StoredTask = {
+  projectId?: number;
+  assignedToId?: number;
+  assignedTo?: string;
+};
+
+type LeaderOption = {
+  projectId: number;
+  projectName: string;
+  leaderId: number;
+  leaderName: string;
 };
 
 /** Returns all project IDs where this user is the leader. */
@@ -146,12 +178,71 @@ function getLeaderProjectIds(userId: number): Set<number> {
  */
 function getLeaderTeamMemberIds(leaderId: number): Set<number> {
   const projects = safeReadLS<StoredProject[]>(PROJECTS_KEY, []);
+  const tasks = safeReadLS<StoredTask[]>(TASKS_KEY, []);
   const memberIds = new Set<number>();
   for (const p of projects) {
     if (String(p.leaderId) !== String(leaderId)) continue;
     for (const mid of p.memberIds ?? []) memberIds.add(mid);
+    for (const task of tasks) {
+      if (task.projectId !== p.id || task.assignedToId == null) continue;
+      memberIds.add(task.assignedToId);
+    }
+    for (const account of staticAccounts as Array<{ id: number; assignedProjects?: number[] }>) {
+      if ((account.assignedProjects ?? []).includes(p.id)) memberIds.add(account.id);
+    }
   }
   return memberIds;
+}
+
+function getStaticAssignedProjectIds(userId: number): Set<number> {
+  const staticUser = (staticAccounts as Array<{ id: number; assignedProjects?: number[] }>)
+    .find((account) => String(account.id) === String(userId));
+  return new Set<number>(staticUser?.assignedProjects ?? []);
+}
+
+function getLeaderOptionsForUser(userId: number, userName?: string): LeaderOption[] {
+  const projects = safeReadLS<StoredProject[]>(PROJECTS_KEY, []);
+  const tasks = safeReadLS<StoredTask[]>(TASKS_KEY, []);
+  const staticAssignedProjects = getStaticAssignedProjectIds(userId);
+  const allUsers = resolveMergedAccounts(
+    staticAccounts as Array<{ id: number; name: string; email: string; password: string }>,
+    "user"
+  );
+  const userNameKey = userName?.trim().toLowerCase() ?? "";
+  const userById = new Map(allUsers.map((account) => [account.id, account]));
+  const options: LeaderOption[] = [];
+
+  for (const project of projects) {
+    const isExplicitMember = (project.memberIds ?? []).some(
+      (memberId) => String(memberId) === String(userId)
+    );
+    const isAssignedByStaticData = staticAssignedProjects.has(project.id);
+    const isAssignedToTask = tasks.some((task) => {
+      if (task.projectId !== project.id) return false;
+      const byId = task.assignedToId !== undefined && String(task.assignedToId) === String(userId);
+      const byName = !!task.assignedTo && !!userNameKey && task.assignedTo.trim().toLowerCase() === userNameKey;
+      return byId || byName;
+    });
+
+    if (!isExplicitMember && !isAssignedByStaticData && !isAssignedToTask) continue;
+
+    const leaderId = Number(project.leaderId);
+    if (!Number.isFinite(leaderId) || String(leaderId) === String(userId)) continue;
+
+    const leaderName = userById.get(leaderId)?.name ?? `Leader #${leaderId}`;
+    options.push({
+      projectId: project.id,
+      projectName: project.name?.trim() || `Project #${project.id}`,
+      leaderId,
+      leaderName,
+    });
+  }
+
+  const deduped = new Map<number, LeaderOption>();
+  for (const option of options) {
+    if (!deduped.has(option.projectId)) deduped.set(option.projectId, option);
+  }
+  return Array.from(deduped.values());
 }
 
 /**
@@ -163,6 +254,13 @@ function buildUserNameToIdMap(): Map<string, number> {
   const edits   = safeReadLS<EditsMap>(EDITS_KEY, {});
   const created = safeReadLS<StoredCreatedAccount[]>(CREATED_ACCOUNTS_KEY, []);
   const deleted = new Set<string>(safeReadLS<string[]>(DELETED_IDS_KEY, []));
+
+  for (const account of staticAccounts as Array<{ id: number; name: string }>) {
+    const key = `user:${account.id}`;
+    if (deleted.has(key)) continue;
+    const editedName = edits[key]?.name ?? account.name;
+    map.set(editedName.trim().toLowerCase(), account.id);
+  }
 
   // Created accounts
   for (const a of created) {
@@ -426,18 +524,15 @@ function PreReviewBanner({ leave }: { leave: LeaveRequestWithAttachment }) {
 // ─── Team Review Modal ────────────────────────────────────────────────────────
 function TeamReviewModal({
   leave,
-  currentUser,
   onClose,
   onPreApprove,
   onPreReject,
 }: {
   leave: LeaveRequestWithAttachment;
-  currentUser: { id: number; name: string };
   onClose: () => void;
   onPreApprove: (id: number) => void;
   onPreReject:  (id: number) => void;
 }) {
-  const [showAttachment, setShowAttachment] = useState(false);
   const canAct = leave.status === "Pending";
 
   const formatDate = (d: string) =>
@@ -605,7 +700,7 @@ function Leave() {
   const navigate = useNavigate();
   const user =
     location.state?.user ||
-    JSON.parse(localStorage.getItem("currentUser") || "null");
+    getCurrentUser<any>();
 
   const currentTime = useClock();
   const [menuOpen,           setMenuOpen]           = useState(false);
@@ -630,6 +725,7 @@ function Leave() {
     dateFrom: "",
     dateTo:   "",
     reason:   "",
+    targetProjectId: "",
   });
 
   // ── Derive reviewer role & team membership ──────────────────────────────────
@@ -646,6 +742,25 @@ function Leave() {
   }, [user?.id]);
 
   const isLeader = leaderProjectIds.size > 0;
+
+  const leaderOptions = useMemo(() => {
+    if (!user?.id) return [];
+    return getLeaderOptionsForUser(user.id, user.name);
+  }, [user?.id, user?.name]);
+
+  useEffect(() => {
+    if (leaderOptions.length === 0) {
+      setForm((prev) => (prev.targetProjectId ? { ...prev, targetProjectId: "" } : prev));
+      return;
+    }
+    setForm((prev) => {
+      const currentIsValid = leaderOptions.some(
+        (option) => String(option.projectId) === String(prev.targetProjectId)
+      );
+      if (currentIsValid) return prev;
+      return { ...prev, targetProjectId: String(leaderOptions[0].projectId) };
+    });
+  }, [leaderOptions]);
 
   const leaderTeamMemberIds = useMemo(() => {
     if (!user?.id || !isLeader) return new Set<number>();
@@ -667,6 +782,9 @@ function Leave() {
       if (leave.employee?.trim().toLowerCase() === user?.name?.trim().toLowerCase()) return false;
       if (isHR) return true;
       if (isLeader) {
+        if (leave.targetLeaderId !== undefined) {
+          return String(leave.targetLeaderId) === String(user.id);
+        }
         const empId = nameToIdMap.get(leave.employee?.trim().toLowerCase() ?? "");
         if (empId !== undefined) return leaderTeamMemberIds.has(empId);
       }
@@ -776,6 +894,10 @@ function Leave() {
       showError("End date cannot be before start date.");
       return;
     }
+    if (leaderOptions.length > 0 && !form.targetProjectId) {
+      showError("Please select the project leader for this leave request.");
+      return;
+    }
 
     const days = calculateDays(form.dateFrom, form.dateTo);
     const approvedDays = getUsedDays(form.type);
@@ -793,6 +915,10 @@ function Leave() {
     setIsAnimating(true);
     setTimeout(() => setIsAnimating(false), 1000);
 
+    const selectedLeaderOption = leaderOptions.find(
+      (option) => String(option.projectId) === String(form.targetProjectId)
+    );
+
     const newLeave: LeaveRequestWithAttachment = {
       id:              Date.now(),
       employee:        user?.name ?? "Unknown",
@@ -806,12 +932,22 @@ function Leave() {
       fileName:        fileName || undefined,
       attachmentBase64: fileBase64 || undefined,
       attachmentMime:  fileMime || undefined,
+      targetProjectId: selectedLeaderOption?.projectId,
+      targetProjectName: selectedLeaderOption?.projectName,
+      targetLeaderId: selectedLeaderOption?.leaderId,
+      targetLeaderName: selectedLeaderOption?.leaderName,
     };
 
     const updatedAll = [newLeave, ...leaves];
     persistLeaves(updatedAll);
 
-    setForm({ type: "Vacation Leave", dateFrom: "", dateTo: "", reason: "" });
+    setForm({
+      type: "Vacation Leave",
+      dateFrom: "",
+      dateTo: "",
+      reason: "",
+      targetProjectId: selectedLeaderOption ? String(selectedLeaderOption.projectId) : "",
+    });
     setFileName("");
     setFileBase64(null);
     setFileMime(null);
@@ -911,7 +1047,7 @@ function Leave() {
     });
 
   const handleLogout = () => {
-    localStorage.removeItem("currentUser");
+    clearCurrentUser();
     navigate("/");
   };
 
@@ -929,7 +1065,6 @@ function Leave() {
         {reviewingLeave && (
           <TeamReviewModal
             leave={reviewingLeave}
-            currentUser={user}
             onClose={() => setReviewingLeave(null)}
             onPreApprove={handlePreApprove}
             onPreReject={handlePreReject}
@@ -1062,7 +1197,7 @@ function Leave() {
               }`}
             >
               <Users className="w-4 h-4" />
-              Team Requests
+              {isHR ? "All Request" : "Team Request"}
               {teamPendingCount > 0 && (
                 <span className={`ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-black ${
                   viewMode === "team"
@@ -1167,6 +1302,36 @@ function Leave() {
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                      Project Leader
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={form.targetProjectId}
+                        onChange={(e) =>
+                          setForm((prev) => ({ ...prev, targetProjectId: e.target.value }))
+                        }
+                        disabled={leaderOptions.length === 0}
+                        className="w-full appearance-none bg-slate-50 border border-slate-200 text-slate-800 font-medium px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F28C28]/40 focus:border-[#F28C28] transition-all disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                      >
+                        {leaderOptions.length === 0 ? (
+                          <option value="">No project leader assigned</option>
+                        ) : (
+                          leaderOptions.map((option) => (
+                            <option key={option.projectId} value={option.projectId}>
+                              {option.leaderName} - {option.projectName}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
+                    <p className="mt-2 text-xs text-slate-400">
+                      Your request will be shown only to the selected project leader before admin final approval.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
                       Supporting Document{" "}
                       <span className="text-slate-400 normal-case font-normal">(Optional)</span>
                     </label>
@@ -1220,6 +1385,26 @@ function Leave() {
                         <span className="text-[10px] text-blue-500 shrink-0">Ready to submit</span>
                       </motion.div>
                     )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                      Request Handling
+                    </label>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                      {leaderOptions.length > 0 ? (
+                        <>
+                          Selected reviewer:{" "}
+                          <span className="font-semibold text-[#1F3C68]">
+                            {leaderOptions.find((option) => String(option.projectId) === String(form.targetProjectId))?.leaderName ?? "Project leader"}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          No project leader is currently linked to your projects. Your request will still be saved for hr and admin review.
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -1613,7 +1798,7 @@ function Leave() {
                   </div>
                   <div>
                     <h2 className="text-lg font-bold text-[#1F3C68]">
-                      {isHR ? "All Employee Requests" : "Your Team's Requests"}
+                      {isHR ? "All Requests" : "Your Team's Requests"}
                     </h2>
                     <p className="text-sm text-slate-500 mt-0.5">
                       {isHR
@@ -1748,7 +1933,7 @@ function Leave() {
                                   ? <Check className="w-3 h-3" />
                                   : <X className="w-3 h-3" />
                                 }
-                                {leave.status === "Pre-Approved" ? "Pre-approved" : "Pre-rejected"} by you
+                                {leave.status === "Pre-Approved" ? "Pre-approved" : "Pre-rejected"} by {leave.preReviewedBy ?? "reviewer"}{leave.preReviewedByRole ? ` (${leave.preReviewedByRole})` : ""}
                                 · awaiting admin
                               </div>
                             )}

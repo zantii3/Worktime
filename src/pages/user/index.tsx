@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import staticAccounts from "../data/accounts.json";
 import { resolveMergedAccounts } from "../data/resolveAccounts";
+import { setCurrentUser } from "../utils/sessionAuth";
 import { showError, showSuccess } from "./utils/toast";
 import picture from "/logo.png";
 
@@ -40,7 +41,7 @@ function Login() {
       }
 
       setError("");
-      localStorage.setItem("currentUser", JSON.stringify(user));
+      setCurrentUser(user);
       showSuccess("Login successful!");
       navigate("/dashboard", { state: { user } });
     } else {
