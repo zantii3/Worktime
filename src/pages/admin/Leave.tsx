@@ -24,6 +24,8 @@ import {
   Download,
   Image as ImageIcon,
   User,
+  UserCog,
+  Info,
 } from "lucide-react";
 import {
   useEffect,
@@ -40,7 +42,8 @@ import { notifyError, notifySuccess } from "./utils/toast";
 import staticAccounts from "../data/accounts.json";
 import staticAdmins from "./data/adminAccounts.json";
 
-type LeaveStatus = "Pending" | "Approved" | "Rejected";
+// ─── Extended status type (admin sees all states) ─────────────────────────────
+type LeaveStatus = "Pending" | "Approved" | "Rejected" | "Pre-Approved" | "Pre-Rejected";
 type LeaveType =
   | "Vacation Leave"
   | "Sick Leave"
@@ -64,6 +67,11 @@ type StoredLeaveRequest = {
   appliedOn?: string;
   date?: string;
   days?: number;
+  // Pre-approval metadata (written by HR / project leader on the user side)
+  preReviewedBy?: string;
+  preReviewedById?: number;
+  preReviewedByRole?: string;
+  preReviewedAt?: string;
 };
 
 type NormalizedLeaveRequest = {
@@ -79,6 +87,9 @@ type NormalizedLeaveRequest = {
   attachmentMime?: string;
   appliedOn?: string;
   days: number;
+  preReviewedBy?: string;
+  preReviewedByRole?: string;
+  preReviewedAt?: string;
 };
 
 type LeaveForm = {
@@ -93,11 +104,12 @@ type LeaveForm = {
 
 type CurrentAdmin = { id: number; email: string; name: string };
 
-const ALL_LEAVES_KEY = STORAGE_KEY;
-const CREATED_ACCOUNTS_KEY = "worktime_created_accounts_v1";
-const EDITS_KEY = "worktime_account_edits_v1";
+const ALL_LEAVES_KEY        = STORAGE_KEY;
+const CREATED_ACCOUNTS_KEY  = "worktime_created_accounts_v1";
+const EDITS_KEY             = "worktime_account_edits_v1";
 
-const STATUS_FILTERS = ["All", "Pending", "Approved", "Rejected"] as const;
+// All statuses the admin can filter by
+const STATUS_FILTERS = ["All", "Pending", "Pre-Approved", "Pre-Rejected", "Approved", "Rejected"] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 
 const LEAVE_TYPES: LeaveType[] = [
@@ -204,7 +216,7 @@ function normalizeLeaveType(type: string | undefined): LeaveType {
 
 function normalizeLeave(record: StoredLeaveRequest): NormalizedLeaveRequest {
   const dateFrom = record.dateFrom || record.startDate || record.date || "";
-  const dateTo = record.dateTo || record.endDate || record.date || "";
+  const dateTo   = record.dateTo   || record.endDate   || record.date || "";
   const days =
     dateFrom && dateTo
       ? diffDaysInclusive(dateFrom, dateTo)
@@ -212,24 +224,27 @@ function normalizeLeave(record: StoredLeaveRequest): NormalizedLeaveRequest {
       ? record.days
       : 0;
   return {
-    id: record.id,
-    employee: record.employee || "Unknown",
-    type: normalizeLeaveType(record.type),
+    id:               record.id,
+    employee:         record.employee || "Unknown",
+    type:             normalizeLeaveType(record.type),
     dateFrom,
     dateTo,
-    reason: record.reason || "",
-    status: record.status || "Pending",
-    attachmentName: record.attachmentName ?? record.fileName ?? null,
+    reason:           record.reason || "",
+    status:           record.status || "Pending",
+    attachmentName:   record.attachmentName ?? record.fileName ?? null,
     attachmentBase64: record.attachmentBase64,
-    attachmentMime: record.attachmentMime,
-    appliedOn: record.appliedOn ?? record.date,
+    attachmentMime:   record.attachmentMime,
+    appliedOn:        record.appliedOn ?? record.date,
     days,
+    preReviewedBy:    record.preReviewedBy,
+    preReviewedByRole: record.preReviewedByRole,
+    preReviewedAt:    record.preReviewedAt,
   };
 }
 
 function readLeavesFromStorage(): StoredLeaveRequest[] {
   try {
-    const raw = localStorage.getItem(ALL_LEAVES_KEY);
+    const raw    = localStorage.getItem(ALL_LEAVES_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? (parsed as StoredLeaveRequest[]) : [];
@@ -263,7 +278,7 @@ function resolveAdminName(admin: CurrentAdmin): string {
 function getAllKnownNames(): Set<string> {
   const names = new Set<string>();
   (staticAccounts as { name: string }[]).forEach((a) => names.add(a.name));
-  (staticAdmins as { name: string }[]).forEach((a) => names.add(a.name));
+  (staticAdmins   as { name: string }[]).forEach((a) => names.add(a.name));
   try {
     const edits = JSON.parse(localStorage.getItem(EDITS_KEY) || "{}") as Record<
       string,
@@ -280,24 +295,34 @@ function getAllKnownNames(): Set<string> {
   return names;
 }
 
-// ─── Status pill ──────────────────────────────────────────────────────────────
+// ─── Status pill — extended for pre-approval states ───────────────────────────
 
 function StatusPill({ status }: { status: LeaveStatus }) {
   const map: Record<LeaveStatus, { cls: string; icon: React.ElementType; label: string }> = {
     Pending: {
-      cls: "bg-amber-50 text-amber-700 border-amber-200",
-      icon: Clock3,
+      cls:   "bg-amber-50 text-amber-700 border-amber-200",
+      icon:  Clock3,
       label: "Pending",
     },
     Approved: {
-      cls: "bg-emerald-50 text-emerald-700 border-emerald-200",
-      icon: CheckCircle2,
+      cls:   "bg-emerald-50 text-emerald-700 border-emerald-200",
+      icon:  CheckCircle2,
       label: "Approved",
     },
     Rejected: {
-      cls: "bg-rose-50 text-rose-700 border-rose-200",
-      icon: XCircle,
+      cls:   "bg-rose-50 text-rose-700 border-rose-200",
+      icon:  XCircle,
       label: "Rejected",
+    },
+    "Pre-Approved": {
+      cls:   "bg-teal-50 text-teal-700 border-teal-200",
+      icon:  ShieldCheck,
+      label: "Pre-Approved",
+    },
+    "Pre-Rejected": {
+      cls:   "bg-orange-50 text-orange-700 border-orange-200",
+      icon:  UserCog,
+      label: "Pre-Rejected",
     },
   };
   const { cls, icon: Icon, label } = map[status] ?? map.Pending;
@@ -308,6 +333,43 @@ function StatusPill({ status }: { status: LeaveStatus }) {
       <Icon className="h-3.5 w-3.5" />
       {label}
     </span>
+  );
+}
+
+// ─── Pre-review info banner (shown inside review modal) ───────────────────────
+
+function PreReviewInfoBanner({ leave }: { leave: NormalizedLeaveRequest }) {
+  if (leave.status !== "Pre-Approved" && leave.status !== "Pre-Rejected") return null;
+  const isPreApproved = leave.status === "Pre-Approved";
+  return (
+    <div className={`flex items-start gap-3 p-4 rounded-2xl border ${
+      isPreApproved
+        ? "bg-teal-50 border-teal-200"
+        : "bg-orange-50 border-orange-200"
+    }`}>
+      <div className={`h-8 w-8 rounded-xl flex items-center justify-center shrink-0 ${
+        isPreApproved ? "bg-teal-100" : "bg-orange-100"
+      }`}>
+        {isPreApproved
+          ? <ShieldCheck className={`h-4 w-4 text-teal-700`} />
+          : <UserCog className={`h-4 w-4 text-orange-700`} />
+        }
+      </div>
+      <div className="min-w-0">
+        <p className={`text-sm font-bold ${isPreApproved ? "text-teal-800" : "text-orange-800"}`}>
+          {isPreApproved ? "Pre-approved" : "Pre-rejected"} by {leave.preReviewedBy ?? "a reviewer"}
+          {leave.preReviewedByRole ? ` (${leave.preReviewedByRole})` : ""}
+        </p>
+        {leave.preReviewedAt && (
+          <p className={`text-xs mt-0.5 ${isPreApproved ? "text-teal-600" : "text-orange-600"}`}>
+            {formatDate(leave.preReviewedAt.split("T")[0])}
+          </p>
+        )}
+        <p className={`text-xs mt-1 ${isPreApproved ? "text-teal-700" : "text-orange-700"}`}>
+          As admin, you have final authority. You can approve or reject regardless of the pre-review.
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -335,12 +397,12 @@ function SummaryCard({
   onClick,
 }: {
   type: LeaveType;
-  breakdown: { total: number; pending: number; approved: number; rejected: number };
+  breakdown: { total: number; pending: number; approved: number; rejected: number; preApproved: number; preRejected: number };
   active?: boolean;
   onClick?: () => void;
 }) {
-  const meta = LEAVE_TYPE_META[type];
-  const Icon = meta.icon;
+  const meta        = LEAVE_TYPE_META[type];
+  const Icon        = meta.icon;
   const approvedPct = breakdown.total
     ? Math.round((breakdown.approved / breakdown.total) * 100)
     : 0;
@@ -361,9 +423,7 @@ function SummaryCard({
       ].join(" ")}
     >
       <div className="flex items-start justify-between gap-3">
-        <div
-          className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${meta.bg} ${meta.border} border`}
-        >
+        <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${meta.bg} ${meta.border} border`}>
           <Icon className={`h-5 w-5 ${meta.color}`} />
         </div>
         <div className="text-right">
@@ -374,9 +434,7 @@ function SummaryCard({
         </div>
       </div>
       <div className="mt-3">
-        <div className="text-xs font-bold text-text-heading leading-tight">
-          {meta.label}
-        </div>
+        <div className="text-xs font-bold text-text-heading leading-tight">{meta.label}</div>
       </div>
       <div className="mt-3 h-1.5 rounded-full bg-slate-100 overflow-hidden">
         <motion.div
@@ -389,11 +447,12 @@ function SummaryCard({
       <div className="mt-1 text-[10px] text-text-primary/50 text-right">
         {approvedPct}% approved
       </div>
-      <div className="mt-3 grid grid-cols-3 gap-1 text-[10px]">
+      <div className="mt-3 grid grid-cols-2 gap-1 text-[10px]">
         {[
-          { label: "Pending", value: breakdown.pending, cls: "text-amber-600" },
-          { label: "Approved", value: breakdown.approved, cls: "text-emerald-600" },
-          { label: "Rejected", value: breakdown.rejected, cls: "text-rose-600" },
+          { label: "Pending",      value: breakdown.pending,     cls: "text-amber-600"   },
+          { label: "Approved",     value: breakdown.approved,    cls: "text-emerald-600" },
+          { label: "Pre-Approved", value: breakdown.preApproved, cls: "text-teal-600"    },
+          { label: "Rejected",     value: breakdown.rejected,    cls: "text-rose-600"    },
         ].map(({ label, value, cls }) => (
           <div
             key={label}
@@ -465,11 +524,11 @@ function FilePreviewModal({
   onClose: () => void;
 }) {
   const isImage = mime.startsWith("image/");
-  const isPdf = mime === "application/pdf";
+  const isPdf   = mime === "application/pdf";
 
   const handleDownload = () => {
-    const link = document.createElement("a");
-    link.href = base64;
+    const link    = document.createElement("a");
+    link.href     = base64;
     link.download = fileName;
     link.click();
   };
@@ -491,7 +550,6 @@ function FilePreviewModal({
           onClick={(e) => e.stopPropagation()}
           className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[88vh] overflow-hidden flex flex-col"
         >
-          {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50 rounded-t-3xl">
             <div className="flex items-center gap-3 min-w-0">
               <div className="p-2 bg-primary/10 rounded-xl shrink-0">
@@ -515,38 +573,23 @@ function FilePreviewModal({
                 <Download className="w-3.5 h-3.5" />
                 Download
               </button>
-              <button
-                onClick={onClose}
-                className="p-2 hover:bg-slate-200 rounded-xl transition"
-                type="button"
-              >
+              <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-xl transition" type="button">
                 <X className="w-4 h-4 text-slate-500" />
               </button>
             </div>
           </div>
 
-          {/* Preview */}
           <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-slate-100">
             {isImage ? (
-              <img
-                src={base64}
-                alt={fileName}
-                className="max-w-full max-h-[60vh] rounded-xl shadow-md object-contain"
-              />
+              <img src={base64} alt={fileName} className="max-w-full max-h-[60vh] rounded-xl shadow-md object-contain" />
             ) : isPdf ? (
-              <iframe
-                src={base64}
-                title={fileName}
-                className="w-full h-[60vh] rounded-xl border border-slate-200 bg-white"
-              />
+              <iframe src={base64} title={fileName} className="w-full h-[60vh] rounded-xl border border-slate-200 bg-white" />
             ) : (
               <div className="flex flex-col items-center gap-4 py-12 text-slate-400">
                 <div className="p-5 bg-white rounded-2xl shadow border border-slate-200">
                   <FileText className="w-12 h-12 text-slate-300" />
                 </div>
-                <p className="text-sm font-medium text-slate-500">
-                  Preview not available for this file type
-                </p>
+                <p className="text-sm font-medium text-slate-500">Preview not available for this file type</p>
                 <button
                   onClick={handleDownload}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold hover:opacity-90 transition"
@@ -564,7 +607,7 @@ function FilePreviewModal({
   );
 }
 
-// ─── Review Modal ─────────────────────────────────────────────────────────────
+// ─── Review Modal — admin version with final override ─────────────────────────
 
 function ReviewModal({
   leave,
@@ -577,13 +620,15 @@ function ReviewModal({
   resolvedName: string | null;
   onClose: () => void;
   onApprove: (id: number) => void;
-  onReject: (id: number) => void;
+  onReject:  (id: number) => void;
 }) {
   const [showFilePreview, setShowFilePreview] = useState(false);
-  const meta = LEAVE_TYPE_META[leave.type];
-  const Icon = meta.icon;
   const isSelf = leave.employee === resolvedName;
-  const canAct = leave.status === "Pending" && !isSelf;
+
+  // Admin can ALWAYS finalize (approve/reject), even if pre-approved/pre-rejected.
+  // The only restriction is they can't act on their own requests.
+  const isAlreadyFinal = leave.status === "Approved" || leave.status === "Rejected";
+  const canAct         = !isSelf && !isAlreadyFinal;
 
   const initials = leave.employee
     .split(" ")
@@ -592,7 +637,7 @@ function ReviewModal({
     .join("")
     .toUpperCase();
 
-  const isImage = leave.attachmentMime?.startsWith("image/");
+  const isImage    = leave.attachmentMime?.startsWith("image/");
   const hasPreviewed = !!(leave.attachmentBase64 && leave.attachmentMime);
 
   return (
@@ -629,9 +674,11 @@ function ReviewModal({
                   <div>
                     <div className="text-lg font-extrabold leading-tight">Review Leave Request</div>
                     <div className="text-sm text-white/70 mt-0.5">
-                      {leave.status === "Pending"
-                        ? "Approve or reject this request"
-                        : `Already ${leave.status.toLowerCase()}`}
+                      {isAlreadyFinal
+                        ? `Already ${leave.status.toLowerCase()} — view only`
+                        : isSelf
+                        ? "Cannot act on your own request"
+                        : "Admin final decision — overrides any pre-review"}
                     </div>
                   </div>
                 </div>
@@ -646,7 +693,7 @@ function ReviewModal({
             </div>
 
             {/* Modal body */}
-            <div className="p-6 overflow-y-auto flex-1 space-y-5">
+            <div className="p-6 overflow-y-auto flex-1 space-y-4">
               {/* Employee info */}
               <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100">
                 <div className="h-12 w-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
@@ -655,9 +702,7 @@ function ReviewModal({
                 <div className="min-w-0">
                   <div className="font-bold text-text-heading text-base truncate">{leave.employee}</div>
                   {leave.appliedOn && (
-                    <div className="text-xs text-slate-400 mt-0.5">
-                      Filed on {formatDate(leave.appliedOn)}
-                    </div>
+                    <div className="text-xs text-slate-400 mt-0.5">Filed on {formatDate(leave.appliedOn)}</div>
                   )}
                   {isSelf && (
                     <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
@@ -670,7 +715,10 @@ function ReviewModal({
                 </div>
               </div>
 
-              {/* Leave type */}
+              {/* Pre-review banner — shown when HR/leader has already acted */}
+              <PreReviewInfoBanner leave={leave} />
+
+              {/* Leave type + days */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2">Leave Type</div>
@@ -707,17 +755,12 @@ function ReviewModal({
                 </div>
                 {leave.attachmentName ? (
                   <div className="space-y-3">
-                    {/* Image thumbnail preview */}
                     {isImage && leave.attachmentBase64 && (
                       <div
                         className="relative w-full h-36 rounded-xl overflow-hidden border border-slate-200 bg-slate-200 cursor-pointer group"
                         onClick={() => setShowFilePreview(true)}
                       >
-                        <img
-                          src={leave.attachmentBase64}
-                          alt={leave.attachmentName}
-                          className="w-full h-full object-cover"
-                        />
+                        <img src={leave.attachmentBase64} alt={leave.attachmentName} className="w-full h-full object-cover" />
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center">
                           <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 bg-white/90 px-3 py-1.5 rounded-xl shadow">
                             <Eye className="w-4 h-4 text-primary" />
@@ -726,8 +769,6 @@ function ReviewModal({
                         </div>
                       </div>
                     )}
-
-                    {/* File chip row */}
                     <div className="flex items-center gap-2 flex-wrap">
                       <div className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl flex-1 min-w-0">
                         {isImage ? (
@@ -735,9 +776,7 @@ function ReviewModal({
                         ) : (
                           <FileText className="w-4 h-4 text-slate-400 shrink-0" />
                         )}
-                        <span className="text-sm text-text-heading font-medium truncate">
-                          {leave.attachmentName}
-                        </span>
+                        <span className="text-sm text-text-heading font-medium truncate">{leave.attachmentName}</span>
                       </div>
                       {hasPreviewed && (
                         <button
@@ -753,8 +792,8 @@ function ReviewModal({
                         <button
                           type="button"
                           onClick={() => {
-                            const link = document.createElement("a");
-                            link.href = leave.attachmentBase64!;
+                            const link    = document.createElement("a");
+                            link.href     = leave.attachmentBase64!;
                             link.download = leave.attachmentName!;
                             link.click();
                           }}
@@ -776,6 +815,18 @@ function ReviewModal({
                   </div>
                 )}
               </div>
+
+              {/* Admin override note when pre-reviewed */}
+              {(leave.status === "Pre-Approved" || leave.status === "Pre-Rejected") && !isSelf && (
+                <div className="flex items-start gap-2 px-4 py-3 rounded-xl bg-blue-50 border border-blue-200 text-sm text-blue-800">
+                  <Info className="w-4 h-4 mt-0.5 shrink-0" />
+                  <p>
+                    This was {leave.status === "Pre-Approved" ? "pre-approved" : "pre-rejected"} by{" "}
+                    <span className="font-semibold">{leave.preReviewedBy}</span>.
+                    Your decision below is <span className="font-semibold">final</span> and overrides it.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Footer actions */}
@@ -790,7 +841,7 @@ function ReviewModal({
                     className="flex-1 inline-flex items-center justify-center gap-2 bg-emerald-600 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-sm hover:bg-emerald-700 transition"
                   >
                     <Check className="h-4 w-4" />
-                    Approve
+                    {leave.status === "Pre-Approved" ? "Confirm Approval" : "Approve"}
                   </motion.button>
                   <motion.button
                     whileHover={{ scale: 1.02 }}
@@ -800,7 +851,7 @@ function ReviewModal({
                     className="flex-1 inline-flex items-center justify-center gap-2 bg-rose-500 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-sm hover:bg-rose-600 transition"
                   >
                     <X className="h-4 w-4" />
-                    Reject
+                    {leave.status === "Pre-Rejected" ? "Confirm Rejection" : "Reject"}
                   </motion.button>
                   <button
                     onClick={onClose}
@@ -815,7 +866,7 @@ function ReviewModal({
                   <div className="flex-1 text-sm text-slate-400 italic">
                     {isSelf
                       ? "You cannot act on your own request."
-                      : `This request has been ${leave.status.toLowerCase()}.`}
+                      : `This request is already ${leave.status.toLowerCase()}.`}
                   </div>
                   <button
                     onClick={onClose}
@@ -831,7 +882,6 @@ function ReviewModal({
         </motion.div>
       </AnimatePresence>
 
-      {/* File Preview overlay on top of review modal */}
       {showFilePreview && leave.attachmentBase64 && leave.attachmentMime && (
         <FilePreviewModal
           fileName={leave.attachmentName!}
@@ -856,24 +906,22 @@ export default function Leave() {
     [currentAdmin]
   );
 
-  const [leaves, setLeaves] = useState<StoredLeaveRequest[]>(() =>
-    readLeavesFromStorage()
-  );
-  const [now, setNow] = useState<Date>(new Date());
+  const [leaves, setLeaves]           = useState<StoredLeaveRequest[]>(() => readLeavesFromStorage());
+  const [now,    setNow]              = useState<Date>(new Date());
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
-  const [typeFilter, setTypeFilter] = useState<LeaveType | "All">("All");
-  const [search, setSearch] = useState("");
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [reviewLeave, setReviewLeave] = useState<NormalizedLeaveRequest | null>(null);
+  const [typeFilter,   setTypeFilter]   = useState<LeaveType | "All">("All");
+  const [search,       setSearch]       = useState("");
+  const [isModalOpen,  setIsModalOpen]  = useState(false);
+  const [editingId,    setEditingId]    = useState<number | null>(null);
+  const [reviewLeave,  setReviewLeave]  = useState<NormalizedLeaveRequest | null>(null);
   const [form, setForm] = useState<LeaveForm>({
-    type: "Vacation Leave",
-    dateFrom: "",
-    dateTo: "",
-    reason: "",
-    attachmentName: null,
+    type:             "Vacation Leave",
+    dateFrom:         "",
+    dateTo:           "",
+    reason:           "",
+    attachmentName:   null,
     attachmentBase64: undefined,
-    attachmentMime: undefined,
+    attachmentMime:   undefined,
   });
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -889,64 +937,68 @@ export default function Leave() {
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === ALL_LEAVES_KEY) setLeaves(readLeavesFromStorage());
-      if (e.key === "currentAdmin") setCurrentAdmin(readCurrentAdmin());
+      if (e.key === "currentAdmin")  setCurrentAdmin(readCurrentAdmin());
     };
     window.addEventListener("storage", handleStorageChange);
     return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
-  const normalizedLeaves = useMemo(
-    () => leaves.map(normalizeLeave),
-    [leaves]
-  );
+  const normalizedLeaves = useMemo(() => leaves.map(normalizeLeave), [leaves]);
 
   const filteredLeaves = useMemo(() => {
     let list = normalizedLeaves;
-    if (statusFilter !== "All")
-      list = list.filter((l) => l.status === statusFilter);
-    if (typeFilter !== "All")
-      list = list.filter((l) => l.type === typeFilter);
+    if (statusFilter !== "All") list = list.filter((l) => l.status === statusFilter);
+    if (typeFilter   !== "All") list = list.filter((l) => l.type   === typeFilter);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      list = list.filter(
+      list    = list.filter(
         (l) =>
           l.employee.toLowerCase().includes(q) ||
-          l.reason.toLowerCase().includes(q) ||
+          l.reason.toLowerCase().includes(q)   ||
           l.type.toLowerCase().includes(q)
       );
     }
     return [...list].sort((a, b) => {
-      if (a.status === "Pending" && b.status !== "Pending") return -1;
-      if (b.status === "Pending" && a.status !== "Pending") return 1;
+      // Priority: Pre-Approved → Pending → Pre-Rejected → rest
+      const order: Record<LeaveStatus, number> = {
+        "Pre-Approved": 0,
+        Pending:        1,
+        "Pre-Rejected": 2,
+        Approved:       3,
+        Rejected:       4,
+      };
+      const diff = (order[a.status] ?? 5) - (order[b.status] ?? 5);
+      if (diff !== 0) return diff;
       return (b.appliedOn ?? "").localeCompare(a.appliedOn ?? "");
     });
   }, [normalizedLeaves, statusFilter, typeFilter, search]);
 
   const cardStats = useMemo(() => {
-    const init = () => ({ total: 0, pending: 0, approved: 0, rejected: 0 });
+    const init = () => ({ total: 0, pending: 0, approved: 0, rejected: 0, preApproved: 0, preRejected: 0 });
     const byType: Record<LeaveType, ReturnType<typeof init>> = {
-      "Vacation Leave": init(),
-      "Sick Leave": init(),
-      "Emergency Leave": init(),
-      "Maternity/Paternity Leave": init(),
+      "Vacation Leave":             init(),
+      "Sick Leave":                 init(),
+      "Emergency Leave":            init(),
+      "Maternity/Paternity Leave":  init(),
     };
     for (const l of normalizedLeaves) {
       const b = byType[l.type];
       b.total++;
-      if (l.status === "Pending") b.pending++;
-      if (l.status === "Approved") b.approved++;
-      if (l.status === "Rejected") b.rejected++;
+      if (l.status === "Pending")      b.pending++;
+      if (l.status === "Approved")     b.approved++;
+      if (l.status === "Rejected")     b.rejected++;
+      if (l.status === "Pre-Approved") b.preApproved++;
+      if (l.status === "Pre-Rejected") b.preRejected++;
     }
     return byType;
   }, [normalizedLeaves]);
 
   const pendingCount = useMemo(
-    () => normalizedLeaves.filter((l) => l.status === "Pending").length,
+    () => normalizedLeaves.filter((l) => l.status === "Pending" || l.status === "Pre-Approved" || l.status === "Pre-Rejected").length,
     [normalizedLeaves]
   );
 
-  const hasFilters =
-    statusFilter !== "All" || typeFilter !== "All" || search.trim() !== "";
+  const hasFilters = statusFilter !== "All" || typeFilter !== "All" || search.trim() !== "";
 
   const onChange = (
     e: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
@@ -955,18 +1007,17 @@ export default function Leave() {
     setForm((p) => ({ ...p, [name]: value }));
   };
 
-  // ─── File handler: reads file as base64 ────────────────────────────────────
   const onPickFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const mime = file.type;
+    const mime   = file.type;
     const reader = new FileReader();
     reader.onload = () => {
       setForm((p) => ({
         ...p,
-        attachmentName: file.name,
+        attachmentName:   file.name,
         attachmentBase64: reader.result as string,
-        attachmentMime: mime,
+        attachmentMime:   mime,
       }));
     };
     reader.readAsDataURL(file);
@@ -979,22 +1030,19 @@ export default function Leave() {
 
   const resetForm = () => {
     setForm({
-      type: "Vacation Leave",
-      dateFrom: "",
-      dateTo: "",
-      reason: "",
-      attachmentName: null,
+      type:             "Vacation Leave",
+      dateFrom:         "",
+      dateTo:           "",
+      reason:           "",
+      attachmentName:   null,
       attachmentBase64: undefined,
-      attachmentMime: undefined,
+      attachmentMime:   undefined,
     });
     setEditingId(null);
     clearFile();
   };
 
-  const closeModal = () => {
-    setIsModalOpen(false);
-    resetForm();
-  };
+  const closeModal = () => { setIsModalOpen(false); resetForm(); };
 
   const openCreateModal = () => {
     if (!currentAdmin) { notifyError("No logged in admin found."); return; }
@@ -1004,9 +1052,9 @@ export default function Leave() {
   };
 
   const validate = () => {
-    if (!currentAdmin) { notifyError("No logged in admin found."); return false; }
-    if (!form.dateFrom.trim()) { notifyError("Date From is required."); return false; }
-    if (!form.dateTo.trim()) { notifyError("Date To is required."); return false; }
+    if (!currentAdmin)           { notifyError("No logged in admin found."); return false; }
+    if (!form.dateFrom.trim())   { notifyError("Date From is required.");    return false; }
+    if (!form.dateTo.trim())     { notifyError("Date To is required.");      return false; }
     if (safeISO(form.dateTo) < safeISO(form.dateFrom)) {
       notifyError("Date To must be on or after Date From.");
       return false;
@@ -1017,32 +1065,29 @@ export default function Leave() {
 
   const save = () => {
     if (!validate() || !currentAdmin) return;
-
     const employeeName = adminDisplayName ?? currentAdmin.name;
 
     const payload: StoredLeaveRequest = {
-      id: editingId ?? createId(),
-      employee: employeeName,
-      type: form.type,
-      reason: form.reason.trim(),
-      status: "Pending",
-      dateFrom: form.dateFrom,
-      dateTo: form.dateTo,
-      startDate: form.dateFrom,
-      endDate: form.dateTo,
-      days: diffDaysInclusive(form.dateFrom, form.dateTo),
-      attachmentName: form.attachmentName,
+      id:               editingId ?? createId(),
+      employee:         employeeName,
+      type:             form.type,
+      reason:           form.reason.trim(),
+      status:           "Pending",
+      dateFrom:         form.dateFrom,
+      dateTo:           form.dateTo,
+      startDate:        form.dateFrom,
+      endDate:          form.dateTo,
+      days:             diffDaysInclusive(form.dateFrom, form.dateTo),
+      attachmentName:   form.attachmentName,
       attachmentBase64: form.attachmentBase64,
-      attachmentMime: form.attachmentMime,
-      fileName: form.attachmentName ?? undefined,
-      appliedOn: todayISO(),
+      attachmentMime:   form.attachmentMime,
+      fileName:         form.attachmentName ?? undefined,
+      appliedOn:        todayISO(),
     };
 
     if (editingId !== null) {
       setLeaves((prev) =>
-        prev.map((l) =>
-          l.id === editingId ? { ...l, ...payload, status: "Pending" } : l
-        )
+        prev.map((l) => l.id === editingId ? { ...l, ...payload, status: "Pending" } : l)
       );
       notifySuccess("Leave request updated.");
     } else {
@@ -1061,18 +1106,19 @@ export default function Leave() {
     }
     setEditingId(leave.id);
     setForm({
-      type: leave.type,
-      dateFrom: leave.dateFrom,
-      dateTo: leave.dateTo,
-      reason: leave.reason,
-      attachmentName: leave.attachmentName,
+      type:             leave.type,
+      dateFrom:         leave.dateFrom,
+      dateTo:           leave.dateTo,
+      reason:           leave.reason,
+      attachmentName:   leave.attachmentName,
       attachmentBase64: leave.attachmentBase64,
-      attachmentMime: leave.attachmentMime,
+      attachmentMime:   leave.attachmentMime,
     });
     if (fileRef.current) fileRef.current.value = "";
     setIsModalOpen(true);
   };
 
+  /** Admin final decision — always overrides any pre-approval state. */
   const setStatus = (id: number, status: "Approved" | "Rejected") => {
     const target = normalizedLeaves.find((l) => l.id === id);
     if (!target) { notifyError("Leave request not found."); return; }
@@ -1084,7 +1130,12 @@ export default function Leave() {
     setLeaves((prev) =>
       prev.map((l) => (l.id === id ? { ...l, status } : l))
     );
-    notifySuccess(`Leave ${status.toLowerCase()}.`);
+    const wasPreReviewed = target.status === "Pre-Approved" || target.status === "Pre-Rejected";
+    notifySuccess(
+      wasPreReviewed
+        ? `Leave ${status.toLowerCase()} (overrides ${target.status.toLowerCase()}).`
+        : `Leave ${status.toLowerCase()}.`
+    );
   };
 
   const toggleTypeFilter = (type: LeaveType) => {
@@ -1097,9 +1148,7 @@ export default function Leave() {
     setSearch("");
   };
 
-  const resolvedName = currentAdmin
-    ? (adminDisplayName ?? currentAdmin.name)
-    : null;
+  const resolvedName = currentAdmin ? (adminDisplayName ?? currentAdmin.name) : null;
 
   return (
     <motion.div
@@ -1121,9 +1170,9 @@ export default function Leave() {
                 <p className="text-sm text-text-primary/60 mt-0.5">
                   {now.toLocaleDateString("en-US", {
                     weekday: "long",
-                    month: "long",
-                    day: "numeric",
-                    year: "numeric",
+                    month:   "long",
+                    day:     "numeric",
+                    year:    "numeric",
                   })}
                 </p>
               </div>
@@ -1131,6 +1180,12 @@ export default function Leave() {
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
+            {/* Admin authority badge */}
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/10 border border-primary/20 text-primary text-xs font-bold">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Admin — Final Authority
+            </span>
+
             {pendingCount > 0 && (
               <motion.button
                 initial={{ scale: 0.8, opacity: 0 }}
@@ -1140,7 +1195,7 @@ export default function Leave() {
                 className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-sm font-semibold hover:bg-amber-100 transition"
               >
                 <Clock3 className="h-4 w-4" />
-                {pendingCount} pending
+                {pendingCount} need review
               </motion.button>
             )}
             <button
@@ -1152,6 +1207,17 @@ export default function Leave() {
               File Leave
             </button>
           </div>
+        </div>
+
+        {/* Admin authority notice */}
+        <div className="mt-4 flex items-start gap-2 px-4 py-3 rounded-xl bg-blue-50 border border-blue-200 text-sm text-blue-800">
+          <Info className="w-4 h-4 mt-0.5 shrink-0" />
+          <p>
+            As admin, your approval or rejection is <span className="font-semibold">final and overrides</span> any
+            pre-approval or pre-rejection made by project leaders or HR staff.
+            Requests marked <span className="font-semibold text-teal-700">Pre-Approved</span> or{" "}
+            <span className="font-semibold text-orange-700">Pre-Rejected</span> are awaiting your decision.
+          </p>
         </div>
       </div>
 
@@ -1185,7 +1251,7 @@ export default function Leave() {
                   <span className="text-xs font-semibold text-text-primary/50">
                     ·{" "}
                     {[
-                      typeFilter !== "All" && LEAVE_TYPE_META[typeFilter].label,
+                      typeFilter   !== "All" && LEAVE_TYPE_META[typeFilter].label,
                       statusFilter !== "All" && statusFilter,
                     ]
                       .filter(Boolean)
@@ -1198,7 +1264,7 @@ export default function Leave() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap">
               {STATUS_FILTERS.map((f) => (
                 <button
                   key={f}
@@ -1247,11 +1313,7 @@ export default function Leave() {
                 >
                   <Filter className="h-3 w-3" />
                   {LEAVE_TYPE_META[typeFilter].label}
-                  <button
-                    onClick={() => setTypeFilter("All")}
-                    type="button"
-                    className="ml-0.5 hover:opacity-70"
-                  >
+                  <button onClick={() => setTypeFilter("All")} type="button" className="ml-0.5 hover:opacity-70">
                     <X className="h-3 w-3" />
                   </button>
                 </motion.div>
@@ -1281,6 +1343,7 @@ export default function Leave() {
                   "Duration",
                   "Days",
                   "Reason",
+                  "Pre-Reviewer",
                   "Attachment",
                   "Status",
                   "Actions",
@@ -1298,19 +1361,15 @@ export default function Leave() {
               <AnimatePresence>
                 {filteredLeaves.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-16 text-center">
+                    <td colSpan={9} className="px-4 py-16 text-center">
                       <div className="flex flex-col items-center gap-3 text-text-primary/40">
                         <div className="h-14 w-14 rounded-2xl bg-soft border border-slate-200 flex items-center justify-center">
                           <BookText className="w-7 h-7 opacity-40" />
                         </div>
                         <div>
-                          <div className="text-sm font-semibold text-text-heading">
-                            No leave requests found
-                          </div>
+                          <div className="text-sm font-semibold text-text-heading">No leave requests found</div>
                           <div className="text-xs mt-1">
-                            {hasFilters
-                              ? "Try adjusting your filters."
-                              : "No requests have been filed yet."}
+                            {hasFilters ? "Try adjusting your filters." : "No requests have been filed yet."}
                           </div>
                         </div>
                         {hasFilters && (
@@ -1327,9 +1386,11 @@ export default function Leave() {
                   </tr>
                 ) : (
                   filteredLeaves.map((leave, idx) => {
-                    const isSelf = leave.employee === resolvedName;
-                    const canAct = leave.status === "Pending" && !isSelf;
-                    const hasAttachment = !!(leave.attachmentName);
+                    const isSelf           = leave.employee === resolvedName;
+                    const isAlreadyFinal   = leave.status === "Approved" || leave.status === "Rejected";
+                    const canAct           = !isSelf && !isAlreadyFinal;
+                    const hasAttachment    = !!(leave.attachmentName);
+                    const isPreReviewed    = leave.status === "Pre-Approved" || leave.status === "Pre-Rejected";
 
                     return (
                       <motion.tr
@@ -1338,7 +1399,9 @@ export default function Leave() {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0 }}
                         transition={{ duration: 0.15, delay: idx * 0.02 }}
-                        className="hover:bg-slate-50/60 transition-colors"
+                        className={`hover:bg-slate-50/60 transition-colors ${
+                          isPreReviewed ? "bg-blue-50/30" : ""
+                        }`}
                       >
                         {/* Employee */}
                         <td className="px-4 py-3">
@@ -1370,10 +1433,34 @@ export default function Leave() {
                         </td>
 
                         {/* Reason */}
-                        <td className="px-4 py-3 max-w-[160px]">
+                        <td className="px-4 py-3 max-w-[140px]">
                           <p className="text-sm text-text-primary/80 line-clamp-2 leading-snug">
                             {leave.reason}
                           </p>
+                        </td>
+
+                        {/* Pre-Reviewer */}
+                        <td className="px-4 py-3">
+                          {leave.preReviewedBy ? (
+                            <div className="flex flex-col gap-0.5">
+                              <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                leave.status === "Pre-Approved"
+                                  ? "bg-teal-50 text-teal-700 border-teal-200"
+                                  : "bg-orange-50 text-orange-700 border-orange-200"
+                              }`}>
+                                {leave.status === "Pre-Approved"
+                                  ? <Check className="w-2.5 h-2.5" />
+                                  : <X className="w-2.5 h-2.5" />
+                                }
+                                {leave.preReviewedBy}
+                              </span>
+                              {leave.preReviewedByRole && (
+                                <span className="text-[10px] text-slate-400">{leave.preReviewedByRole}</span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-300 italic">—</span>
+                          )}
                         </td>
 
                         {/* Attachment */}
@@ -1423,7 +1510,7 @@ export default function Leave() {
                               </button>
                             )}
 
-                            {/* Other employee pending — quick approve/reject */}
+                            {/* Quick approve/reject (non-self, non-final) */}
                             {canAct && (
                               <>
                                 <button
@@ -1432,7 +1519,7 @@ export default function Leave() {
                                   className="inline-flex items-center gap-1 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1.5 rounded-lg transition"
                                 >
                                   <Check className="h-3.5 w-3.5" />
-                                  Approve
+                                  {isPreReviewed ? "Finalize" : "Approve"}
                                 </button>
                                 <button
                                   onClick={() => setStatus(leave.id, "Rejected")}
@@ -1445,16 +1532,11 @@ export default function Leave() {
                               </>
                             )}
 
-                            {!isSelf && leave.status !== "Pending" && (
-                              <span className="text-xs text-text-primary/30 italic">
-                                {leave.status}
-                              </span>
+                            {!isSelf && isAlreadyFinal && (
+                              <span className="text-xs text-text-primary/30 italic">{leave.status}</span>
                             )}
-
                             {isSelf && leave.status !== "Pending" && (
-                              <span className="text-xs text-text-primary/30 italic">
-                                Your request
-                              </span>
+                              <span className="text-xs text-text-primary/30 italic">Your request</span>
                             )}
                           </div>
                         </td>
@@ -1476,7 +1558,7 @@ export default function Leave() {
             resolvedName={resolvedName}
             onClose={() => setReviewLeave(null)}
             onApprove={(id) => setStatus(id, "Approved")}
-            onReject={(id) => setStatus(id, "Rejected")}
+            onReject={(id)  => setStatus(id, "Rejected")}
           />
         )}
       </AnimatePresence>
@@ -1492,12 +1574,7 @@ export default function Leave() {
               exit={{ opacity: 0 }}
               onClick={closeModal}
             />
-            <motion.div
-              className="fixed inset-0 z-50 flex items-center justify-center p-4"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-            >
+            <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               <motion.div
                 initial={{ opacity: 0, y: 24, scale: 0.97 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1520,9 +1597,7 @@ export default function Leave() {
                         <div className="mt-1 flex items-center gap-2 text-sm text-white/80">
                           <ShieldCheck className="h-4 w-4 text-white/70" />
                           Submitting as{" "}
-                          <span className="font-bold text-white">
-                            {resolvedName ?? "Current Admin"}
-                          </span>
+                          <span className="font-bold text-white">{resolvedName ?? "Current Admin"}</span>
                         </div>
                       </div>
                     </div>
@@ -1542,8 +1617,8 @@ export default function Leave() {
                   <Field label="Leave Type">
                     <div className="grid grid-cols-2 gap-2">
                       {LEAVE_TYPES.map((type) => {
-                        const meta = LEAVE_TYPE_META[type];
-                        const Icon = meta.icon;
+                        const meta     = LEAVE_TYPE_META[type];
+                        const Icon     = meta.icon;
                         const selected = form.type === type;
                         return (
                           <button
@@ -1593,7 +1668,6 @@ export default function Leave() {
                     </Field>
                   </div>
 
-                  {/* Day count preview */}
                   {form.dateFrom && form.dateTo && safeISO(form.dateTo) >= safeISO(form.dateFrom) && (
                     <motion.div
                       initial={{ opacity: 0, y: -4 }}
@@ -1607,7 +1681,6 @@ export default function Leave() {
                     </motion.div>
                   )}
 
-                  {/* Reason */}
                   <Field label="Reason">
                     <textarea
                       name="reason"
@@ -1619,7 +1692,6 @@ export default function Leave() {
                     />
                   </Field>
 
-                  {/* Attachment */}
                   <Field label="Supporting Document" optional>
                     <button
                       type="button"
@@ -1646,8 +1718,6 @@ export default function Leave() {
                       onChange={onPickFile}
                       className="hidden"
                     />
-
-                    {/* Image thumbnail preview inside form */}
                     {form.attachmentBase64 && form.attachmentMime?.startsWith("image/") && (
                       <motion.div
                         initial={{ opacity: 0, y: -4 }}
@@ -1660,9 +1730,7 @@ export default function Leave() {
                           className="w-full h-full object-cover"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
-                        <span className="absolute bottom-1.5 left-2 text-white text-[10px] font-semibold">
-                          Preview
-                        </span>
+                        <span className="absolute bottom-1.5 left-2 text-white text-[10px] font-semibold">Preview</span>
                       </motion.div>
                     )}
                     {form.attachmentBase64 && !form.attachmentMime?.startsWith("image/") && (
@@ -1672,9 +1740,7 @@ export default function Leave() {
                         className="mt-2 flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-xl"
                       >
                         <FileText className="w-4 h-4 text-blue-600 shrink-0" />
-                        <span className="text-xs text-blue-700 font-medium truncate flex-1">
-                          {form.attachmentName}
-                        </span>
+                        <span className="text-xs text-blue-700 font-medium truncate flex-1">{form.attachmentName}</span>
                         <span className="text-[10px] text-blue-500 shrink-0">Ready</span>
                       </motion.div>
                     )}
