@@ -34,6 +34,8 @@ import type {
   LeavePolicy,
 } from "./types/leavetypes";
 import staticAccounts from "../data/accounts.json";
+// ── FIX: import static admin accounts so we can build the admin name set ──────
+import staticAdmins from "../admin/data/adminAccounts.json";
 import { resolveMergedAccounts } from "../data/resolveAccounts";
 import { STORAGE_KEY, POLICY_STORAGE_KEY, defaultLeavePolicy } from "./types/leaveconstants";
 import { showError, showSuccess } from "./utils/toast";
@@ -41,8 +43,6 @@ import { clearCurrentUser, getCurrentUser } from "../utils/sessionAuth";
 
 // ─── Extended types ───────────────────────────────────────────────────────────
 
-// Extend the canonical LeaveStatus to include pre-approval states.
-// These are set by project leaders / HR staff and require admin finalization.
 type ExtendedLeaveStatus = LeaveStatus | "Pre-Approved" | "Pre-Rejected";
 
 interface LeaveForm {
@@ -68,7 +68,6 @@ interface LeaveRequestWithAttachment {
   fileName?: string;
   attachmentBase64?: string;
   attachmentMime?: string;
-  // Pre-approval metadata written by project leader / HR
   preReviewedBy?: string;
   preReviewedById?: number;
   preReviewedByRole?: string;
@@ -119,7 +118,6 @@ function safeReadLS<T>(key: string, fallback: T): T {
   }
 }
 
-/** Resolve the current roleLabel for a user account from the edit/created LS layers. */
 function resolveUserRole(userId: number): string {
   const deleted = new Set<string>(safeReadLS<string[]>(DELETED_IDS_KEY, []));
   if (deleted.has(`user:${userId}`)) return "";
@@ -128,16 +126,13 @@ function resolveUserRole(userId: number): string {
   const editKey = `user:${userId}`;
   if (edits[editKey]?.roleLabel) return edits[editKey].roleLabel!;
 
-  // Check locally-created accounts
   const created = safeReadLS<StoredCreatedAccount[]>(CREATED_ACCOUNTS_KEY, []);
   const local   = created.find((a) => a.kind === "user" && a.id === userId);
   if (local?.roleLabel) return local.roleLabel;
 
-  // Static JSON accounts don't have roleLabel by default ("Employee")
   return "Employee";
 }
 
-/** Returns true if the role is HR Manager or HR Specialist. */
 function isHRRole(role: string): boolean {
   return role === "HR Manager" || role === "HR Specialist";
 }
@@ -162,7 +157,6 @@ type LeaderOption = {
   leaderName: string;
 };
 
-/** Returns all project IDs where this user is the leader. */
 function getLeaderProjectIds(userId: number): Set<number> {
   const projects = safeReadLS<StoredProject[]>(PROJECTS_KEY, []);
   const ids      = new Set<number>();
@@ -172,13 +166,9 @@ function getLeaderProjectIds(userId: number): Set<number> {
   return ids;
 }
 
-/**
- * Returns the set of user IDs who are members of at least one project
- * where `leaderId` is the project leader.
- */
 function getLeaderTeamMemberIds(leaderId: number): Set<number> {
-  const projects = safeReadLS<StoredProject[]>(PROJECTS_KEY, []);
-  const tasks = safeReadLS<StoredTask[]>(TASKS_KEY, []);
+  const projects  = safeReadLS<StoredProject[]>(PROJECTS_KEY, []);
+  const tasks     = safeReadLS<StoredTask[]>(TASKS_KEY, []);
   const memberIds = new Set<number>();
   for (const p of projects) {
     if (String(p.leaderId) !== String(leaderId)) continue;
@@ -201,25 +191,25 @@ function getStaticAssignedProjectIds(userId: number): Set<number> {
 }
 
 function getLeaderOptionsForUser(userId: number, userName?: string): LeaderOption[] {
-  const projects = safeReadLS<StoredProject[]>(PROJECTS_KEY, []);
-  const tasks = safeReadLS<StoredTask[]>(TASKS_KEY, []);
+  const projects              = safeReadLS<StoredProject[]>(PROJECTS_KEY, []);
+  const tasks                 = safeReadLS<StoredTask[]>(TASKS_KEY, []);
   const staticAssignedProjects = getStaticAssignedProjectIds(userId);
-  const allUsers = resolveMergedAccounts(
+  const allUsers              = resolveMergedAccounts(
     staticAccounts as Array<{ id: number; name: string; email: string; password: string }>,
     "user"
   );
   const userNameKey = userName?.trim().toLowerCase() ?? "";
-  const userById = new Map(allUsers.map((account) => [account.id, account]));
+  const userById    = new Map(allUsers.map((account) => [account.id, account]));
   const options: LeaderOption[] = [];
 
   for (const project of projects) {
-    const isExplicitMember = (project.memberIds ?? []).some(
+    const isExplicitMember   = (project.memberIds ?? []).some(
       (memberId) => String(memberId) === String(userId)
     );
     const isAssignedByStaticData = staticAssignedProjects.has(project.id);
-    const isAssignedToTask = tasks.some((task) => {
+    const isAssignedToTask   = tasks.some((task) => {
       if (task.projectId !== project.id) return false;
-      const byId = task.assignedToId !== undefined && String(task.assignedToId) === String(userId);
+      const byId   = task.assignedToId !== undefined && String(task.assignedToId) === String(userId);
       const byName = !!task.assignedTo && !!userNameKey && task.assignedTo.trim().toLowerCase() === userNameKey;
       return byId || byName;
     });
@@ -231,7 +221,7 @@ function getLeaderOptionsForUser(userId: number, userName?: string): LeaderOptio
 
     const leaderName = userById.get(leaderId)?.name ?? `Leader #${leaderId}`;
     options.push({
-      projectId: project.id,
+      projectId:   project.id,
       projectName: project.name?.trim() || `Project #${project.id}`,
       leaderId,
       leaderName,
@@ -245,10 +235,6 @@ function getLeaderOptionsForUser(userId: number, userName?: string): LeaderOptio
   return Array.from(deduped.values());
 }
 
-/**
- * Returns all known user account names mapped to their IDs.
- * Used to check whether a leave requester is in the leader's team.
- */
 function buildUserNameToIdMap(): Map<string, number> {
   const map     = new Map<string, number>();
   const edits   = safeReadLS<EditsMap>(EDITS_KEY, {});
@@ -256,22 +242,57 @@ function buildUserNameToIdMap(): Map<string, number> {
   const deleted = new Set<string>(safeReadLS<string[]>(DELETED_IDS_KEY, []));
 
   for (const account of staticAccounts as Array<{ id: number; name: string }>) {
-    const key = `user:${account.id}`;
+    const key        = `user:${account.id}`;
     if (deleted.has(key)) continue;
     const editedName = edits[key]?.name ?? account.name;
     map.set(editedName.trim().toLowerCase(), account.id);
   }
 
-  // Created accounts
   for (const a of created) {
     if (a.kind !== "user") continue;
-    const key = `user:${a.id}`;
+    const key        = `user:${a.id}`;
     if (deleted.has(key)) continue;
     const editedName = edits[key]?.name ?? a.name;
     map.set(editedName.trim().toLowerCase(), a.id);
   }
 
   return map;
+}
+
+// ─── FIX: Build a set of all known admin display names ───────────────────────
+//
+// Admin-filed leaves are stored to the same localStorage key as user leaves
+// (ALL_LEAVES_KEY). The only way to tell them apart is by resolving the
+// `employee` name string against the known admin account list, applying the
+// same edit / created / deleted layers used elsewhere in the codebase.
+//
+// This set is used in `canReviewLeave` to exclude admin-filed leaves from
+// the HR and project-leader team view entirely.
+function buildAdminNameSet(): Set<string> {
+  const set     = new Set<string>();
+  const edits   = safeReadLS<EditsMap>(EDITS_KEY, {});
+  const created = safeReadLS<StoredCreatedAccount[]>(CREATED_ACCOUNTS_KEY, []);
+  const deleted = new Set<string>(safeReadLS<string[]>(DELETED_IDS_KEY, []));
+
+  // Static admin accounts (adminAccounts.json)
+  for (const a of staticAdmins as Array<{ id: number; name: string }>) {
+    const key         = `admin:${a.id}`;
+    // Even if an admin is "deleted" from the Users page their past leaves
+    // should still be hidden from HR, so we don't skip deleted admins here.
+    const displayName = edits[key]?.name ?? a.name;
+    set.add(displayName.trim().toLowerCase());
+  }
+
+  // Locally-created admin accounts
+  for (const a of created) {
+    if (a.kind !== "admin") continue;
+    const key         = `admin:${a.id}`;
+    if (deleted.has(key)) continue;
+    const displayName = edits[key]?.name ?? a.name;
+    set.add(displayName.trim().toLowerCase());
+  }
+
+  return set;
 }
 
 // ─── Past-date Modal ──────────────────────────────────────────────────────────
@@ -339,8 +360,8 @@ function FilePreviewModal({
   const isPdf   = mime === "application/pdf";
 
   const handleDownload = () => {
-    const link  = document.createElement("a");
-    link.href   = base64;
+    const link    = document.createElement("a");
+    link.href     = base64;
     link.download = fileName;
     link.click();
   };
@@ -483,11 +504,11 @@ function AttachmentChip({
 // ─── Status badge ─────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: ExtendedLeaveStatus }) {
   const map: Record<ExtendedLeaveStatus, { cls: string; icon: React.ElementType; label: string }> = {
-    Approved:     { cls: "bg-green-100 text-green-700 border-green-200",   icon: CheckCircle2, label: "Approved"     },
-    Rejected:     { cls: "bg-red-100 text-red-600 border-red-200",         icon: XCircle,      label: "Rejected"     },
-    Pending:      { cls: "bg-amber-100 text-amber-700 border-amber-200",   icon: Clock3,       label: "Pending"      },
-    "Pre-Approved": { cls: "bg-teal-100 text-teal-700 border-teal-200",    icon: ShieldCheck,  label: "Pre-Approved" },
-    "Pre-Rejected": { cls: "bg-orange-100 text-orange-700 border-orange-200", icon: UserCog,   label: "Pre-Rejected" },
+    Approved:       { cls: "bg-green-100 text-green-700 border-green-200",      icon: CheckCircle2, label: "Approved"     },
+    Rejected:       { cls: "bg-red-100 text-red-600 border-red-200",            icon: XCircle,      label: "Rejected"     },
+    Pending:        { cls: "bg-amber-100 text-amber-700 border-amber-200",      icon: Clock3,       label: "Pending"      },
+    "Pre-Approved": { cls: "bg-teal-100 text-teal-700 border-teal-200",         icon: ShieldCheck,  label: "Pre-Approved" },
+    "Pre-Rejected": { cls: "bg-orange-100 text-orange-700 border-orange-200",   icon: UserCog,      label: "Pre-Rejected" },
   };
   const { cls, icon: Icon, label } = map[status] ?? map.Pending;
   return (
@@ -594,7 +615,6 @@ function TeamReviewModal({
               <StatusBadge status={leave.status} />
             </div>
 
-            {/* Pre-review banner if already acted on */}
             <PreReviewBanner leave={leave} />
 
             {/* Leave type + days */}
@@ -640,7 +660,6 @@ function TeamReviewModal({
               </div>
             )}
 
-            {/* Info note about admin final approval */}
             <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-blue-50 border border-blue-200 text-xs text-blue-800">
               <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
               <p>
@@ -721,10 +740,10 @@ function Leave() {
   const TEAM_PER_PAGE    = 5;
 
   const [form, setForm] = useState<LeaveForm>({
-    type:     "Vacation Leave",
-    dateFrom: "",
-    dateTo:   "",
-    reason:   "",
+    type:            "Vacation Leave",
+    dateFrom:        "",
+    dateTo:          "",
+    reason:          "",
     targetProjectId: "",
   });
 
@@ -767,20 +786,41 @@ function Leave() {
     return getLeaderTeamMemberIds(user.id);
   }, [user?.id, isLeader]);
 
-  // Map of lower-cased employee name → user id for name-based matching
   const nameToIdMap = useMemo(() => buildUserNameToIdMap(), []);
 
-  /**
-   * Returns true if the current user has reviewer rights over a leave request.
-   * HR: can review any non-admin request (admins don't file leaves here).
-   * Leader: can review only their direct project members.
-   */
+  // ── FIX: build admin name set once per render cycle ────────────────────────
+  // Memoised with no deps so it reads from localStorage once on mount.
+  // If admins are added/edited at runtime, a page refresh will pick them up,
+  // which is acceptable since admin account changes are rare.
+  const adminNameSet = useMemo(() => buildAdminNameSet(), []);
+
+  // ── canReviewLeave ──────────────────────────────────────────────────────────
+  // FIX: Added `adminNameSet` guard BEFORE the HR/leader checks.
+  // Previously, HR's `return true` branch had no awareness of whether a leave
+  // was filed by an admin. This caused admin-filed leaves (stored to the same
+  // localStorage key) to appear in the HR team view.
+  //
+  // Guard order matters:
+  //   1. Reject own leave (unchanged)
+  //   2. Reject any leave filed by an admin account  ← NEW
+  //   3. HR can review everything else
+  //   4. Leaders can review their project members
   const canReviewLeave = useMemo(() => {
     return (leave: LeaveRequestWithAttachment): boolean => {
       if (!user?.id) return false;
-      // Never review your own
+
+      // 1. Never review your own leave
       if (leave.employee?.trim().toLowerCase() === user?.name?.trim().toLowerCase()) return false;
+
+      // 2. Never show admin-filed leaves to HR or project leaders.
+      //    Admins file their own leaves via admin/Leave.tsx and those are
+      //    reviewed solely by other admins in the admin portal.
+      if (adminNameSet.has(leave.employee?.trim().toLowerCase() ?? "")) return false;
+
+      // 3. HR can pre-review any remaining (non-admin, non-self) leave
       if (isHR) return true;
+
+      // 4. Project leaders can only pre-review their direct team members
       if (isLeader) {
         if (leave.targetLeaderId !== undefined) {
           return String(leave.targetLeaderId) === String(user.id);
@@ -788,9 +828,10 @@ function Leave() {
         const empId = nameToIdMap.get(leave.employee?.trim().toLowerCase() ?? "");
         if (empId !== undefined) return leaderTeamMemberIds.has(empId);
       }
+
       return false;
     };
-  }, [user, isHR, isLeader, leaderTeamMemberIds, nameToIdMap]);
+  }, [user, isHR, isLeader, leaderTeamMemberIds, nameToIdMap, adminNameSet]);
 
   // ── Leaves state ────────────────────────────────────────────────────────────
   const [leaves, setLeaves] = useState<LeaveRequestWithAttachment[]>(() => {
@@ -803,13 +844,11 @@ function Leave() {
     }
   });
 
-  // My leaves = those filed by the current user
   const myLeaves = useMemo(
     () => leaves.filter((l) => l.employee === user?.name),
     [leaves, user?.name]
   );
 
-  // Team leaves = all leaves the reviewer can act on (not their own)
   const teamLeaves = useMemo(() => {
     if (!isHR && !isLeader) return [];
     return leaves.filter((l) => canReviewLeave(l));
@@ -879,7 +918,6 @@ function Leave() {
     reader.readAsDataURL(file);
   };
 
-  // ── Persist to LS whenever leaves change ────────────────────────────────────
   const persistLeaves = (updated: LeaveRequestWithAttachment[]) => {
     setLeaves(updated);
     localStorage.setItem(ALL_LEAVES_KEY, JSON.stringify(updated));
@@ -899,9 +937,9 @@ function Leave() {
       return;
     }
 
-    const days = calculateDays(form.dateFrom, form.dateTo);
+    const days        = calculateDays(form.dateFrom, form.dateTo);
     const approvedDays = getUsedDays(form.type);
-    const policy = leavePolicy.find((p) => p.type === form.type);
+    const policy      = leavePolicy.find((p) => p.type === form.type);
     if (policy) {
       const remaining = policy.total - approvedDays;
       if (days > remaining) {
@@ -920,21 +958,21 @@ function Leave() {
     );
 
     const newLeave: LeaveRequestWithAttachment = {
-      id:              Date.now(),
-      employee:        user?.name ?? "Unknown",
-      type:            form.type,
-      startDate:       form.dateFrom,
-      endDate:         form.dateTo,
-      reason:          form.reason,
-      status:          "Pending",
-      appliedOn:       new Date().toISOString().split("T")[0],
+      id:               Date.now(),
+      employee:         user?.name ?? "Unknown",
+      type:             form.type,
+      startDate:        form.dateFrom,
+      endDate:          form.dateTo,
+      reason:           form.reason,
+      status:           "Pending",
+      appliedOn:        new Date().toISOString().split("T")[0],
       days,
-      fileName:        fileName || undefined,
+      fileName:         fileName || undefined,
       attachmentBase64: fileBase64 || undefined,
-      attachmentMime:  fileMime || undefined,
-      targetProjectId: selectedLeaderOption?.projectId,
+      attachmentMime:   fileMime || undefined,
+      targetProjectId:  selectedLeaderOption?.projectId,
       targetProjectName: selectedLeaderOption?.projectName,
-      targetLeaderId: selectedLeaderOption?.leaderId,
+      targetLeaderId:   selectedLeaderOption?.leaderId,
       targetLeaderName: selectedLeaderOption?.leaderName,
     };
 
@@ -942,10 +980,10 @@ function Leave() {
     persistLeaves(updatedAll);
 
     setForm({
-      type: "Vacation Leave",
-      dateFrom: "",
-      dateTo: "",
-      reason: "",
+      type:            "Vacation Leave",
+      dateFrom:        "",
+      dateTo:          "",
+      reason:          "",
       targetProjectId: selectedLeaderOption ? String(selectedLeaderOption.projectId) : "",
     });
     setFileName("");
@@ -957,7 +995,6 @@ function Leave() {
     showSuccess("Leave request submitted successfully!");
   };
 
-  // ── Pre-approval / pre-rejection by HR or project leader ───────────────────
   const handlePreApprove = (id: number) => {
     const updated = leaves.map((l) => {
       if (l.id !== id) return l;
@@ -991,9 +1028,9 @@ function Leave() {
   };
 
   // ── Derived lists ───────────────────────────────────────────────────────────
-  const pendingLeaves = myLeaves.filter((l) => l.status === "Pending");
-  const totalPendingPages = Math.max(1, Math.ceil(pendingLeaves.length / PENDING_PER_PAGE));
-  const paginatedPending = pendingLeaves.slice(
+  const pendingLeaves      = myLeaves.filter((l) => l.status === "Pending");
+  const totalPendingPages  = Math.max(1, Math.ceil(pendingLeaves.length / PENDING_PER_PAGE));
+  const paginatedPending   = pendingLeaves.slice(
     (pendingPage - 1) * PENDING_PER_PAGE,
     pendingPage * PENDING_PER_PAGE
   );
@@ -1006,19 +1043,18 @@ function Leave() {
   const filteredMyLeaves =
     activeTab === "All" ? myLeaves : myLeaves.filter((l) => l.status === activeTab);
 
-  const totalPages  = Math.max(1, Math.ceil(filteredMyLeaves.length / ROWS_PER_PAGE));
+  const totalPages      = Math.max(1, Math.ceil(filteredMyLeaves.length / ROWS_PER_PAGE));
   const paginatedLeaves = filteredMyLeaves.slice(
     (currentPage - 1) * ROWS_PER_PAGE,
     currentPage * ROWS_PER_PAGE
   );
 
-  // Team leaves paging
   const [teamStatusFilter, setTeamStatusFilter] = useState<"All" | ExtendedLeaveStatus>("All");
   const filteredTeamLeaves = teamStatusFilter === "All"
     ? teamLeaves
     : teamLeaves.filter((l) => l.status === teamStatusFilter);
-  const totalTeamPages  = Math.max(1, Math.ceil(filteredTeamLeaves.length / TEAM_PER_PAGE));
-  const paginatedTeam   = filteredTeamLeaves.slice(
+  const totalTeamPages = Math.max(1, Math.ceil(filteredTeamLeaves.length / TEAM_PER_PAGE));
+  const paginatedTeam  = filteredTeamLeaves.slice(
     (teamPage - 1) * TEAM_PER_PAGE,
     teamPage * TEAM_PER_PAGE
   );
@@ -1051,7 +1087,7 @@ function Leave() {
     navigate("/");
   };
 
-  const canReview = isHR || isLeader;
+  const canReview        = isHR || isLeader;
   const teamPendingCount = teamLeaves.filter((l) => l.status === "Pending").length;
 
   return (
@@ -1060,7 +1096,6 @@ function Leave() {
         <PastDateModal onClose={() => setShowPastDateModal(false)} />
       )}
 
-      {/* Team Review Modal */}
       <AnimatePresence>
         {reviewingLeave && (
           <TeamReviewModal
@@ -1126,7 +1161,6 @@ function Leave() {
                 <h1 className="text-xl md:text-3xl font-bold text-[#1F3C68]">
                   Leave Requests
                 </h1>
-                {/* Role badge */}
                 {canReview && (
                   <span className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${
                     isHR
@@ -1168,7 +1202,7 @@ function Leave() {
           </div>
         </motion.div>
 
-        {/* View toggle for users with reviewer rights */}
+        {/* View toggle */}
         {canReview && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
@@ -1679,7 +1713,6 @@ function Leave() {
                             <td className="py-4 pr-4">
                               <div>
                                 <span className="font-semibold text-[#1F3C68]">{leave.type}</span>
-                                {/* Pre-review note inline */}
                                 {(leave.status === "Pre-Approved" || leave.status === "Pre-Rejected") && (
                                   <p className="text-[10px] text-slate-400 mt-0.5">
                                     {leave.status === "Pre-Approved" ? "✓" : "✗"} by {leave.preReviewedBy}
@@ -1817,7 +1850,6 @@ function Leave() {
                 </div>
               </div>
 
-              {/* Note about admin final approval */}
               <div className="mt-4 flex items-start gap-2 px-4 py-3 rounded-xl bg-blue-50 border border-blue-200 text-sm text-blue-800">
                 <Info className="w-4 h-4 mt-0.5 shrink-0" />
                 <p>
@@ -1829,7 +1861,6 @@ function Leave() {
 
             {/* Team leaves table */}
             <div className="bg-white rounded-3xl shadow-md border border-slate-100 overflow-hidden">
-              {/* Toolbar */}
               <div className="p-5 border-b border-slate-100">
                 <div className="flex items-center justify-between gap-4 flex-wrap">
                   <div>
@@ -1885,7 +1916,6 @@ function Leave() {
                           className="p-5 flex flex-col sm:flex-row sm:items-start justify-between gap-4 hover:bg-slate-50/60 transition-colors"
                         >
                           <div className="flex-1 min-w-0">
-                            {/* Employee + leave type */}
                             <div className="flex flex-wrap items-center gap-2 mb-1.5">
                               <div className="flex items-center gap-2">
                                 <div className="w-7 h-7 rounded-full bg-[#1F3C68] flex items-center justify-center text-white text-[10px] font-black shrink-0">
@@ -1900,7 +1930,6 @@ function Leave() {
                               </span>
                             </div>
 
-                            {/* Date */}
                             <p className="text-xs text-slate-500 mb-1">
                               {leave.startDate ? formatDate(leave.startDate) : "—"}
                               {leave.startDate !== leave.endDate && leave.endDate
@@ -1908,10 +1937,8 @@ function Leave() {
                                 : ""}
                             </p>
 
-                            {/* Reason */}
                             <p className="text-xs text-slate-400 truncate max-w-md">{leave.reason}</p>
 
-                            {/* Attachment */}
                             {leave.fileName && (
                               <div className="mt-2">
                                 <AttachmentChip
@@ -1922,7 +1949,6 @@ function Leave() {
                               </div>
                             )}
 
-                            {/* Pre-review info */}
                             {alreadyActed && (
                               <div className={`mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold border ${
                                 leave.status === "Pre-Approved"
@@ -1953,7 +1979,6 @@ function Leave() {
                             )}
                           </div>
 
-                          {/* Actions */}
                           <div className="flex items-center gap-2 shrink-0 flex-wrap">
                             <StatusBadge status={leave.status} />
                             <button
@@ -1992,7 +2017,6 @@ function Leave() {
                 </AnimatePresence>
               </div>
 
-              {/* Pagination */}
               {filteredTeamLeaves.length > TEAM_PER_PAGE && (
                 <div className="flex items-center justify-between px-5 py-4 border-t border-slate-100 bg-slate-50/50">
                   <p className="text-xs text-slate-400">
